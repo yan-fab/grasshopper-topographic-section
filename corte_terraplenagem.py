@@ -1038,13 +1038,13 @@ def run():
     # Cada seção recebe sua própria linha de base DATUM (sec_datum_z = math.floor(s_data['z_min'] - 2.0)),
     # evitando que seções de cotas elevadas colidam ou invadam as seções superiores.
     max_h_sec = max(sd['z_max'] - math.floor(sd['z_min'] - 2.0) for sd in sec_data_list)
-    h_min_espacamento = max_h_sec + 18.0 * s
+    h_min_espacamento = max_h_sec + 55.0 * s
 
     if raw_espacamento is not None:
-        try: espacamento_y = max(float(raw_espacamento), 5.0)
-        except: espacamento_y = max(h_min_espacamento, 25.0 * s)
+        try: espacamento_y = max(float(raw_espacamento), 10.0)
+        except: espacamento_y = max(h_min_espacamento, 80.0 * s)
     else:
-        espacamento_y = max(h_min_espacamento, 25.0 * s)
+        espacamento_y = max(h_min_espacamento, 80.0 * s)
 
     # 3. Distâncias Reais entre Eixos Consecutivos (para Cubagem AGPTEA)
     distancias_eixos = []
@@ -1265,8 +1265,14 @@ def run():
             d_t, vc_t, va_t, s_t = vols_trechos[idx_s]
             nota_t = fluxo_transporte[idx_s]
 
-            # Posição intermediária no espaçamento vertical entre as seções
-            y_banner = base_y - espacamento_y / 2.0
+            # Posição intermediária perfeitamente centrada no vão livre entre as seções
+            next_sec = sec_data_list[idx_s + 1]
+            next_datum = math.floor(next_sec['z_min'] - 2.0)
+            next_h_top = (next_sec['z_max'] - next_datum) + 8.5 * s
+
+            y_bot_current = base_y - 5.5 * s
+            y_top_next = (base_y - espacamento_y) + next_h_top
+            y_banner = (y_bot_current + y_top_next) / 2.0
             x_banner = base_x + total_ext / 2.0
             banner_geoms = make_mass_haul_banner(x_banner, y_banner, lbl, lbl_prox, d_t, vc_t, va_t, s_t, nota_t, s)
             desenho_completo_secoes_2d.extend(banner_geoms)
