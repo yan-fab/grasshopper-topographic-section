@@ -1035,12 +1035,213 @@ def get_terrain_u_range(geoms_terreno, u_corte):
     return None, None
 
 # =============================================================================
+# AMETRADOR UNIVERSAL DE GREIDE E MAPEAMENTO DE CURVAS DE PROJETO
+# =============================================================================
+
+def make_project_grade_sampler(curva_greide_in, base_x, base_y, sec_datum_z, z_min, z_max, total_ext, curve_base_y=None, p_start_3d=None, u_sec_3d=None, d_terrain_start=0.0):
+    """
+    Amostrador universal e robusto de greide de projeto.
+    Detecta automaticamente se a curva foi desenhada:
+    1. Sobre o desenho 2D da seção (Viewport Top, Z ~ 0, Y no espaço do desenho)
+    2. Com cotas Z absolutas no espaço 3D (Z real do modelo)
+    3. Com cotas Y absolutas no espaço 2D (Y ~ Z real)
+    4. Com vetorização invertida (Direita para Esquerda) ou parcial.
+    Garante mapeamento exato com o relevo natural, eliminando paredes falsas de corte.
+    """
+    if curva_greide_in is None:
+        return None
+
+    c_dom = curva_greide_in.Domain
+    t0 = getattr(c_dom, 'Min', getattr(c_dom, 'T0', 0.0))
+    t1 = getattr(c_dom, 'Max', getattr(c_dom, 'T1', 1.0))
+
+    n_samples = max(int(total_ext / 0.25), 100)
+    pts = []
+    t_divs = None
+    try:
+        t_divs = curva_greide_in.DivideByCount(n_samples, True)
+    except:
+        pass
+
+    if t_divs:
+        for t in t_divs:
+            pts.append(curva_greide_in.PointAt(t))
+    else:
+        for k in range(n_samples + 1):
+            tk = t0 + (k / float(n_samples)) * (t1 - t0)
+            pts.append(curva_greide_in.PointAt(tk))
+
+    if not pts:
+        return None
+
+    avg_z = sum(p.Z for p in pts) / float(len(pts))
+    avg_y = sum(p.Y for p in pts) / float(len(pts))
+    min_x = min(p.X for p in pts)
+    max_x = max(p.X for p in pts)
+    min_z = min(p.Z for p in pts)
+    max_z = max(p.Z for p in pts)
+
+    # 1. Caso Curva 3D no espaço de modelo (Z representa a cota real)
+    is_3d_z = False
+    if (abs(avg_z) > 1.0 and (z_min - 200.0 <= avg_z <= z_max + 200.0)) or        (max_z - min_z > 1.0 and min_z > 10.0):
+        is_3d_z = True
+
+    if is_3d_z and p_start_3d is not None and u_sec_3d is not None:
+        d_z_pairs = []
+        for p in pts:
+            d_p = (p.X - p_start_3d.X) * u_sec_3d.X + (p.Y - p_start_3d.Y) * u_sec_3d.Y - d_terrain_start
+            d_z_pairs.append((d_p, p.Z))
+        d_z_pairs.sort(key=lambda item: item[0])
+
+        def sample_3d(d_val):
+            if len(d_z_pairs) == 1:
+                return d_z_pairs[0][1]
+            d_0, z_0 = d_z_pairs[0]
+            d_1, z_1 = d_z_pairs[1]
+            if d_val <= d_0:
+                if abs(d_1 - d_0) < 1e-6: return z_0
+                return z_0 + ((d_val - d_0) / (d_1 - d_0)) * (z_1 - z_0)
+            d_n1, z_n1 = d_z_pairs[-2]
+            d_n, z_n = d_z_pairs[-1]
+            if d_val >= d_n:
+                if abs(d_n - d_n1) < 1e-6: return z_n
+                return z_n + ((d_val - d_n) / (d_n - d_n1)) * (z_n - z_n1)
+            for i in range(len(d_z_pairs) - 1):
+                d_a, z_a = d_z_pairs[i]
+                d_b, z_b = d_z_pairs[i+1]
+                if d_a <= d_val <= d_b:
+                    if abs(d_b - d_a) < 1e-6: return z_a
+                    t = (d_val - d_a) / (d_b - d_a)
+                    return z_a + t * (z_b - z_a)
+            return d_z_pairs[-1][1]
+        return sample_3d
+
+    # 2. Curva 2D (Z ~ 0)
+    # Detecta se os pontos usam a coordenada X do desenho 2D ou se usam X relativo [0, total_ext]
+    use_drawing_x = False
+    if abs(min_x - base_x) < total_ext * 0.8 or        abs(max_x - (base_x + total_ext)) < total_ext * 0.8 or        (min_x >= base_x - 10.0 and max_x <= base_x + total_ext + 10.0):
+        use_drawing_x = True
+
+    d_val_pairs = []
+    for p in pts:
+        d_p = (p.X - base_x) if use_drawing_x else p.X
+        d_val_pairs.append((d_p, p.Y))
+    d_val_pairs.sort(key=lambda item: item[0])
+
+    def interp_y(d_val):
+        if len(d_val_pairs) == 1:
+            return d_val_pairs[0][1]
+        d_0, y_0 = d_val_pairs[0]
+        d_1, y_1 = d_val_pairs[1]
+        if d_val <= d_0:
+            if abs(d_1 - d_0) < 1e-6: return y_0
+            return y_0 + ((d_val - d_0) / (d_1 - d_0)) * (y_1 - y_0)
+        d_n1, y_n1 = d_val_pairs[-2]
+        d_n, y_n = d_val_pairs[-1]
+        if d_val >= d_n:
+            if abs(d_n - d_n1) < 1e-6: return y_n
+            return y_n + ((d_val - d_n) / (d_n - d_n1)) * (y_n - y_n1)
+        for i in range(len(d_val_pairs) - 1):
+            d_a, y_a = d_val_pairs[i]
+            d_b, y_b = d_val_pairs[i+1]
+            if d_a <= d_val <= d_b:
+                if abs(d_b - d_a) < 1e-6: return y_a
+                t = (d_val - d_a) / (d_b - d_a)
+                return y_a + t * (y_b - y_a)
+        return d_val_pairs[-1][1]
+
+    # Verifica se Y já é a cota absoluta direta (ex: Y entre z_min-50 e z_max+100)
+    if z_min - 50.0 <= avg_y <= z_max + 100.0:
+        def sample_abs_y(d_val):
+            return interp_y(d_val)
+        return sample_abs_y
+
+    # Caso padrão Rhino: Curva 2D traçada no Viewport Top sobre a seção 2D
+    # Y está no espaço do desenho: Y = base_y + (Z_proj - sec_datum_z)
+    ref_by = curve_base_y if curve_base_y is not None else base_y
+
+    def sample_drawing_2d(d_val):
+        y_val = interp_y(d_val)
+        delta_h = y_val - ref_by
+        return sec_datum_z + delta_h
+
+    return sample_drawing_2d
+
+def match_project_curves_to_sections(curves_raw, sec_base_ys, espacamento_y):
+    """
+    Mapeia curvas de projeto fornecidas para suas respectivas seções com base
+    na proximidade vertical (Y no desenho 2D) ou na ordem de entrada.
+    Retorna uma lista de tuplas: (curva_matched, curve_base_y) para cada seção.
+    """
+    if not curves_raw:
+        return [(None, None) for _ in sec_base_ys]
+
+    # Se há apenas 1 curva fornecida
+    if len(curves_raw) == 1:
+        c = curves_raw[0]
+        try:
+            bb = c.GetBoundingBox(True) if hasattr(c, 'GetBoundingBox') else c.GetBoundingBox()
+            avg_y = (bb.Min.Y + bb.Max.Y) / 2.0 if bb.IsValid else c.PointAtNormalizedLength(0.5).Y
+        except:
+            avg_y = c.PointAtNormalizedLength(0.5).Y
+
+        best_idx = 0
+        best_d = abs(avg_y - sec_base_ys[0])
+        for idx_s, by in enumerate(sec_base_ys):
+            d = abs(avg_y - by)
+            if d < best_d:
+                best_d = d
+                best_idx = idx_s
+
+        c_by = sec_base_ys[best_idx]
+        return [(c, c_by) for _ in sec_base_ys]
+
+    # Múltiplas curvas: associa cada curva à seção transversal correspondente por proximidade vertical Y
+    matched = [None] * len(sec_base_ys)
+    matched_by = [None] * len(sec_base_ys)
+    used_curves = set()
+
+    for idx_s, by in enumerate(sec_base_ys):
+        best_c = None
+        best_d = 1e12
+        best_c_idx = -1
+        for c_idx, c in enumerate(curves_raw):
+            if c_idx in used_curves: continue
+            try:
+                bb = c.GetBoundingBox(True) if hasattr(c, 'GetBoundingBox') else c.GetBoundingBox()
+                avg_y = (bb.Min.Y + bb.Max.Y) / 2.0 if bb.IsValid else c.PointAtNormalizedLength(0.5).Y
+            except:
+                avg_y = c.PointAtNormalizedLength(0.5).Y
+            d = abs(avg_y - by)
+            if d < best_d:
+                best_d = d
+                best_c = c
+                best_c_idx = c_idx
+
+        if best_c is not None and best_d <= espacamento_y * 1.2:
+            matched[idx_s] = best_c
+            matched_by[idx_s] = by
+            used_curves.add(best_c_idx)
+
+    # Fallback sequencial para seções que ainda não receberam curva
+    for idx_s in range(len(sec_base_ys)):
+        if matched[idx_s] is None:
+            if idx_s < len(curves_raw) and idx_s not in used_curves:
+                matched[idx_s] = curves_raw[idx_s]
+                matched_by[idx_s] = sec_base_ys[idx_s]
+                used_curves.add(idx_s)
+            elif curves_raw:
+                matched[idx_s] = curves_raw[0]
+                matched_by[idx_s] = sec_base_ys[0]
+
+    return list(zip(matched, matched_by))
+
+# =============================================================================
 # AVALIAÇÃO ANALÍTICA DE UMA SEÇÃO TRANSVERSAL INDIVIDUAL
 # =============================================================================
 
-def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_proj, tol, intersec_axes=None, label_sec="A", s=1.0):
-    """Calcula a geometria 3D, perfil de terreno natural e greide de terraplenagem para uma seção,
-       com suporte a patamares/cotas individuais por trecho/quadrante entre os eixos verticais."""
+def extract_section_terrain(crv_corte, geoms_terreno, tol, intersec_axes=None, s=1.0):
+    """Extrai com precisão milimétrica a interseção do terreno natural com a linha de corte 3D."""
     p_start = crv_corte.PointAtStart
     p_end = crv_corte.PointAtEnd
     dx = p_end.X - p_start.X
@@ -1086,7 +1287,6 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
                         for cc in cc_evs:
                             t_c = cc.ParameterA
                             pt_c = cut_xy.PointAt(t_c)
-                            # Amostra a cota Z exata buscando o ponto mais próximo na curva 3D original
                             rc, t_real = geom.ClosestPoint(rg.Point3d(pt_c.X, pt_c.Y, geom.PointAtStart.Z))
                             z_val = geom.PointAt(t_real).Z if rc else geom.PointAtStart.Z
                             d = (pt_c.X - p_start.X) * ux + (pt_c.Y - p_start.Y) * uy
@@ -1097,7 +1297,6 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
 
         # 2. Malha de Terreno (Mesh)
         elif isinstance(geom, rg.Mesh):
-            # A. Fatiamento pelo plano vertical do corte
             try:
                 polys = rg.Intersect.Intersection.MeshPlane(geom, cut_plane)
                 if polys:
@@ -1109,7 +1308,6 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
                                 pts_with_d.append((d_clamped, rg.Point3d(p_start.X + ux * d_clamped, p_start.Y + uy * d_clamped, pt.Z)))
             except: pass
 
-            # B. Amostragem contínua via Raios Verticais
             try:
                 bbox_m = geom.GetBoundingBox(True)
                 if bbox_m.IsValid:
@@ -1161,18 +1359,17 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
                 clean_pts.append((d, pt))
 
     # DELIMITAÇÃO ESTRITA ÀS CURVAS DE NÍVEL (Fim das Curvas de Nível é o Limite Real do Perfil)
-    # Elimina completamente a extrapolação plana e falsas áreas de corte/aterro além das curvas de nível
+    d_terrain_start = 0.0
+    axes_filtered = list(intersec_axes) if intersec_axes else []
     if len(clean_pts) >= 2:
         d_terrain_start = clean_pts[0][0]
         d_terrain_end = clean_pts[-1][0]
         total_ext = d_terrain_end - d_terrain_start
 
         if total_ext > 0.1:
-            # Normaliza clean_pts para que o perfil 2D e o DATUM comecem na estaca 0.0 (primeira curva de nível)
-            # e terminem exatamente na estaca total_ext (última curva de nível)
             clean_pts = [(d - d_terrain_start, pt) for d, pt in clean_pts]
-            if intersec_axes:
-                intersec_axes = [(item[0] - d_terrain_start, item[1], item[2]) for item in intersec_axes]
+            if axes_filtered:
+                axes_filtered = [(item[0] - d_terrain_start, item[1], item[2]) for item in axes_filtered]
         else:
             total_ext = L_horiz
     else:
@@ -1213,12 +1410,14 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
 
     z_min = min(p[1].Z for p in clean_pts)
     z_max = max(p[1].Z for p in clean_pts)
+    sec_datum_z = math.floor(z_min - 2.0)
+    sec_h = z_max - sec_datum_z
 
     # Identificação dos divisores internos de trecho (eixos verticais dentro do corte)
     d_divs = []
     eixos_secao = []
-    if intersec_axes:
-        for item in intersec_axes:
+    if axes_filtered:
+        for item in axes_filtered:
             d_ax = item[0]
             if 0.5 * s <= d_ax <= total_ext - 0.5 * s:
                 eixos_secao.append(item)
@@ -1235,7 +1434,6 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
     trecho_bounds.append((d_prev, total_ext))
     num_trechos = len(trecho_bounds)
 
-    # Cotas médias naturais por trecho (caso não haja NivelProjeto fornecido)
     trecho_avg_zs = []
     for (d_ini, d_fim) in trecho_bounds:
         sub_zs = [pt.Z for d, pt in clean_pts if d_ini - 0.5 <= d <= d_fim + 0.5]
@@ -1244,19 +1442,63 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
         else:
             trecho_avg_zs.append((z_min + z_max) / 2.0)
 
+    return {
+        'p_start': p_start,
+        'p_end': p_end,
+        'ux': ux,
+        'uy': uy,
+        'L_horiz': L_horiz,
+        'd_terrain_start': d_terrain_start,
+        'clean_pts': clean_pts,
+        'total_ext': total_ext,
+        'crv_3d': crv_3d,
+        'z_min': z_min,
+        'z_max': z_max,
+        'sec_datum_z': sec_datum_z,
+        'sec_h': sec_h,
+        'd_divs': d_divs,
+        'eixos_secao': eixos_secao,
+        'trecho_bounds': trecho_bounds,
+        'num_trechos': num_trechos,
+        'trecho_avg_zs': trecho_avg_zs
+    }
+
+def evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, label_sec="A", s=1.0, base_x=0.0, base_y=0.0, curve_base_y=None):
+    """Calcula greide, classificação de corte/aterro, áreas e volumes de uma seção a partir de t_info."""
+    clean_pts = t_info['clean_pts']
+    total_ext = t_info['total_ext']
+    crv_3d = t_info['crv_3d']
+    z_min = t_info['z_min']
+    z_max = t_info['z_max']
+    sec_datum_z = t_info['sec_datum_z']
+    sec_h = t_info['sec_h']
+    d_divs = t_info['d_divs']
+    eixos_secao = t_info['eixos_secao']
+    trecho_bounds = t_info['trecho_bounds']
+    num_trechos = t_info['num_trechos']
+    trecho_avg_zs = t_info['trecho_avg_zs']
+    p_start = t_info['p_start']
+    ux = t_info['ux']
+    uy = t_info['uy']
+    d_terrain_start = t_info['d_terrain_start']
+
+    sampler = make_project_grade_sampler(
+        curva_greide_in, base_x, base_y, sec_datum_z, z_min, z_max, total_ext,
+        curve_base_y=curve_base_y,
+        p_start_3d=p_start,
+        u_sec_3d=rg.Vector3d(ux, uy, 0.0),
+        d_terrain_start=d_terrain_start
+    )
+
     def get_proj_z(d_val):
-        # 1. Se CurvaProjeto for fornecida
-        if curva_greide_in is not None:
-            c_dom = curva_greide_in.Domain
-            t0 = getattr(c_dom, 'Min', getattr(c_dom, 'T0', 0.0))
-            t1 = getattr(c_dom, 'Max', getattr(c_dom, 'T1', 1.0))
-            t_greide = t0 + (d_val / max(total_ext, 1e-6)) * (t1 - t0)
-            pt_g = curva_greide_in.PointAt(t_greide)
-            if abs(pt_g.Z) > 1e-4:
-                return pt_g.Z
-            elif abs(pt_g.Y) > 1e-4 and z_min <= pt_g.Y <= z_max + 100.0:
-                return pt_g.Y
-            return pt_g.Z
+        # 1. Se CurvaProjeto for fornecida e sampler estiver ativo
+        if sampler is not None:
+            try:
+                z_res = sampler(d_val)
+                if z_res is not None:
+                    return z_res
+            except:
+                pass
 
         # 2. Localiza a qual trecho d_val pertence
         k_found = 0
@@ -1280,7 +1522,7 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
             return trecho_avg_zs[k_found]
         if clean_pts:
             return sum(p[1].Z for p in clean_pts) / float(len(clean_pts))
-        return 0.0
+        return (z_min + z_max) / 2.0
 
     # Amostragem com discretização fina
     num_passos = max(int(total_ext / 0.25), 80)
@@ -1376,7 +1618,6 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
             for j in range(len(d_list) - 1):
                 d1 = d_list[j]
                 d2 = d_list[j+1]
-                if d2 <= d_ini or d1 >= d_fim: continue
                 d1_c = max(d1, d_ini)
                 d2_c = min(d2, d_fim)
                 seg_dx = d2_c - d1_c
@@ -1417,7 +1658,7 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
         tr2 = trechos_data[k+1]
         d_boundary = tr1['d_end']
 
-        # Corte no Trecho 1 suprindo Aterro no Trecho 2 (conforme croqui)
+        # Corte no Trecho 1 suprindo Aterro no Trecho 2
         if tr1['area_corte'] > 0.05 and tr2['area_aterro'] > 0.05:
             a_transf = min(tr1['area_corte'], tr2['area_aterro'])
             internal_transfers.append({
@@ -1443,6 +1684,8 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
         'crv_3d': crv_3d,
         'z_min': z_min,
         'z_max': z_max,
+        'sec_datum_z': sec_datum_z,
+        'sec_h': sec_h,
         'get_proj_z': get_proj_z,
         'estacas_finais': estacas_finais,
         'regioes': regioes,
@@ -1457,6 +1700,11 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
         'internal_transfers': internal_transfers,
         'eixos_secao': eixos_secao
     }
+
+def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_proj, tol, intersec_axes=None, label_sec="A", s=1.0, base_x=0.0, base_y=0.0, curve_base_y=None):
+    """Calcula a geometria 3D, perfil de terreno natural e greide de terraplenagem para uma seção."""
+    t_info = extract_section_terrain(crv_corte, geoms_terreno, tol, intersec_axes, s)
+    return evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, label_sec, s, base_x, base_y, curve_base_y)
 
 # =============================================================================
 # COORDENADOR PRINCIPAL: MULTI-EIXOS, ALINHAMENTO, CUBAGEM E BALANÇO DE MASSAS
@@ -1654,15 +1902,8 @@ def run():
 
     lista_verticais = lista_verticais_alinhadas
 
-    # Processamento de curvas de projeto (harmonizadas da esquerda para a direita)
+    # Processamento de curvas de projeto fornecidas (curvas delimitadoras / greides)
     lista_projetos_raw = [to_rhino_curve(c) for c in to_list(raw_projeto) if to_rhino_curve(c) is not None]
-    lista_projetos = []
-    for cp in lista_projetos_raw:
-        cp_dup = cp.DuplicateCurve()
-        vec_cp = cp_dup.PointAtEnd - cp_dup.PointAtStart
-        if vec_cp.X * u_corte.X + vec_cp.Y * u_corte.Y < 0.0:
-            cp_dup.Reverse()
-        lista_projetos.append(cp_dup)
 
     ponto_base = to_rhino_point(raw_ponto)
     orig_x = ponto_base.X if ponto_base else 0.0
@@ -1703,34 +1944,26 @@ def run():
                     secao_eixos_intersec[i].append((d_ax, j, labels_v[j]))
             secao_eixos_intersec[i].sort(key=lambda x: x[0])
 
-    # 1.1 Avalia cada seção transversal individualmente (com suporte a trechos/quadrantes)
-    sec_data_list = []
-
-    for idx_s, crv_c in enumerate(lista_alinhadas):
-        lbl = labels_t[idx_s]
-        crv_p = lista_projetos[idx_s] if idx_s < len(lista_projetos) else (lista_projetos[0] if lista_projetos else None)
-
-        eixos_da_secao = secao_eixos_intersec[idx_s] if idx_s < len(secao_eixos_intersec) else []
-        divs_internos = [d for d, j, lv in eixos_da_secao if 2.0 * s <= d <= crv_c.GetLength() - 2.0 * s]
-        num_tr = len(divs_internos) + 1
-
-        sec_levels = parse_nivel_projeto(raw_nivel_proj, idx_s, num_secoes, num_tr)
-        s_data = evaluate_section_data(crv_c, geoms_terreno, crv_p, sec_levels, tol, eixos_da_secao, lbl, s)
-        sec_data_list.append(s_data)
-
-    # 2. Datum e Espaçamento Amplo para Alinhamento Perfeito e Separação Total dos Perfis
+    # 1.1 Pass 1: Extração do perfil de terreno natural e cálculo do espaçamento vertical global
+    sec_terrain_info = []
     sec_heights_above = []
     sec_heights_below = []
-    for sd in sec_data_list:
-        sec_datum_z = math.floor(sd['z_min'] - 2.0)
-        sec_h = sd['z_max'] - sec_datum_z
+
+    for idx_s, crv_c in enumerate(lista_alinhadas):
+        eixos_da_secao = secao_eixos_intersec[idx_s] if idx_s < len(secao_eixos_intersec) else []
+        t_info = extract_section_terrain(crv_c, geoms_terreno, tol, eixos_da_secao, s)
+        sec_terrain_info.append(t_info)
+
+        sec_datum_z = t_info['sec_datum_z']
+        sec_h = t_info['sec_h']
         # Altura acima do DATUM: relevo + folga do título e caixa de corte
         sec_heights_above.append(sec_h + 16.0 * s)
         # Altura abaixo do DATUM: folga da caixa de aterro e cotas inferiores
         sec_heights_below.append(12.0 * s)
 
-    max_h_above = max(sec_heights_above)
-    max_h_below = max(sec_heights_below)
+    # 2. Datum e Espaçamento Amplo para Alinhamento Perfeito e Separação Total dos Perfis
+    max_h_above = max(sec_heights_above) if sec_heights_above else (20.0 * s)
+    max_h_below = max(sec_heights_below) if sec_heights_below else (12.0 * s)
     banner_space = 18.0 * s  # Espaço reservado para o banner de balanço de massas e seta
 
     # Folga livre visível entre o fim de uma seção e o topo da próxima
@@ -1744,6 +1977,26 @@ def run():
         gap_livre = max(max_h_above * 0.85 + 50.0 * s, 75.0 * s)
 
     espacamento_y = max_h_below + banner_space + gap_livre + max_h_above
+    sec_base_ys = [orig_y - i * espacamento_y for i in range(num_secoes)]
+
+    # Mapeamento inteligente de curvas de projeto para suas respectivas seções
+    matched_curves = match_project_curves_to_sections(lista_projetos_raw, sec_base_ys, espacamento_y)
+
+    # 1.2 Pass 2: Avaliação analítica completa de cada seção (greide, volumes e compensações)
+    sec_data_list = []
+    for idx_s, t_info in enumerate(sec_terrain_info):
+        lbl = labels_t[idx_s]
+        base_x = orig_x
+        base_y = sec_base_ys[idx_s]
+        crv_p, curve_base_y = matched_curves[idx_s]
+
+        num_tr = len(t_info['d_divs']) + 1
+        sec_levels = parse_nivel_projeto(raw_nivel_proj, idx_s, num_secoes, num_tr)
+
+        s_data = evaluate_section_grade_and_volumes(
+            t_info, crv_p, sec_levels, lbl, s, base_x, base_y, curve_base_y
+        )
+        sec_data_list.append(s_data)
 
     # 3. Distâncias Reais entre Eixos Consecutivos (para Cubagem AGPTEA)
     distancias_eixos = []
