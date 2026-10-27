@@ -1,113 +1,150 @@
-# Grasshopper Topographic Section Generator (NBR 6492) 📐🏔️
+# Grasshopper Topographic Section & Earthwork Volume Calculator 📐🚜
 
-Gerador paramétrico de cortes topográficos arquitetônicos e de terraplanagem para **Rhinoceros 8 / Grasshopper (GhPython)**, compatível com a norma brasileira **NBR 6492** (Representação de Projetos de Arquitetura).
+Gerador paramétrico de cortes topográficos e cálculo analítico de **movimentação de terra (terraplenagem: corte e aterro)** para **Rhinoceros 8 / Grasshopper (GhPython)**, compatível com a norma brasileira **NBR 6492** e fundamentado na metodologia clássica de cálculo de volumes por seções transversais.
 
-Projetado especificamente para lidar com levantamentos topográficos reais em coordenadas georreferenciadas (**UTM**), calculando automaticamente a interseção de linhas de corte com curvas de nível 3D, platôs de terraplanagem, rampas de acesso/aterro e implantação da edificação.
-
----
-
-## 🌟 Funcionalidades Principais
-
-- **Corte Topográfico 3D $\rightarrow$ 2D Automático**: Intersecta a linha de corte com qualquer conjunto de curvas de nível (`Curve`) ou malhas de terreno (`Mesh`).
-- **Posicionamento Local no Top View**: Projeta o perfil 2D diretamente na vista superior (`Top View` / plano XY) através de um ponto de referência (`Point3d`), evitando perda de escala em coordenadas UTM com offsets milionários.
-- **Símbolos de Nível NBR 6492**:
-  - Triângulo invertido com preenchimento sólido à direita e contorno aberto à esquerda.
-  - Haste vertical e linha horizontal de apoio.
-  - Texto vetorial nativo (`TextEntity`) limpo e legível com prefixo de sinal e vírgula decimal (ex: `+921,00`).
-- **Corte Universal Inteligente**:
-  - **Cortes Longitudinais (Passando pela Edificação)**: Desenha a casa (paredes, piso, fundações), a laje de cobertura com beirais em balanço, o platô horizontal e a rampa inclinada de aterro conectando ao terreno natural.
-  - **Cortes Transversais (Fora da Edificação)**: Gera o platô de forma contínua, nivelada e sem buracos ou quebras artificiais.
-- **Massa de Terraplanagem (Corte & Aterro)**: Gera polígonos fechados contornando o terreno natural sob os platôs e rampas, prontos para cálculo de volume ou aplicação de hachura (`Hatch`).
-- **Seletor de Modos de Cotas**:
-  - Permite alternar instantaneamente entre a visualização de cotas do projeto e do terreno natural.
+O algoritmo analisa a interseção do terreno natural com um **greide projetado (definido por uma curva desenhada livremente)**, calculando de forma analítica e visual:
+- Áreas exatas de **Corte** (escavação) e **Aterro** (preenchimento);
+- Localização e cotas exatas de todos os **Pontos de Passagem (P.P.)** (cota neutra / cota zero de terraplenagem);
+- Cubação volumétrica ($m^3$) com consideração de largura de faixa de influência e fator de empolamento do solo ($K$);
+- Diagnóstico de balanço de massas (Compensação total, excesso para bota-fora ou déficit para empréstimo de jazida);
+- Representação gráfica imediata com **malhas coloridas (Laranja = Corte, Verde = Aterro)** e simbologia técnica de cotas de nível em corte (**NBR 6492**).
 
 ---
 
-## 🎛️ Modos do Seletor de Cotas (`Seletor`)
+## 📚 Fundamentação Teórica e Normativa
 
-O componente conta com um seletor flexível para controle de sobreposição e limpeza gráfica do desenho:
+O cálculo volumétrico é estruturado segundo as formulações didáticas do livro de referência:
+> **"TOPOGRAFIA: CÁLCULO DE VOLUMES – NOTAS DE AULA"**  
+> *Prof. Luís Augusto Koenig Veiga (Universidade Federal do Paraná - UFPR / AGPTEA)*  
+> [Repositório AGPTEA](https://www.bibliotecaagptea.org.br/agricultura/topografia/livros/TOPOGRAFIA%20CALCULO%20DE%20VOLUMES%20NOTAS%20DE%20AULA.pdf)
 
-| Valor / Entrada | Modo de Exibição | Descrição |
-| :---: | :--- | :--- |
-| **`1`** *(ou `True` / `"projetado"`)* **[Padrão]** | **Apenas Terreno Projetado** | Mantém a linha guia do perfil natural (TN) e exibe **apenas as cotas do Projeto** (`PLATÔ`, `ATERRO`, `PISO`, `COB`). Oculta as cotas intermediárias do relevo natural para manter o desenho limpo. |
-| **`2`** *(ou `False` / `"natural"`)* | **Apenas Terreno Natural** | Exibe o perfil natural acompanhado de **todas as cotas das curvas de nível** (+918, +919, +920...). Oculta as cotas de projeto. |
-| **`0`** *(ou `"tudo"` / `"completo"`)* | **Completo (Ambos)** | Exibe **todas as cotas simultaneamente** (Terreno Natural + Projeto). |
+### Principais Fórmulas Empregadas:
+
+1. **Diferença de Altura / Cota Vermelha ($h$)**:
+   $$h(d) = Z_{terreno}(d) - Z_{projetado}(d)$$
+   - $h > 0$: **Corte** (relevo natural acima do greide $\rightarrow$ escavação necessária).
+   - $h < 0$: **Aterro** (relevo natural abaixo do greide $\rightarrow$ preenchimento necessário).
+   - $h = 0$: **Ponto de Passagem (P.P.)** (cota neutra).
+
+2. **Determinação Analítica do Ponto de Passagem ($x_P$)**:
+   Quando há transição de corte para aterro entre duas estacas $x_1$ e $x_2$ (onde $h_1 \cdot h_2 < 0$), o ponto neutro exato é obtido por interpolação linear (*AGPTEA, pág. 41*):
+   $$x_P = x_1 + \left( \frac{|h_1|}{|h_1| + |h_2|} \right) \cdot (x_2 - x_1)$$
+   $$Z_P = Z_{proj}(x_P) = Z_{terreno}(x_P)$$
+
+3. **Cálculo de Áreas pelo Método dos Trapézios**:
+   Para cada sub-intervalo entre estacas $\Delta x = x_{i+1} - x_i$ (*AGPTEA, pág. 30, 42–44*):
+   $$A_i = \left( \frac{|h_i| + |h_{i+1}|}{2} \right) \cdot \Delta x$$
+   $$\text{Área Total de Corte: } A_{corte} = \sum A_{corte\_i} \quad (m^2)$$
+   $$\text{Área Total de Aterro: } A_{aterro} = \sum A_{aterro\_i} \quad (m^2)$$
+
+4. **Cubação Volumétrica e Empolamento**:
+   $$V_{corte} = A_{corte} \cdot L_f \quad (m^3)$$
+   $$V_{aterro} = A_{aterro} \cdot L_f \quad (m^3)$$
+   $$V_{solto} = V_{corte} \cdot K \quad (m^3)$$
+   *(onde $L_f$ é a largura da faixa de influência e $K$ é o fator de empolamento do solo, padrão $1,20$)*.
+
+5. **Balanço de Movimentação de Terra**:
+   $$\Delta V = V_{corte} - V_{aterro}$$
+   - Se $\Delta V > 0$: **Excesso de Terra (Sobra)** $\rightarrow$ Bota-fora de $\Delta V \cdot K$ ($m^3$ solto).
+   - Se $\Delta V < 0$: **Falta de Terra (Déficit)** $\rightarrow$ Empréstimo de jazida de $|\Delta V|$ ($m^3$).
+   - Se $\Delta V \approx 0$: **Compensação Total** $\rightarrow$ Movimentação equilibrada de terra.
 
 ---
 
 ## 🔌 Entradas (Inputs) do Componente
 
-No Grasshopper, configure os seguintes nomes e tipos de acesso no componente **Python Script**:
+No Grasshopper, configure as seguintes entradas no componente **Python Script**:
 
-| Parâmetro | Tipo / Type Hint | Acesso | Descrição |
-| :--- | :--- | :---: | :--- |
-| `Terreno` | `Curve` / `Mesh` | **List Access** | Curvas de nível 3D do terreno ou malha topográfica. |
-| `LinhaCorte` | `Curve` | **Item Access** | Linha do corte desenhada no Rhino. |
-| `Ponto` | `Point3d` | **Item Access** | Ponto de inserção onde o corte 2D será gerado na vista Top. |
-| `Retangulo` | `Curve` *(Opcional)* | **Item Access** | Contorno em planta da edificação (casa). |
-| `Cobertura` | `Curve` *(Opcional)* | **Item Access** | Contorno em planta da cobertura circular ou laje. |
-| `Plato` | `Curve` *(Opcional)* | **Item Access** | Contorno em planta do platô / aterro (ex: círculo ou polígono). |
-| `Descida` | `Curve` *(Opcional)* | **Item Access** | Contorno da rampa ou acesso de entrada do lote. |
-| `Seletor` | `int` / `str` / `bool` | **Item Access** | Modo de cotas (`1`: Projetado, `2`: Natural, `0`: Todos). |
-| `NivelPiso` | `float` *(Opcional)* | **Item Access** | Cota Z exata do piso da casa (calcula automaticamente se omitido). |
-| `NivelPlato` | `float` *(Opcional)* | **Item Access** | Cota Z do platô (alinha com o piso se omitido). |
-| `NivelAterro`| `float` *(Opcional)* | **Item Access** | Cota Z do topo do aterro / greide. |
-| `Altura` | `float` *(Opcional)* | **Item Access** | Pé-direito da casa (padrão: `3.0` m). |
-| `Espessura`| `float` *(Opcional)* | **Item Access** | Espessura da laje de cobertura (padrão: `0.20` m). |
-| `Escala` | `float` *(Opcional)* | **Item Access** | Fator de escala dos símbolos e textos NBR (padrão: `1.0`). |
+| Parâmetro | Tipo / Type Hint | Acesso | Padrão | Descrição |
+| :--- | :--- | :---: | :---: | :--- |
+| `Terreno` | `Curve` / `Mesh` | **List** | *Obrigatório* | Curvas de nível 3D do terreno ou malha topográfica. |
+| `LinhaCorte` | `Curve` | **Item** | *Obrigatório* | Linha do corte desenhada no Rhino. |
+| `CurvaProjeto` | `Curve` | **Item** | *Opcional* | **Curva ou linha do greide projetado.** Pode ser desenhada em 2D diretamente sobre o corte na vista Top (como na imagem de referência) ou em 3D sobre o terreno. |
+| `Ponto` | `Point3d` | **Item** | *Auto* | Ponto de inserção da seção 2D na vista Top. |
+| `Largura` | `float` | **Item** | `1.0` | Largura da faixa de influência em metros para cálculo de volume ($m^3$). |
+| `Empolamento`| `float` | **Item** | `1.20` | Fator de empolamento do solo ($K$) para cálculo de transporte/bota-fora (ex: 1.20 = 20%). |
+| `Seletor` | `int` / `str` | **Item** | `1` | Modo de exibição: `0` (Completo), `1` (Terraplenagem / Projetado), `2` (Apenas TN). |
+| `Escala` | `float` | **Item** | `1.0` | Escala dos símbolos NBR 6492 e textos técnicos. |
+| `NivelProjeto`| `float` | **Item** | *Auto* | Cota Z horizontal fixa caso nenhuma curva de projeto seja conectada. Se omitido, calcula a cota de equilíbrio automático da AGPTEA. |
 
 ---
 
 ## 📤 Saídas (Outputs) do Componente
 
-| Saída | Descrição |
-| :---: | :--- |
-| **`a`** | Linha 3D sobre o relevo natural (para visualização na perspectiva/axonometria). |
-| **`b`** | Polilinha 2D do terreno natural na vista Top. |
-| **`c`** | **DESENHO COMPLETO**: Terreno + Platôs + Rampa de Aterro + Edificação + Cotas NBR ativas. |
-| **`d`** | Apenas as Cotas do Projeto isoladas (para camadas/layers independentes). |
-| **`e`** | Apenas as Cotas do Terreno Natural isoladas. |
-| **`f`** | **Relatório Técnico** (Painel de texto com declividade média, cotas mín/máx, extensões e volumes). |
+| Saída | Tipo de Dado | Descrição |
+| :---: | :--- | :--- |
+| **`a`** | `PolylineCurve` | Linha 3D do corte sobre o relevo natural (coordenadas de projeto / UTM). |
+| **`b`** | `PolylineCurve` | Polilinha 2D do perfil do terreno natural na vista Top. |
+| **`c`** | `List[Geometry]` | **DESENHO COMPLETO**: Perfil TN + Greide Projetado + **Malhas Coloridas (Laranja = Corte, Verde = Aterro)** + Símbolos de Nível NBR 6492 + Textos de Alturas Máximas e P.P. |
+| **`d`** | `List[Curve]` | **Polígonos Fechados de CORTE**: Curvas fechadas prontas para uso em componentes nativos de `Area`, `Hatch` ou Bake em camadas CAD. |
+| **`e`** | `List[Curve]` | **Polígonos Fechados de ATERRO**: Curvas fechadas prontas para uso em `Area`, `Hatch` ou Bake. |
+| **`f`** | `List[str]` | **Memorial Técnico de Terraplenagem**: Relatório detalhado para visualização em `Panel`. |
 
 ---
 
-## 🚀 Como Usar no Grasshopper
+## 🎛️ Modos do Seletor (`Seletor`)
 
-1. Abra o **Grasshopper** no Rhinoceros 8.
-2. Adicione um componente **Python 3 Script** (ou **GhPython Script**).
-3. Clique duas vezes no componente para abrir o editor de código.
-4. Cole o conteúdo de [`corte_topografico.py`](corte_topografico.py).
-5. No componente no canvas, clique com o botão direito nos parâmetros de entrada e configure os nomes e **Type Hints** conforme a tabela acima (garanta que `Terreno` esteja em **List Access**).
-6. Conecte as geometrias referenciadas do Rhino aos respectivos inputs.
-7. Conecte um `Panel` na saída `f` para visualizar o memorial técnico de cálculo.
+- **`1` [Padrão]**: **Foco em Terraplenagem** — Perfil natural limpo (linha guia) + Greide do projeto + Áreas coloridas de corte/aterro + Cotas do projeto, alturas máximas e pontos de passagem.
+- **`2`**: **Apenas Terreno Natural** — Perfil natural acompanhado de todas as cotas NBR das curvas de nível (+918, +919, +920...).
+- **`0`**: **Completo** — Todas as cotas e anotações simultâneas.
 
 ---
 
-## 📐 Estrutura do Relatório Técnico (`f`)
+## 📋 Exemplo de Relatório Técnico Emitido (`f`)
 
-O componente emite um memorial técnico instantâneo formatado para visualização em `Panel`:
+Ao conectar um `Panel` na saída `f`, o componente exibe o memorial instantâneo de cálculo:
 
 ```text
-=== CORTE TOPOGRÁFICO - PROJETO COMPLETO ===
-Localização do Corte: X=293140.20, Y=7387210.50
-Extensão do Terreno : 48.35 m
-Cota Inicial / Final: 918.00 m / 926.00 m (Aclive)
-Cota Mín / Máx (TN) : 917.40 m / 926.80 m (ΔZ = 9.40 m)
-Declividade Média   : 19.44% (11.00°)
-----------------------------------------
-SELETOR DE COTAS ATIVO:
-Modo 1: Apenas Cotas do Terreno Projetado (+ Perfil Natural)
-----------------------------------------
-PLATÔ / ATERRO:
-Corte Longitudinal: Platô +921.00m com Casa e Rampa
-----------------------------------------
-CASA (RETÂNGULO):
-Casa: d=18.20m a 26.20m | Piso: +921.00m
-----------------------------------------
-COBERTURA CIRCULAR (CÍRCULO):
-Cobertura: d=15.50m a 28.90m | Cota: +924.20m
-========================================
+=================================================================
+      MEMORIAL DE CÁLCULO DE TERRAPLENAGEM (NBR 6492 & AGPTEA)    
+=================================================================
+1. DADOS DA SEÇÃO TOPOGRÁFICA:
+   - Localização no Top View : X = 293140.20, Y = 7387210.50
+   - Extensão da Linha de Corte: 50.00 m
+   - Cota Mín / Máx (TN)     : +918.00 m / +926.00 m (ΔZ = 8.00 m)
+   - Declividade Média do TN : 16.00% (9.09°)
+-----------------------------------------------------------------
+2. GREIDE PROJETADO:
+   - Tipo de Definição       : Curva 2D no Corte
+   - Cota Inicial / Final    : +925.00 m / +920.00 m (Declive)
+   - Inclinação do Greide    : -10.00% (5.71°)
+-----------------------------------------------------------------
+3. PONTOS DE PASSAGEM (P.P. - TRANSIÇÃO CORTE/ATERRO):
+  - P.P. 1: d = 20.00 m | Cota = +923.00 m
+-----------------------------------------------------------------
+4. QUADRO DE ÁREAS DA SEÇÃO (MÉTODO DOS TRAPÉZIOS AGPTEA):
+   - Área Total de CORTE  : 10.00 m²
+   - Área Total de ATERRO : 36.20 m²
+   - Altura Máxima de Corte : 1.00 m (em d = 0.00 m)
+   - Altura Máxima de Aterro: 2.00 m (em d = 50.00 m)
+-----------------------------------------------------------------
+5. CUBAÇÃO VOLUMÉTRICA:
+   - Faixa de Influência (L) : 1.00 m
+   - Fator de Empolamento (K): 1.20 (20% de expansão)
+   - Volume Geométrico de CORTE : 10.00 m³
+   - Volume Geométrico de ATERRO: 36.20 m³
+   - Volume de Corte Solto (Transporte): 12.00 m³
+-----------------------------------------------------------------
+6. BALANÇO DE MOVIMENTAÇÃO DE MASSA (COMPENSAÇÃO):
+   - Saldo Líquido (Corte - Aterro): -26.20 m³
+   - Diagnóstico Operacional:
+     FALTA DE TERRA (DÉFICIT): Necessário EMPRÉSTIMO DE JAZIDA de 26.20 m³ (compactado).
+-----------------------------------------------------------------
+7. CONFIGURAÇÃO DE VISUALIZAÇÃO:
+   - Modo 1: Apenas Cotas do Greide e Terraplenagem (Perfil Natural Limpo)
+=================================================================
 ```
+
+---
+
+## 🚀 Como Usar no Rhinoceros 8 / Grasshopper
+
+1. No Grasshopper, crie um componente **Python 3 Script** (ou **GhPython Script**).
+2. Cole o código do arquivo [`corte_topografico.py`](corte_topografico.py).
+3. Configure os parâmetros de entrada com os nomes e acessos descritos na tabela.
+4. Conecte o seu `Terreno` e a sua `LinhaCorte`.
+5. Desenhe uma linha ou curva no Rhino (no Top View sobre a seção ou em 3D no terreno) e conecte ao parâmetro `CurvaProjeto`.
+6. Conecte um `Panel` na saída `f` para auditar a movimentação de terra e volumes em tempo real!
 
 ---
 
