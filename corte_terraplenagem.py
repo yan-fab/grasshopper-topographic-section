@@ -1,42 +1,44 @@
 # -*- coding: utf-8 -*-
 """
 ===============================================================================
-CÁLCULO DE TERRAPLENAGEM E VOLUMES DE CORTE E ATERRO (NBR 6492 & AGPTEA)
+CÁLCULO DE TERRAPLENAGEM E VOLUMES MULTI-EIXOS (NBR 6492 & AGPTEA)
 ===============================================================================
 Algoritmo paramétrico para Grasshopper (Rhinoceros 8 / GhPython).
-Gera cortes topográficos com cálculo analítico de movimentação de terra,
-áreas de corte e aterro pelo Método das Seções Transversais / Trapézios,
-identificação de Pontos de Passagem (P.P.), cubação volumétrica com empolamento
-e representação gráfica com polígonos coloridos e simbologia técnica NBR 6492.
+Unifica múltiplos eixos de corte transversais (A, B, C...) e longitudinais (1, 2, 3...),
+calcula automaticamente as distâncias entre eixos consecutivos, calcula as metragens
+cúbicas de corte e aterro pelo Método das Seções Transversais da AGPTEA, alinha todas
+as seções com espaçamento uniforme e realiza a COMPENSAÇÃO PROGRESSIVA DE MASSAS
+(rastreando de onde sai a terra excedente para abastecer o aterro da próxima seção).
 
 Metodologia baseada em:
 - "TOPOGRAFIA: CÁLCULO DE VOLUMES – NOTAS DE AULA"
   Prof. Luís Augusto Koenig Veiga (UFPR / AGPTEA)
-  Cap. 3.2 (Método das Seções Transversais) e Cap. 3.4 (Terraplenagem para Plataformas)
-- NBR 6492: Representação de Projetos de Arquitetura (Simbologia de Níveis em Corte)
+  Cap. 3.2 (Método das Seções Transversais) e Cap. 3.3 (Balanço de Massas)
+- NBR 6492: Representação de Projetos de Arquitetura (Simbologia de Cortes e Níveis)
 
 ENTRADAS (INPUTS):
-  Terreno      [List, Curve/Mesh] : Curvas de nível 3D ou Malha topográfica.
-  LinhaCorte   [Item, Curve]      : Linha do corte desenhada no Rhino.
-  CurvaProjeto [Item, Curve]      : Linha/Curva de terraplenagem (pode ser desenhada
-                                    em 2D diretamente sobre o corte ou em 3D no terreno).
-  Ponto        [Item, Point3d]    : Ponto de referência para inserção no Top View.
-  Largura      [Item, float]      : Faixa de influência / largura da seção em metros (padrão: 1.0 m).
-  Empolamento  [Item, float]      : Fator de empolamento do solo para transporte (padrão: 1.20 = 20%).
-  Seletor      [Item, int]        : Modo de exibição:
-                                    0 = Completo (TN + Greide + Áreas + Todas as Cotas)
-                                    1 = Terraplenagem / Projetado [Padrão]
-                                    2 = Apenas Terreno Natural
-  Escala       [Item, float]      : Fator de escala dos símbolos e textos NBR (padrão: 1.0).
-  NivelProjeto [Item, float]      : Cota Z horizontal caso CurvaProjeto não seja informada.
+  Terreno          [List, Curve/Mesh] : Curvas de nível 3D ou Malha topográfica.
+  LinhasCorte      [List, Curve]      : Eixos de corte transversais (Seções A, B, C, D...).
+  EixosVerticais   [List, Curve]      : Eixos longitudinais/verticais (1, 2, 3...) [Opcional].
+  CurvaProjeto     [Item/List, Curve] : Greide/Linha de terraplenagem projetada [Opcional].
+  NivelProjeto     [Item, float]      : Cota Z fixa caso projeto seja horizontal [Opcional].
+  Ponto            [Item, Point3d]    : Ponto base de inserção das seções 2D no Top View.
+  Espacamento      [Item, float]      : Distância vertical uniforme entre as seções 2D.
+  Largura          [Item, float]      : Faixa de influência para seção unitária (padrão: 1.0 m).
+  Empolamento      [Item, float]      : Fator de empolamento do solo para transporte (padrão: 1.20).
+  Seletor          [Item, int]        : Modo de exibição:
+                                        0 = Completo (TN + Greide + Áreas + Todas as Cotas)
+                                        1 = Terraplenagem / Projetado [Padrão]
+                                        2 = Apenas Terreno Natural
+  Escala           [Item, float]      : Fator de escala dos símbolos, textos e balões NBR (padrão: 1.0).
 
 SAÍDAS (OUTPUTS):
-  a : Linha 3D do corte sobre o relevo natural (Coordenadas de Mundo / UTM).
-  b : Polilinha 2D do perfil do terreno natural na vista Top.
-  c : DESENHO COMPLETO (Perfil TN + Greide Projetado + Malhas Coloridas de Corte e Aterro + Cotas NBR).
-  d : Polígonos de CORTE (Closed Curves para cálculo de área, hachura e layers).
-  e : Polígonos de ATERRO (Closed Curves para cálculo de área, hachura e layers).
-  f : Memorial Técnico de Terraplenagem AGPTEA (Texto formatado para Panel).
+  a : Linhas 3D dos cortes sobre o terreno natural (Coordenadas de Mundo / UTM).
+  b : PLANTA BAIXA TÉCNICA (Eixos A, B, C... e 1, 2, 3... com balões NBR, setas de corte, cotas de distância e quadrantes).
+  c : DESENHO COMPLETO DAS SEÇÕES 2D ALINHADAS (com títulos, malhas coloridas Laranja/Verde, cotas NBR e banners de transferência de terra).
+  d : Polígonos de CORTE de todas as seções (Closed Curves para Área / Hatch / Bake).
+  e : Polígonos de ATERRO de todas as seções (Closed Curves para Área / Hatch / Bake).
+  f : Memorial Técnico Completo de Terraplenagem e Balanço Progressivo de Massas (Panel).
 ===============================================================================
 """
 
@@ -114,29 +116,24 @@ def to_list(val):
     return [val]
 
 def parse_seletor(val):
-    """
-    0: Todas as cotas e geometrias (Completo)
-    1: Foco em Terraplenagem (Perfil TN + Greide + Corte/Aterro + Cotas do Projeto)
-    2: Apenas Terreno Natural
-    """
-    if val is None:
-        return 1
-    if isinstance(val, bool):
-        return 1 if val else 2
+    if val is None: return 1
+    if isinstance(val, bool): return 1 if val else 2
     try:
         ival = int(val)
-        if ival in [0, 1, 2]:
-            return ival
-    except:
-        pass
+        if ival in [0, 1, 2]: return ival
+    except: pass
     s = str(val).strip().lower()
-    if "proj" in s or "terra" in s or "corte" in s:
-        return 1
-    elif "nat" in s or "tn" in s:
-        return 2
-    elif "tod" in s or "all" in s or "tudo" in s:
-        return 0
+    if "proj" in s or "terra" in s or "corte" in s: return 1
+    elif "nat" in s or "tn" in s: return 2
+    elif "tod" in s or "all" in s or "tudo" in s: return 0
     return 1
+
+def format_section_label(idx):
+    """Gera identificadores de seção alfabéticos: A, B, C... Z, AA, AB..."""
+    if idx < 26:
+        return chr(65 + idx)
+    else:
+        return chr(65 + (idx // 26) - 1) + chr(65 + (idx % 26))
 
 def make_filled_mesh_tri(v0, v1, v2, color=None):
     m = rg.Mesh()
@@ -151,37 +148,41 @@ def make_filled_mesh_tri(v0, v1, v2, color=None):
     m.Normals.ComputeNormals()
     return m
 
-def create_colored_mesh(quads_and_tris, color):
-    """Cria uma malha contínua colorida para visualização de corte/aterro."""
-    if not quads_and_tris: return None
+def create_colored_mesh(quads_pts, color):
+    """Cria uma malha 2D colorida (Shaded Mesh) a partir de quadriláteros formados pelos trapézios."""
+    if not quads_pts: return None
     m = rg.Mesh()
-    for pts in quads_and_tris:
-        if len(pts) == 3:
-            i0 = m.Vertices.Add(pts[0])
-            i1 = m.Vertices.Add(pts[1])
-            i2 = m.Vertices.Add(pts[2])
-            m.Faces.AddFace(i0, i1, i2)
-            if color:
-                m.VertexColors.Add(color)
-                m.VertexColors.Add(color)
-                m.VertexColors.Add(color)
-        elif len(pts) == 4:
-            i0 = m.Vertices.Add(pts[0])
-            i1 = m.Vertices.Add(pts[1])
-            i2 = m.Vertices.Add(pts[2])
-            i3 = m.Vertices.Add(pts[3])
-            m.Faces.AddFace(i0, i1, i2, i3)
+    idx = 0
+    for quad in quads_pts:
+        if len(quad) == 4:
+            p0, p1, p2, p3 = quad
+            m.Vertices.Add(p0)
+            m.Vertices.Add(p1)
+            m.Vertices.Add(p2)
+            m.Vertices.Add(p3)
+            m.Faces.AddFace(idx, idx + 1, idx + 2, idx + 3)
             if color:
                 m.VertexColors.Add(color)
                 m.VertexColors.Add(color)
                 m.VertexColors.Add(color)
                 m.VertexColors.Add(color)
+            idx += 4
+        elif len(quad) == 3:
+            p0, p1, p2 = quad
+            m.Vertices.Add(p0)
+            m.Vertices.Add(p1)
+            m.Vertices.Add(p2)
+            m.Faces.AddFace(idx, idx + 1, idx + 2)
+            if color:
+                m.VertexColors.Add(color)
+                m.VertexColors.Add(color)
+                m.VertexColors.Add(color)
+            idx += 3
     m.Normals.ComputeNormals()
     return m
 
 # =============================================================================
 # TABELAS VETORIAIS DE ALTA DEFINIÇÃO PARA TEXTO (STROKE VECTOR FONT ENGINE)
-# Garante visualização imediata, nítida e 100% visível no viewport do Grasshopper
 # =============================================================================
 STROKES = {
     '0': [[(0.1,0),(0.5,0),(0.6,0.2),(0.6,0.8),(0.5,1),(0.1,1),(0,0.8),(0,0.2),(0.1,0)], [(0.1,0.2),(0.5,0.8)]],
@@ -279,10 +280,8 @@ LOWER_STROKES = {
 }
 
 def generate_stroke_text(text_str, pt, height, justification=None):
-    """Gera curvas vetoriais a partir do traçado das letras para visualização perfeita em qualquer viewport."""
     curves = []
-    if not text_str:
-        return curves
+    if not text_str: return curves
 
     char_widths = []
     char_data = []
@@ -373,15 +372,7 @@ def generate_stroke_text(text_str, pt, height, justification=None):
     return curves
 
 def make_text_geometry(text_str, pt, height, justification=None, s=1.0):
-    """
-    Gera geometria vetorial para texto garantindo 100% de visibilidade no viewport do Grasshopper.
-    1. Tenta TextEntity.Explode() nativo do Rhino.
-    2. Tenta TextEntity.CreateCurves() com estilo ativo.
-    3. Fallback: Stroke Vector Font integrado de alta definição.
-    """
-    if not text_str:
-        return []
-
+    if not text_str: return []
     curves = []
 
     # 1. Tenta Explode nativo do Rhino
@@ -403,14 +394,11 @@ def make_text_geometry(text_str, pt, height, justification=None, s=1.0):
         exp = te.Explode()
         if exp and len(exp) > 0:
             for c in exp:
-                if c and c.IsValid:
-                    curves.append(c)
-            if len(curves) > 0:
-                return curves
-    except Exception:
-        pass
+                if c and c.IsValid: curves.append(c)
+            if len(curves) > 0: return curves
+    except: pass
 
-    # 2. Tenta CreateCurves com DimensionStyle
+    # 2. Tenta CreateCurves
     try:
         doc = Rhino.RhinoDoc.ActiveDoc
         dim_style = doc.DimStyles.Current if (doc and hasattr(doc, 'DimStyles')) else None
@@ -418,17 +406,13 @@ def make_text_geometry(text_str, pt, height, justification=None, s=1.0):
             exp2 = te.CreateCurves(dim_style, False, 1.0, 1.0)
             if exp2 and len(exp2) > 0:
                 for c in exp2:
-                    if c and c.IsValid:
-                        curves.append(c)
-                if len(curves) > 0:
-                    return curves
-    except Exception:
-        pass
+                    if c and c.IsValid: curves.append(c)
+                if len(curves) > 0: return curves
+    except: pass
 
-    # 3. Fallback absoluto: Traçado vetorial nítido (Stroke Vector Font)
+    # 3. Fallback: Stroke Vector Font integrado
     return generate_stroke_text(text_str, pt, height, justification)
 
-# Alias de compatibilidade
 make_text_entity = make_text_geometry
 
 def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0):
@@ -457,7 +441,6 @@ def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0):
     p_div_r = rg.Point3d(center_x + w_box / 2.0 - 0.5 * s, y_div, 0.0)
     div_crv = rg.LineCurve(p_div_l, p_div_r)
 
-    # Posições verticais dos textos
     y_t1 = center_y + h_box / 4.0 + 0.05 * s
     y_t2 = center_y - h_box / 4.0 + 0.05 * s
 
@@ -524,635 +507,753 @@ def draw_nbr_level_marker(x, y, text_str, s=1.0):
             geoms.append(te_crvs)
     return geoms, te_crvs
 
-def run():
-    doc = Rhino.RhinoDoc.ActiveDoc
-    tol = doc.ModelAbsoluteTolerance if doc else 0.001
+# =============================================================================
+# FUNÇÕES DE APOIO MULTI-EIXOS: PLANTA BAIXA, BALÕES NBR E DISTÂNCIAS
+# =============================================================================
 
-    # 1. Obtenção dos parâmetros de entrada
-    raw_terreno      = globals().get('Terreno', globals().get('x', None))
-    raw_linha        = globals().get('LinhaCorte', globals().get('y', None))
-    raw_projeto      = globals().get('CurvaProjeto', globals().get('Greide', globals().get('Projeto', globals().get('LinhaProjeto', globals().get('CurvaCorte', None)))))
-    raw_ponto        = globals().get('Ponto', globals().get('Point', globals().get('Origem', globals().get('Localizacao', None))))
-    
-    raw_largura      = globals().get('Largura', globals().get('Faixa', globals().get('FaixaInfluencia', globals().get('LarguraFaixa', 1.0))))
-    raw_empolamento  = globals().get('Empolamento', globals().get('FatorK', globals().get('K', 1.20)))
-    raw_seletor      = globals().get('Seletor', globals().get('Modo', globals().get('ModoCotas', 1)))
-    raw_escala       = globals().get('Escala', 1.0)
-    raw_nivel_proj   = globals().get('NivelProjeto', globals().get('CotaProjeto', globals().get('CotaGreide', None)))
+def draw_plan_axis_bubble(pt, dir_vec, label_str, s=1.0):
+    """Gera o balão circular NBR 6492 nas extremidades das linhas de corte em planta com seta de visada."""
+    geoms = []
+    r = 1.35 * s
+    circ = rg.Circle(pt, r).ToNurbsCurve()
+    geoms.append(circ)
 
-    modo_cotas = parse_seletor(raw_seletor)
-    largura_secao = float(raw_largura) if raw_largura is not None and float(raw_largura) > 0 else 1.0
-    fator_k = float(raw_empolamento) if raw_empolamento is not None and float(raw_empolamento) > 0 else 1.20
-    s = float(raw_escala) if raw_escala is not None and float(raw_escala) > 0 else 1.0
+    txt_crvs = make_text_geometry(label_str, pt, 1.15 * s, rg.TextJustification.MiddleCenter, s)
+    if txt_crvs: geoms.extend(txt_crvs)
 
-    if raw_terreno is None or raw_linha is None:
-        msg = "⚠️ Conecte 'Terreno' e 'LinhaCorte' para gerar o perfil topográfico."
-        return None, None, None, [], [], [msg]
+    if dir_vec and dir_vec.Length > 1e-4:
+        v_norm = rg.Vector3d(dir_vec)
+        v_norm.Unitize()
+        n_view = rg.Vector3d(-v_norm.Y, v_norm.X, 0.0)
+        p_base = pt + n_view * r
+        p_tip = pt + n_view * (r + 1.2 * s)
+        p_left = p_base - v_norm * (0.45 * s)
+        p_right = p_base + v_norm * (0.45 * s)
 
-    cut_crv = to_rhino_curve(raw_linha)
-    if cut_crv is None:
-        l_list = to_list(raw_linha)
-        if l_list: cut_crv = to_rhino_curve(l_list[0])
+        seta_mesh = make_filled_mesh_tri(p_tip, p_left, p_right)
+        l_seta1 = rg.LineCurve(p_tip, p_left)
+        l_seta2 = rg.LineCurve(p_tip, p_right)
+        l_seta3 = rg.LineCurve(p_left, p_right)
+        geoms.extend([seta_mesh, l_seta1, l_seta2, l_seta3])
 
-    if cut_crv is None:
-        return None, None, None, [], [], ["ERRO: 'LinhaCorte' inválida ou não pôde ser convertida."]
+    return geoms
 
-    terrain_geoms = []
-    for item in to_list(raw_terreno):
-        g = to_rhino_geom(item)
-        if g is not None: terrain_geoms.append(g)
+def draw_plan_dimension(p1, p2, dist_val, s=1.0):
+    """Desenha uma cota linear técnica com ticks e texto de distância entre dois eixos em planta."""
+    geoms = []
+    vec = p2 - p1
+    d_len = vec.Length
+    if d_len < 1e-3: return geoms
 
-    if not terrain_geoms:
-        return None, None, None, [], [], ["ERRO: Nenhuma curva ou malha válida fornecida em 'Terreno'."]
+    u = rg.Vector3d(vec)
+    u.Unitize()
+    n = rg.Vector3d(-u.Y, u.X, 0.0)
 
-    # Geometria e orientação da linha de corte
-    p_start = cut_crv.PointAtStart
-    p_end = cut_crv.PointAtEnd
-    dx = p_end.X - p_start.X
-    dy = p_end.Y - p_start.Y
-    L_horiz = math.hypot(dx, dy)
+    l_cota = rg.LineCurve(p1, p2)
+    geoms.append(l_cota)
 
-    if L_horiz < 1e-4:
-        return None, None, None, [], [], ["ERRO: 'LinhaCorte' com comprimento nulo."]
+    tick_len = 0.6 * s
+    t1_a = p1 - n * (tick_len / 2.0) - u * (0.2 * s)
+    t1_b = p1 + n * (tick_len / 2.0) + u * (0.2 * s)
+    t2_a = p2 - n * (tick_len / 2.0) - u * (0.2 * s)
+    t2_b = p2 + n * (tick_len / 2.0) + u * (0.2 * s)
+    geoms.append(rg.LineCurve(t1_a, t1_b))
+    geoms.append(rg.LineCurve(t2_a, t2_b))
 
-    ux = dx / L_horiz
-    uy = dy / L_horiz
-    cut_plane = rg.Plane(rg.Point3d(p_start.X, p_start.Y, 0), rg.Vector3d(ux, uy, 0), rg.Vector3d.ZAxis)
+    p_mid = (p1 + p2) / 2.0 + n * (0.60 * s)
+    txt_cota = make_text_geometry("D = {:.2f}m".format(dist_val).replace('.', ','), p_mid, 0.75 * s, rg.TextJustification.MiddleCenter, s)
+    if txt_cota: geoms.extend(txt_cota)
 
-    # 2. Interseção com as curvas de nível do terreno natural (Perfil 3D)
-    pts_with_d = []
-    for g in terrain_geoms:
-        if isinstance(g, rg.Curve):
-            evs = rg.Intersect.Intersection.CurvePlane(g, cut_plane, tol)
-            if evs:
-                for ev in evs:
-                    pt = ev.PointA
-                    d = (pt.X - p_start.X) * ux + (pt.Y - p_start.Y) * uy
-                    if -tol <= d <= L_horiz + tol:
-                        pts_with_d.append((d, pt))
-        elif isinstance(g, rg.Mesh):
-            polys = rg.Intersect.Intersection.MeshPlane(g, cut_plane)
-            if polys:
-                for poly in polys:
-                    for pt in poly:
-                        d = (pt.X - p_start.X) * ux + (pt.Y - p_start.Y) * uy
-                        if -tol <= d <= L_horiz + tol:
-                            pts_with_d.append((d, pt))
+    return geoms
 
-    if not pts_with_d:
-        return None, None, None, [], [], ["⚠️ Nenhuma interseção encontrada entre 'LinhaCorte' e 'Terreno'."]
+def calculate_axis_distance(crv_a, crv_b):
+    """Calcula a distância ortogonal média entre duas linhas de corte consecutivas em planta."""
+    try:
+        t_mid_a = crv_a.Domain.Min + 0.5 * (crv_a.Domain.Max - crv_a.Domain.Min)
+        p_mid_a = crv_a.PointAt(t_mid_a)
+        rc, t_b = crv_b.ClosestPoint(p_mid_a)
+        d1 = p_mid_a.DistanceTo(crv_b.PointAt(t_b)) if rc else None
 
-    pts_with_d.sort(key=lambda x: x[0])
+        t_mid_b = crv_b.Domain.Min + 0.5 * (crv_b.Domain.Max - crv_b.Domain.Min)
+        p_mid_b = crv_b.PointAt(t_mid_b)
+        rc2, t_a = crv_a.ClosestPoint(p_mid_b)
+        d2 = p_mid_b.DistanceTo(crv_a.PointAt(t_a)) if rc2 else None
+
+        if d1 is not None and d2 is not None:
+            return (d1 + d2) / 2.0
+        elif d1 is not None:
+            return d1
+        elif d2 is not None:
+            return d2
+        else:
+            return p_mid_a.DistanceTo(p_mid_b)
+    except:
+        return 1.0
+
+def make_mass_haul_banner(center_x, center_y, label_prev, label_next, dist_val, vol_corte, vol_aterro, saldo, transfer_note, s=1.0):
+    """
+    Desenha o banner técnico entre seções com o volume do trecho, saldo e seta indicativa
+    de transferência de massa de onde sai para onde vai a terra na próxima seção.
+    """
+    geoms = []
+    w_box = max(len(transfer_note) * 0.70 * s + 2.5 * s, 26.0 * s)
+    h_box = 3.6 * s
+
+    p0 = rg.Point3d(center_x - w_box / 2.0, center_y - h_box / 2.0, 0.0)
+    p1 = rg.Point3d(center_x + w_box / 2.0, center_y - h_box / 2.0, 0.0)
+    p2 = rg.Point3d(center_x + w_box / 2.0, center_y + h_box / 2.0, 0.0)
+    p3 = rg.Point3d(center_x - w_box / 2.0, center_y + h_box / 2.0, 0.0)
+    box_crv = rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve()
+    geoms.append(box_crv)
+
+    y_div = center_y
+    l_div = rg.LineCurve(rg.Point3d(center_x - w_box/2.0 + 0.5*s, y_div, 0.0), rg.Point3d(center_x + w_box/2.0 - 0.5*s, y_div, 0.0))
+    geoms.append(l_div)
+
+    t1_str = "TRECHO {} - {} (D = {:.2f}m) | V.Corte: {:.1f}m³ | V.Aterro: {:.1f}m³ | Saldo: {:+.1f}m³".format(
+        label_prev, label_next, dist_val, vol_corte, vol_aterro, saldo
+    ).replace('.', ',')
+    pt_t1 = rg.Point3d(center_x, center_y + h_box / 4.0 + 0.05 * s, 0.0)
+    t1_crvs = make_text_geometry(t1_str, pt_t1, 0.75 * s, rg.TextJustification.MiddleCenter, s)
+    if t1_crvs: geoms.extend(t1_crvs)
+
+    pt_t2 = rg.Point3d(center_x, center_y - h_box / 4.0 + 0.05 * s, 0.0)
+    t2_crvs = make_text_geometry(transfer_note, pt_t2, 0.70 * s, rg.TextJustification.MiddleCenter, s)
+    if t2_crvs: geoms.extend(t2_crvs)
+
+    # Seta vertical indicando sentido de transporte longitudinal para a próxima seção
+    y_arr_top = center_y - h_box / 2.0
+    y_arr_bot = center_y - h_box / 2.0 - 1.4 * s
+    p_arr_top = rg.Point3d(center_x, y_arr_top, 0.0)
+    p_arr_bot = rg.Point3d(center_x, y_arr_bot, 0.0)
+    geoms.append(rg.LineCurve(p_arr_top, p_arr_bot))
+
+    p_tip = p_arr_bot
+    p_l = rg.Point3d(center_x - 0.40 * s, y_arr_bot + 0.55 * s, 0.0)
+    p_r = rg.Point3d(center_x + 0.40 * s, y_arr_bot + 0.55 * s, 0.0)
+    arrow_mesh = make_filled_mesh_tri(p_tip, p_l, p_r)
+    geoms.extend([arrow_mesh, rg.LineCurve(p_tip, p_l), rg.LineCurve(p_tip, p_r), rg.LineCurve(p_l, p_r)])
+
+    return geoms
+
+# =============================================================================
+# AVALIAÇÃO ANALÍTICA DE UMA SEÇÃO TRANSVERSAL INDIVIDUAL
+# =============================================================================
+
+def evaluate_section_data(crv_corte, lista_terreno, curva_greide_in, raw_nivel_proj, tol):
+    """Calcula a geometria 3D, perfil de terreno natural e greide de terraplenagem para uma seção."""
+    intersecoes_3d = []
+    for item in lista_terreno:
+        geom = to_rhino_geom(item)
+        if geom is None: continue
+        if isinstance(geom, rg.Curve):
+            ev = rg.Intersect.Intersection.CurveCurve(crv_corte, geom, tol, tol)
+            if ev:
+                for cc in ev:
+                    if cc.IsPoint:
+                        t_val = cc.ParameterA
+                        pt_corte = crv_corte.PointAt(t_val)
+                        intersecoes_3d.append((t_val, rg.Point3d(pt_corte.X, pt_corte.Y, cc.PointB.Z)))
+        elif isinstance(geom, rg.Mesh):
+            ev_mc = rg.Intersect.Intersection.MeshPolyline(geom, rg.Polyline([crv_corte.PointAtStart, crv_corte.PointAtEnd]))
+            if ev_mc:
+                for pt in ev_mc[0]:
+                    rc, t_val = crv_corte.ClosestPoint(pt, tol * 10)
+                    if rc: intersecoes_3d.append((t_val, pt))
+
+    num_amostras = 150
+    t_start, t_end = crv_corte.Domain.Min, crv_corte.Domain.Max
+    dt = (t_end - t_start) / float(num_amostras)
+
+    pts_amostrados = []
+    for i in range(num_amostras + 1):
+        t_param = t_start + i * dt
+        pt_eval = crv_corte.PointAt(t_param)
+        z_found = None
+        for item in lista_terreno:
+            geom = to_rhino_geom(item)
+            if isinstance(geom, rg.Mesh):
+                ray = rg.Ray3d(rg.Point3d(pt_eval.X, pt_eval.Y, -10000.0), rg.Vector3d.ZAxis)
+                h = rg.Intersect.Intersection.MeshRay(geom, ray)
+                if h >= 0:
+                    z_found = -10000.0 + h
+                    break
+        if z_found is not None:
+            pts_amostrados.append((t_param, rg.Point3d(pt_eval.X, pt_eval.Y, z_found)))
+
+    pts_totais = sorted(intersecoes_3d + pts_amostrados, key=lambda x: x[0])
+    if not pts_totais:
+        pts_totais = [
+            (t_start, rg.Point3d(crv_corte.PointAtStart.X, crv_corte.PointAtStart.Y, 0.0)),
+            (t_end, rg.Point3d(crv_corte.PointAtEnd.X, crv_corte.PointAtEnd.Y, 0.0))
+        ]
+
     clean_pts = []
-    for d, pt in pts_with_d:
-        if not clean_pts:
-            clean_pts.append((d, pt))
+    d_acum = 0.0
+    for idx_p, (t_val, pt) in enumerate(pts_totais):
+        if idx_p == 0:
+            clean_pts.append((0.0, pt))
         else:
-            if abs(d - clean_pts[-1][0]) > 0.05 or abs(pt.Z - clean_pts[-1][1].Z) > 0.02:
-                clean_pts.append((d, pt))
+            prev_pt = clean_pts[-1][1]
+            dist_seg = rg.Point3d(pt.X, pt.Y, 0.0).DistanceTo(rg.Point3d(prev_pt.X, prev_pt.Y, 0.0))
+            if dist_seg > 0.005:
+                d_acum += dist_seg
+                clean_pts.append((d_acum, pt))
 
-    if len(clean_pts) < 2:
-        return None, None, None, [], [], ["AVISO: A linha de corte cruza menos de 2 pontos de relevo."]
+    total_ext = clean_pts[-1][0] if clean_pts else 1.0
+    crv_3d = rg.PolylineCurve([p[1] for p in clean_pts])
 
-    globals()['_cached_clean_pts'] = clean_pts
+    z_min = min(p[1].Z for p in clean_pts)
+    z_max = max(p[1].Z for p in clean_pts)
 
-    # Perfil 3D
-    pts_3d = [pt for d, pt in clean_pts]
-    out_3d = rg.PolylineCurve(pts_3d)
+    def get_proj_z(d_val):
+        if curva_greide_in is not None:
+            c_dom = curva_greide_in.Domain
+            t_greide = c_dom.Min + (d_val / total_ext) * (c_dom.Max - c_dom.Min)
+            pt_g = curva_greide_in.PointAt(t_greide)
+            if abs(pt_g.Z) < 0.001 and abs(pt_g.Y) > 0.001:
+                return pt_g.Y
+            return pt_g.Z
+        elif raw_nivel_proj is not None:
+            try: return float(raw_nivel_proj)
+            except: pass
+        return sum(p[1].Z for p in clean_pts) / float(len(clean_pts))
 
-    # Ponto de Inserção da Seção 2D na vista Top
-    user_pt = to_rhino_point(raw_ponto)
-    if user_pt is not None:
-        orig_x = user_pt.X
-        orig_y = user_pt.Y
-    else:
-        bbox_cut = cut_crv.GetBoundingBox(True)
-        orig_x = bbox_cut.Min.X
-        orig_y = bbox_cut.Min.Y - 30.0
+    num_passos = max(int(total_ext / 0.25), 80)
+    dx = total_ext / float(num_passos)
+    estacas_d = [i * dx for i in range(num_passos + 1)]
+    if estacas_d[-1] < total_ext: estacas_d.append(total_ext)
 
-    z_min = min(pt.Z for pt in pts_3d)
-    z_max = max(pt.Z for pt in pts_3d)
-    delta_z = z_max - z_min
-    datum_z = math.floor(z_min) - 2.0
-    total_ext = clean_pts[-1][0] - clean_pts[0][0]
-
-    # Construção do Perfil 2D do Terreno Natural
-    pts_2d = []
-    base_terreno_2d = []
-    cotas_tn_geoms  = []
-
-    p_base_ini = rg.Point3d(orig_x + clean_pts[0][0], orig_y, 0.0)
-    p_base_fim = rg.Point3d(orig_x + clean_pts[-1][0], orig_y, 0.0)
-    linha_datum = rg.LineCurve(p_base_ini, p_base_fim)
-    base_terreno_2d.append(linha_datum)
-
-    for d, pt in clean_pts:
-        px = orig_x + d
-        py_terreno = orig_y + (pt.Z - datum_z)
-        p_corte = rg.Point3d(px, py_terreno, 0.0)
-        pts_2d.append(p_corte)
-
-        cota_str = "+{:.2f}".format(pt.Z).replace('.', ',') if pt.Z > 0 else "{:.2f}".format(pt.Z).replace('.', ',')
-        m_geoms, te = draw_nbr_level_marker(px, py_terreno, cota_str, s)
-        cotas_tn_geoms.extend(m_geoms)
-
-    out_2d = rg.PolylineCurve(pts_2d)
-    base_terreno_2d.append(out_2d)
-
-    # Polígono base sob o terreno natural
-    poly_solo_pts = [p_base_ini, p_base_fim] + list(reversed(pts_2d)) + [p_base_ini]
-    base_terreno_2d.append(rg.Polyline(poly_solo_pts).ToPolylineCurve())
-
-    # =========================================================================
-    # 3. INTERPRETAÇÃO DA CURVA DO PROJETO / GREIDE DE TERRAPLENAGEM
-    # =========================================================================
-    crv_proj = to_rhino_curve(raw_projeto)
-    if crv_proj is None and to_list(raw_projeto):
-        crv_proj = to_rhino_curve(to_list(raw_projeto)[0])
-
-    proj_samples = [] # lista de tuplas (d, Z_proj)
-    tipo_greide = "Automático (Compensação)"
-
-    if crv_proj is not None:
-        bbox_p = crv_proj.GetBoundingBox(True)
-        c_proj = bbox_p.Center
-        dist_to_section = math.hypot(c_proj.X - orig_x, c_proj.Y - orig_y)
-        dist_to_terrain = math.hypot(c_proj.X - p_start.X, c_proj.Y - p_start.Y)
-        is_flat_z = (bbox_p.Max.Z - bbox_p.Min.Z < 0.1) and (abs(c_proj.Z) < 1.0)
-
-        # Detecta se foi desenhada diretamente em 2D na vista Top sobre o corte
-        is_2d_section = (dist_to_section < dist_to_terrain or is_flat_z) and (dist_to_section < 3.0 * (L_horiz + 100.0))
-
-        if is_2d_section:
-            tipo_greide = "Curva 2D no Corte"
-            succ, poly = crv_proj.TryGetPolyline()
-            if succ and poly:
-                for pt in poly:
-                    d = pt.X - orig_x
-                    z = (pt.Y - orig_y) + datum_z
-                    proj_samples.append((d, z))
-            else:
-                t_div = crv_proj.DivideByCount(80, True)
-                if t_div:
-                    for t in t_div:
-                        pt = crv_proj.PointAt(t)
-                        d = pt.X - orig_x
-                        z = (pt.Y - orig_y) + datum_z
-                        proj_samples.append((d, z))
-                else:
-                    ps, pe = crv_proj.PointAtStart, crv_proj.PointAtEnd
-                    proj_samples = [
-                        (ps.X - orig_x, (ps.Y - orig_y) + datum_z),
-                        (pe.X - orig_x, (pe.Y - orig_y) + datum_z)
-                    ]
-        else:
-            # Curva 3D sobre o relevo
-            tipo_greide = "Curva 3D no Terreno"
-            succ, poly = crv_proj.TryGetPolyline()
-            pts_3d_p = list(poly) if (succ and poly) else [crv_proj.PointAt(t) for t in (crv_proj.DivideByCount(80, True) or [])]
-            if not pts_3d_p: pts_3d_p = [crv_proj.PointAtStart, crv_proj.PointAtEnd]
-            for pt in pts_3d_p:
-                d = (pt.X - p_start.X) * ux + (pt.Y - p_start.Y) * uy
-                z = pt.Z
-                proj_samples.append((d, z))
-
-    # Fallback se CurvaProjeto não foi fornecida
-    if not proj_samples:
-        if raw_nivel_proj is not None:
-            z_fixo = float(raw_nivel_proj)
-            tipo_greide = "Cota Fixa Horizontal (+{:.2f}m)".format(z_fixo)
-        else:
-            # Hipótese 01 AGPTEA (pág. 40-41): Plano de equilíbrio onde Corte ≈ Aterro
-            # Média ponderada pela extensão do terreno
-            area_tn_acc = 0.0
-            for i in range(len(clean_pts) - 1):
-                da, pa = clean_pts[i]
-                db, pb = clean_pts[i+1]
-                area_tn_acc += ((pa.Z + pb.Z) / 2.0) * (db - da)
-            z_fixo = (area_tn_acc / total_ext) if total_ext > 0 else z_min
-            tipo_greide = "Compensação Automática AGPTEA (+{:.2f}m)".format(z_fixo)
-
-        d_ini = clean_pts[0][0]
-        d_fim = clean_pts[-1][0]
-        proj_samples = [(d_ini, z_fixo), (d_fim, z_fixo)]
-
-    # Ordena os pontos do projeto por d
-    proj_samples.sort(key=lambda x: x[0])
-
-    # Se for uma reta simples de 2 pontos, extrapola até os limites do corte
-    d_min_corte = clean_pts[0][0]
-    d_max_corte = clean_pts[-1][0]
-    if len(proj_samples) == 2:
-        d0, z0 = proj_samples[0]
-        d1, z1 = proj_samples[1]
-        if abs(d1 - d0) > 1e-4:
-            m_slope = (z1 - z0) / (d1 - d0)
-            proj_samples = [
-                (d_min_corte, z0 + m_slope * (d_min_corte - d0)),
-                (d_max_corte, z0 + m_slope * (d_max_corte - d0))
-            ]
-
-    def interpolate_proj_z(d_val):
-        if not proj_samples: return z_min
-        if d_val <= proj_samples[0][0]:
-            if len(proj_samples) >= 2:
-                d0, z0 = proj_samples[0]
-                d1, z1 = proj_samples[1]
-                slope = (z1 - z0) / (d1 - d0) if abs(d1 - d0) > 1e-6 else 0.0
-                return z0 + slope * (d_val - d0)
-            return proj_samples[0][1]
-        if d_val >= proj_samples[-1][0]:
-            if len(proj_samples) >= 2:
-                d0, z0 = proj_samples[-2]
-                d1, z1 = proj_samples[-1]
-                slope = (z1 - z0) / (d1 - d0) if abs(d1 - d0) > 1e-6 else 0.0
-                return z1 + slope * (d_val - d1)
-            return proj_samples[-1][1]
-        for i in range(len(proj_samples) - 1):
-            d0, z0 = proj_samples[i]
-            d1, z1 = proj_samples[i+1]
-            if d0 <= d_val <= d1:
-                t = (d_val - d0) / (d1 - d0) if (d1 - d0) > 1e-6 else 0.0
-                return z0 + t * (z1 - z0)
-        return proj_samples[-1][1]
-
-    # =========================================================================
-    # 4. DISCRETIZAÇÃO, PONTOS DE PASSAGEM E CÁLCULO DAS ÁREAS (AGPTEA)
-    # =========================================================================
-    # Coleta todas as estacas / pontos notáveis
-    estacas_set = set()
-    for d, _ in clean_pts: estacas_set.add(round(d, 4))
-    for d, _ in proj_samples:
-        if d_min_corte <= d <= d_max_corte: estacas_set.add(round(d, 4))
-
-    # Adiciona amostragem regular fina para precisão
-    d_step = 0.5
-    cur_d = d_min_corte
-    while cur_d <= d_max_corte:
-        estacas_set.add(round(cur_d, 4))
-        cur_d += d_step
-    estacas_set.add(round(d_max_corte, 4))
-
-    estacas_ordenadas = sorted(list(estacas_set))
-
-    # Busca analítica rigorosa dos Pontos de Passagem (P.P. onde h = 0)
     pontos_passagem = []
-    for i in range(len(estacas_ordenadas) - 1):
-        da = estacas_ordenadas[i]
-        db = estacas_ordenadas[i+1]
-        ha = interpolate_terrain_z(da, clean_pts) - interpolate_proj_z(da)
-        hb = interpolate_terrain_z(db, clean_pts) - interpolate_proj_z(db)
+    diff_sinais = []
+    for d in estacas_d:
+        z_tn = interpolate_terrain_z(d, clean_pts)
+        z_pr = get_proj_z(d)
+        diff_sinais.append((d, z_tn - z_pr))
 
-        if abs(ha) < 1e-4:
-            za = interpolate_proj_z(da)
-            if not any(abs(da - p[0]) < 0.05 for p in pontos_passagem):
-                pontos_passagem.append((da, za))
-        elif ha * hb < -1e-6:
-            # Fórmula da Interpolação Linear / Ponto de Passagem (AGPTEA pág. 41)
-            t = abs(ha) / (abs(ha) + abs(hb))
-            dp = da + t * (db - da)
-            zp = interpolate_proj_z(dp)
-            if not any(abs(dp - p[0]) < 0.05 for p in pontos_passagem):
-                pontos_passagem.append((dp, zp))
-                estacas_set.add(round(dp, 4))
+    for i in range(len(diff_sinais) - 1):
+        d1, diff1 = diff_sinais[i]
+        d2, diff2 = diff_sinais[i+1]
+        if diff1 * diff2 < 0.0:
+            t_pp = abs(diff1) / (abs(diff1) + abs(diff2))
+            d_pp = d1 + t_pp * (d2 - d1)
+            pontos_passagem.append((d_pp, get_proj_z(d_pp)))
 
-    estacas_finais = sorted(list(estacas_set))
+    estacas_finais = sorted(list(set(estacas_d + [p[0] for p in pontos_passagem])))
 
-    # Agrupamento em Regiões Contínuas de Corte e Aterro
-    regioes = [] # [(tipo, [d0, d1, d2...])]
-    tipo_atual = None
-    d_acumulados = []
+    regioes = []
+    cur_tipo = None
+    cur_pts = []
 
     for i in range(len(estacas_finais) - 1):
-        da = estacas_finais[i]
-        db = estacas_finais[i+1]
-        dx = db - da
-        if dx < 1e-4: continue
+        d_a = estacas_finais[i]
+        d_b = estacas_finais[i+1]
+        d_mid = (d_a + d_b) / 2.0
+        z_tn_m = interpolate_terrain_z(d_mid, clean_pts)
+        z_pr_m = get_proj_z(d_mid)
+        tipo = "CORTE" if z_tn_m >= z_pr_m else "ATERRO"
 
-        d_mid = (da + db) / 2.0
-        h_mid = interpolate_terrain_z(d_mid, clean_pts) - interpolate_proj_z(d_mid)
-        tipo_seg = "CORTE" if h_mid > 1e-4 else ("ATERRO" if h_mid < -1e-4 else "NULO")
-        if tipo_seg == "NULO": continue
-
-        if tipo_atual is None:
-            tipo_atual = tipo_seg
-            d_acumulados = [da, db]
-        elif tipo_atual == tipo_seg:
-            d_acumulados.append(db)
+        if tipo != cur_tipo:
+            if cur_pts: regioes.append((cur_tipo, cur_pts))
+            cur_tipo = tipo
+            cur_pts = [d_a, d_b]
         else:
-            regioes.append((tipo_atual, d_acumulados))
-            tipo_atual = tipo_seg
-            d_acumulados = [da, db]
+            cur_pts.append(d_b)
+    if cur_pts: regioes.append((cur_tipo, cur_pts))
 
-    if tipo_atual and d_acumulados:
-        regioes.append((tipo_atual, d_acumulados))
-
-    # Construção dos Polígonos Fechados e Malhas Coloridas
-    poligonos_corte_crvs  = []
-    poligonos_aterro_crvs = []
-    quads_corte_mesh      = []
-    quads_aterro_mesh     = []
-
-    area_total_corte  = 0.0
+    area_total_corte = 0.0
     area_total_aterro = 0.0
-    max_h_corte  = 0.0
-    d_max_corte  = d_min_corte
+    max_h_corte = 0.0
     max_h_aterro = 0.0
-    d_max_aterro = d_min_corte
+    d_max_corte = 0.0
+    d_max_aterro = 0.0
 
     for r_type, d_list in regioes:
-        # 1. Quads elementares para malha colorida e cálculo de área
         for j in range(len(d_list) - 1):
             d1 = d_list[j]
             d2 = d_list[j+1]
-            dx = d2 - d1
+            seg_dx = d2 - d1
+            if seg_dx <= 1e-6: continue
 
-            z_tn1 = interpolate_terrain_z(d1, clean_pts)
-            z_tn2 = interpolate_terrain_z(d2, clean_pts)
-            z_pr1 = interpolate_proj_z(d1)
-            z_pr2 = interpolate_proj_z(d2)
-
-            h1 = abs(z_tn1 - z_pr1)
-            h2 = abs(z_tn2 - z_pr2)
-            # Método dos Trapézios das Notas de Aula da AGPTEA (pág. 30, 42-44)
-            a_elem = ((h1 + h2) / 2.0) * dx
-
-            p_tn1 = rg.Point3d(orig_x + d1, orig_y + (z_tn1 - datum_z), 0.0)
-            p_tn2 = rg.Point3d(orig_x + d2, orig_y + (z_tn2 - datum_z), 0.0)
-            p_pr1 = rg.Point3d(orig_x + d1, orig_y + (z_pr1 - datum_z), 0.0)
-            p_pr2 = rg.Point3d(orig_x + d2, orig_y + (z_pr2 - datum_z), 0.0)
+            h1 = abs(interpolate_terrain_z(d1, clean_pts) - get_proj_z(d1))
+            h2 = abs(interpolate_terrain_z(d2, clean_pts) - get_proj_z(d2))
+            a_elem = ((h1 + h2) / 2.0) * seg_dx
 
             if r_type == "CORTE":
                 area_total_corte += a_elem
-                quads_corte_mesh.append([p_tn1, p_tn2, p_pr2, p_pr1])
                 if h1 > max_h_corte: max_h_corte, d_max_corte = h1, d1
                 if h2 > max_h_corte: max_h_corte, d_max_corte = h2, d2
             else:
                 area_total_aterro += a_elem
-                quads_aterro_mesh.append([p_pr1, p_pr2, p_tn2, p_tn1])
                 if h1 > max_h_aterro: max_h_aterro, d_max_aterro = h1, d1
                 if h2 > max_h_aterro: max_h_aterro, d_max_aterro = h2, d2
 
-        # 2. Polígono fechado do contorno da região
-        pts_poly = []
-        if r_type == "CORTE":
-            for d in d_list:
-                z = interpolate_terrain_z(d, clean_pts)
-                pts_poly.append(rg.Point3d(orig_x + d, orig_y + (z - datum_z), 0.0))
-            for d in reversed(d_list):
-                z = interpolate_proj_z(d)
-                pts_poly.append(rg.Point3d(orig_x + d, orig_y + (z - datum_z), 0.0))
-            pts_poly.append(pts_poly[0])
-            crv_fechada = rg.Polyline(pts_poly).ToPolylineCurve()
-            poligonos_corte_crvs.append(crv_fechada)
-        else:
-            for d in d_list:
-                z = interpolate_proj_z(d)
-                pts_poly.append(rg.Point3d(orig_x + d, orig_y + (z - datum_z), 0.0))
-            for d in reversed(d_list):
-                z = interpolate_terrain_z(d, clean_pts)
-                pts_poly.append(rg.Point3d(orig_x + d, orig_y + (z - datum_z), 0.0))
-            pts_poly.append(pts_poly[0])
-            crv_fechada = rg.Polyline(pts_poly).ToPolylineCurve()
-            poligonos_aterro_crvs.append(crv_fechada)
+    return {
+        'clean_pts': clean_pts,
+        'total_ext': total_ext,
+        'crv_3d': crv_3d,
+        'z_min': z_min,
+        'z_max': z_max,
+        'get_proj_z': get_proj_z,
+        'estacas_finais': estacas_finais,
+        'regioes': regioes,
+        'area_total_corte': area_total_corte,
+        'area_total_aterro': area_total_aterro,
+        'max_h_corte': max_h_corte,
+        'd_max_corte': d_max_corte,
+        'max_h_aterro': max_h_aterro,
+        'd_max_aterro': d_max_aterro,
+        'pontos_passagem': pontos_passagem
+    }
 
-    # Malhas Coloridas em Laranja (Corte) e Verde (Aterro)
+# =============================================================================
+# COORDENADOR PRINCIPAL: MULTI-EIXOS, ALINHAMENTO, CUBAGEM E BALANÇO DE MASSAS
+# =============================================================================
+
+def run():
+    doc = Rhino.RhinoDoc.ActiveDoc
+    tol = doc.ModelAbsoluteTolerance if doc else 0.001
+
+    raw_terreno      = globals().get('Terreno', globals().get('x', None))
+    raw_linhas       = globals().get('LinhasCorte', globals().get('LinhaCorte', globals().get('y', None)))
+    raw_verticais    = globals().get('EixosVerticais', globals().get('LinhasLongitudinais', globals().get('Verticais', globals().get('Eixos', None))))
+    raw_projeto      = globals().get('CurvaProjeto', globals().get('Greide', globals().get('Projeto', globals().get('LinhaProjeto', None))))
+    raw_ponto        = globals().get('Ponto', globals().get('Point', globals().get('Origem', globals().get('Localizacao', None))))
+    raw_espacamento  = globals().get('Espacamento', globals().get('DistanciaSecoes', globals().get('Pitch', None)))
+    raw_largura      = globals().get('Largura', globals().get('Faixa', globals().get('FaixaInfluencia', 1.0)))
+    raw_empolamento  = globals().get('Empolamento', globals().get('FatorK', globals().get('K', 1.20)))
+    raw_seletor      = globals().get('Seletor', globals().get('Modo', globals().get('ModoCotas', 1)))
+    raw_escala       = globals().get('Escala', globals().get('Scale', globals().get('S', 1.0)))
+    raw_nivel_proj   = globals().get('NivelProjeto', globals().get('Plato', globals().get('CotaProjeto', None)))
+
+    # Processamento das linhas de corte transversais
+    lista_linhas = [to_rhino_curve(c) for c in to_list(raw_linhas) if to_rhino_curve(c) is not None]
+    if not lista_linhas:
+        raise ValueError("LinhasCorte inválidas ou não conectadas. Forneça ao menos uma curva de corte.")
+
+    # Processamento dos eixos longitudinais/verticais
+    lista_verticais = [to_rhino_curve(c) for c in to_list(raw_verticais) if to_rhino_curve(c) is not None]
+
+    # Processamento de curvas de projeto
+    lista_projetos = [to_rhino_curve(c) for c in to_list(raw_projeto) if to_rhino_curve(c) is not None]
+
+    ponto_base = to_rhino_point(raw_ponto)
+    orig_x = ponto_base.X if ponto_base else 0.0
+    orig_y = ponto_base.Y if ponto_base else 0.0
+
+    try:
+        fator_k = float(raw_empolamento) if raw_empolamento is not None else 1.20
+        if fator_k <= 0.5: fator_k = 1.20
+    except: fator_k = 1.20
+
+    try:
+        s = float(raw_escala) if raw_escala is not None else 1.0
+        if s <= 0.05: s = 1.0
+    except: s = 1.0
+
+    modo_cotas = parse_seletor(raw_seletor)
+    lista_terreno = to_list(raw_terreno)
+
+    # 1. Avalia cada seção transversal individualmente
+    num_secoes = len(lista_linhas)
+    sec_data_list = []
+    labels_t = [format_section_label(i) for i in range(num_secoes)]
+
+    for idx_s, crv_c in enumerate(lista_linhas):
+        crv_p = lista_projetos[idx_s] if idx_s < len(lista_projetos) else (lista_projetos[0] if lista_projetos else None)
+        s_data = evaluate_section_data(crv_c, lista_terreno, crv_p, raw_nivel_proj, tol)
+        sec_data_list.append(s_data)
+
+    # 2. Datum e Espaçamento Uniforme para Alinhamento Perfeito
+    all_z_min = min(sd['z_min'] for sd in sec_data_list)
+    all_z_max = max(sd['z_max'] for sd in sec_data_list)
+    datum_z = math.floor(all_z_min - 2.0)
+    max_delta_z = all_z_max - datum_z
+
+    if raw_espacamento is not None:
+        try: espacamento_y = max(float(raw_espacamento), 5.0)
+        except: espacamento_y = max(max_delta_z + 14.0 * s, 22.0 * s)
+    else:
+        espacamento_y = max(max_delta_z + 15.0 * s, 24.0 * s)
+
+    # 3. Distâncias Reais entre Eixos Consecutivos (para Cubagem AGPTEA)
+    distancias_eixos = []
+    for i in range(num_secoes - 1):
+        d_val = calculate_axis_distance(lista_linhas[i], lista_linhas[i+1])
+        distancias_eixos.append(max(d_val, 0.1))
+
+    # Caso haja apenas 1 seção isolada, usa Largura
+    if num_secoes == 1:
+        try: w_single = float(raw_largura) if raw_largura is not None else 1.0
+        except: w_single = 1.0
+        distancias_eixos = [w_single]
+
+    # 4. Cálculo dos Volumes por Trecho (Método das Seções Transversais AGPTEA)
+    # V = ((A1 + A2) / 2) * D
+    vols_trechos = []
+    for i in range(num_secoes - 1):
+        d_trecho = distancias_eixos[i]
+        a_c1 = sec_data_list[i]['area_total_corte']
+        a_c2 = sec_data_list[i+1]['area_total_corte']
+        a_a1 = sec_data_list[i]['area_total_aterro']
+        a_a2 = sec_data_list[i+1]['area_total_aterro']
+
+        vc = ((a_c1 + a_c2) / 2.0) * d_trecho
+        va = ((a_a1 + a_a2) / 2.0) * d_trecho
+        saldo = vc - va
+        vols_trechos.append((d_trecho, vc, va, saldo))
+
+    # 5. Cadeia de Compensação de Massas (Rastreamento de Onde Sai e Para Onde Vai)
+    saldo_acumulado = 0.0
+    fluxo_transporte = []
+
+    for i, (d_t, vc, va, s_local) in enumerate(vols_trechos):
+        lbl_a = labels_t[i]
+        lbl_b = labels_t[i+1]
+        disp = saldo_acumulado + vc
+
+        if disp >= va:
+            sobra = disp - va
+            if i < num_secoes - 2:
+                lbl_prox_a = labels_t[i+1]
+                lbl_prox_b = labels_t[i+2]
+                nota = "SOBRA: {:+.1f}m³ -> TRANSFERIDA PARA COMPENSAR SEÇÃO {} - {}".format(sobra, lbl_prox_a, lbl_prox_b).replace('.', ',')
+            else:
+                nota = "SOBRA FINAL DE CORTE: {:+.1f}m³ (DESTINAR A BOTA-FORA)".format(sobra).replace('.', ',')
+            saldo_acumulado = sobra
+        else:
+            falta = va - disp
+            nota = "CORTE CONSUMIDO | DÉFICIT: -{:.1f}m³ (NECESSITA MATERIAL DE EMPRÉSTIMO)".format(falta).replace('.', ',')
+            saldo_acumulado = -falta
+
+        fluxo_transporte.append(nota)
+
+    # =========================================================================
+    # 6. CONSTRUÇÃO DO DESENHO DAS SEÇÕES 2D ALINHADAS
+    # =========================================================================
+    desenho_completo_secoes_2d = []
+    poligonos_corte_all = []
+    poligonos_aterro_all = []
+    linhas_3d_all = []
+
     cor_corte  = System.Drawing.Color.FromArgb(245, 130, 32)
     cor_aterro = System.Drawing.Color.FromArgb(46, 204, 113)
 
-    mesh_corte  = create_colored_mesh(quads_corte_mesh, cor_corte)
-    mesh_aterro = create_colored_mesh(quads_aterro_mesh, cor_aterro)
+    for idx_s, s_data in enumerate(sec_data_list):
+        lbl = labels_t[idx_s]
+        base_x = orig_x
+        base_y = orig_y - idx_s * espacamento_y
 
-    # Linha 2D do Greide de Terraplenagem
-    pts_greide_2d = []
-    for d in estacas_finais:
-        z = interpolate_proj_z(d)
-        pts_greide_2d.append(rg.Point3d(orig_x + d, orig_y + (z - datum_z), 0.0))
-    crv_greide_2d = rg.Polyline(pts_greide_2d).ToPolylineCurve()
+        clean_pts = s_data['clean_pts']
+        total_ext = s_data['total_ext']
+        get_proj_z = s_data['get_proj_z']
+        linhas_3d_all.append(s_data['crv_3d'])
 
-    # Cotas e Símbolos NBR do Projeto / Greide
-    cotas_projeto_geoms = []
+        # Título da Seção
+        p_tit = rg.Point3d(base_x, base_y + (s_data['z_max'] - datum_z) + 3.2 * s, 0.0)
+        tit_crvs = make_text_geometry("SEÇÃO {} - {}".format(lbl, lbl), p_tit, 1.45 * s, rg.TextJustification.BottomLeft, s)
+        desenho_completo_secoes_2d.extend(tit_crvs)
 
-    # Cota início e fim do greide
-    d_g_ini = clean_pts[0][0]
-    d_g_fim = clean_pts[-1][0]
-    z_g_ini = interpolate_proj_z(d_g_ini)
-    z_g_fim = interpolate_proj_z(d_g_fim)
+        sub_str = "Extensão: {:.2f}m | Cota Média: +{:.2f}m".format(total_ext, sum(p[1].Z for p in clean_pts)/len(clean_pts)).replace('.', ',')
+        p_sub = rg.Point3d(base_x, base_y + (s_data['z_max'] - datum_z) + 1.8 * s, 0.0)
+        sub_crvs = make_text_geometry(sub_str, p_sub, 0.75 * s, rg.TextJustification.BottomLeft, s)
+        desenho_completo_secoes_2d.extend(sub_crvs)
 
-    m_ini, _ = draw_nbr_level_marker(orig_x + d_g_ini, orig_y + (z_g_ini - datum_z), "GREIDE INI +{:.2f}".format(z_g_ini).replace('.', ','), s)
-    m_fim, _ = draw_nbr_level_marker(orig_x + d_g_fim, orig_y + (z_g_fim - datum_z), "GREIDE FIM +{:.2f}".format(z_g_fim).replace('.', ','), s)
-    cotas_projeto_geoms.extend(m_ini)
-    cotas_projeto_geoms.extend(m_fim)
+        # Datum Line
+        p_d_ini = rg.Point3d(base_x, base_y, 0.0)
+        p_d_fim = rg.Point3d(base_x + total_ext, base_y, 0.0)
+        desenho_completo_secoes_2d.append(rg.LineCurve(p_d_ini, p_d_fim))
 
-    # Marcadores dos Pontos de Passagem (P.P.)
-    for dp, zp in pontos_passagem:
-        m_pp, _ = draw_nbr_level_marker(orig_x + dp, orig_y + (zp - datum_z), "P.P. +{:.2f}".format(zp).replace('.', ','), s)
-        cotas_projeto_geoms.extend(m_pp)
+        # Perfil Natural 2D
+        pts_tn_2d = [rg.Point3d(base_x + d, base_y + (pt.Z - datum_z), 0.0) for d, pt in clean_pts]
+        crv_tn_2d = rg.PolylineCurve(pts_tn_2d)
+        desenho_completo_secoes_2d.append(crv_tn_2d)
 
-    # Textos indicativos das alturas máximas (vetoriais nítidos)
-    if max_h_corte > 0.05:
-        p_cmax = rg.Point3d(orig_x + d_max_corte, orig_y + (interpolate_terrain_z(d_max_corte, clean_pts) - datum_z) + 0.45 * s, 0.0)
-        t_cmax = make_text_geometry("Corte Máx: {:.2f}m".format(max_h_corte).replace('.', ','), p_cmax, 0.75 * s, rg.TextJustification.BottomCenter, s)
-        if t_cmax:
-            if isinstance(t_cmax, list):
-                cotas_projeto_geoms.extend(t_cmax)
+        # Polígono de fechamento de solo sob TN
+        p_solo = [p_d_ini, p_d_fim] + list(reversed(pts_tn_2d)) + [p_d_ini]
+        desenho_completo_secoes_2d.append(rg.Polyline(p_solo).ToPolylineCurve())
+
+        # Greide 2D
+        pts_gr_2d = [rg.Point3d(base_x + d, base_y + (get_proj_z(d) - datum_z), 0.0) for d in s_data['estacas_finais']]
+        crv_gr_2d = rg.PolylineCurve(pts_gr_2d)
+        desenho_completo_secoes_2d.append(crv_gr_2d)
+
+        # Malhas de Corte e Aterro
+        quads_corte = []
+        quads_aterro = []
+
+        for r_type, d_list in s_data['regioes']:
+            for j in range(len(d_list) - 1):
+                d1, d2 = d_list[j], d_list[j+1]
+                if d2 - d1 <= 1e-6: continue
+                p_tn1 = rg.Point3d(base_x + d1, base_y + (interpolate_terrain_z(d1, clean_pts) - datum_z), 0.0)
+                p_tn2 = rg.Point3d(base_x + d2, base_y + (interpolate_terrain_z(d2, clean_pts) - datum_z), 0.0)
+                p_pr1 = rg.Point3d(base_x + d1, base_y + (get_proj_z(d1) - datum_z), 0.0)
+                p_pr2 = rg.Point3d(base_x + d2, base_y + (get_proj_z(d2) - datum_z), 0.0)
+
+                if r_type == "CORTE":
+                    quads_corte.append([p_tn1, p_tn2, p_pr2, p_pr1])
+                else:
+                    quads_aterro.append([p_pr1, p_pr2, p_tn2, p_tn1])
+
+            pts_poly = []
+            if r_type == "CORTE":
+                for d in d_list: pts_poly.append(rg.Point3d(base_x + d, base_y + (interpolate_terrain_z(d, clean_pts) - datum_z), 0.0))
+                for d in reversed(d_list): pts_poly.append(rg.Point3d(base_x + d, base_y + (get_proj_z(d) - datum_z), 0.0))
+                pts_poly.append(pts_poly[0])
+                poly_c = rg.Polyline(pts_poly).ToPolylineCurve()
+                poligonos_corte_all.append(poly_c)
             else:
-                cotas_projeto_geoms.append(t_cmax)
+                for d in d_list: pts_poly.append(rg.Point3d(base_x + d, base_y + (get_proj_z(d) - datum_z), 0.0))
+                for d in reversed(d_list): pts_poly.append(rg.Point3d(base_x + d, base_y + (interpolate_terrain_z(d, clean_pts) - datum_z), 0.0))
+                pts_poly.append(pts_poly[0])
+                poly_a = rg.Polyline(pts_poly).ToPolylineCurve()
+                poligonos_aterro_all.append(poly_a)
 
-    if max_h_aterro > 0.05:
-        p_amax = rg.Point3d(orig_x + d_max_aterro, orig_y + (interpolate_proj_z(d_max_aterro) - datum_z) + 0.45 * s, 0.0)
-        t_amax = make_text_geometry("Aterro Máx: {:.2f}m".format(max_h_aterro).replace('.', ','), p_amax, 0.75 * s, rg.TextJustification.BottomCenter, s)
-        if t_amax:
-            if isinstance(t_amax, list):
-                cotas_projeto_geoms.extend(t_amax)
-            else:
-                cotas_projeto_geoms.append(t_amax)
+        m_c = create_colored_mesh(quads_corte, cor_corte)
+        m_a = create_colored_mesh(quads_aterro, cor_aterro)
+        if m_c: desenho_completo_secoes_2d.append(m_c)
+        if m_a: desenho_completo_secoes_2d.append(m_a)
 
-    # Cubação volumétrica para apresentação gráfica
-    vol_corte_geo   = area_total_corte * largura_secao
-    vol_aterro_geo  = area_total_aterro * largura_secao
-    vol_corte_solto = vol_corte_geo * fator_k
-    saldo_vol       = vol_corte_geo - vol_aterro_geo
+        # Cotas de Nível NBR 6492
+        if modo_cotas in [0, 2]:
+            for d, pt in clean_pts:
+                cota_str = "+{:.2f}".format(pt.Z).replace('.', ',') if pt.Z > 0 else "{:.2f}".format(pt.Z).replace('.', ',')
+                m_geoms, _ = draw_nbr_level_marker(base_x + d, base_y + (pt.Z - datum_z), cota_str, s)
+                desenho_completo_secoes_2d.extend(m_geoms)
 
-    # -------------------------------------------------------------------------
-    # CAIXAS DE VOLUME RETIRADO E REALOCADO (CONFORME IMAGEM DE REFERÊNCIA)
-    # -------------------------------------------------------------------------
-    # 1. CAIXA SUPERIOR ESQUERDA: Quantidade retirada (Corte / Escavação)
-    d_corte_all = [d for r_type, d_list in regioes if r_type == "CORTE" for d in d_list]
-    if area_total_corte > 0.01 and d_corte_all:
-        d_c_min = min(d_corte_all)
-        d_c_max = max(d_corte_all)
-        d_c_mid = (d_c_min + d_c_max) / 2.0
-        z_c_top = max(interpolate_terrain_z(d, clean_pts) for d in d_corte_all)
-        y_c_top = orig_y + (z_c_top - datum_z)
+        if modo_cotas in [0, 1]:
+            # Marcadores de início e fim do greide
+            z_ini = get_proj_z(0.0)
+            z_fim = get_proj_z(total_ext)
+            m_g_ini, _ = draw_nbr_level_marker(base_x, base_y + (z_ini - datum_z), "GREIDE +{:.2f}".format(z_ini).replace('.', ','), s)
+            m_g_fim, _ = draw_nbr_level_marker(base_x + total_ext, base_y + (z_fim - datum_z), "GREIDE +{:.2f}".format(z_fim).replace('.', ','), s)
+            desenho_completo_secoes_2d.extend(m_g_ini)
+            desenho_completo_secoes_2d.extend(m_g_fim)
 
-        txt_vol_ret  = "RETIRADO: {:.2f} m³".format(vol_corte_geo).replace('.', ',')
-        txt_area_ret = "Área: {:.2f} m²".format(area_total_corte).replace('.', ',')
-        if abs(largura_secao - 1.0) > 0.01:
-            txt_area_ret += " | L={:.1f}m".format(largura_secao).replace('.', ',')
+            # Pontos de Passagem
+            for dp, zp in s_data['pontos_passagem']:
+                m_pp, _ = draw_nbr_level_marker(base_x + dp, base_y + (zp - datum_z), "P.P. +{:.2f}".format(zp).replace('.', ','), s)
+                desenho_completo_secoes_2d.extend(m_pp)
 
-        w_est_c = max(len(txt_vol_ret) * 0.75, len(txt_area_ret) * 0.55) * s + 2.4 * s
-        w_est_c = max(w_est_c, 11.5 * s)
-        h_est_c = 3.55 * s
+            # Caixas de Área / Volume da Seção
+            # 1. Caixa Superior: Corte
+            d_c_all = [d for r_type, d_list in s_data['regioes'] if r_type == "CORTE" for d in d_list]
+            if s_data['area_total_corte'] > 0.01 and d_c_all:
+                d_c_mid = (min(d_c_all) + max(d_c_all)) / 2.0
+                z_c_top = max(interpolate_terrain_z(d, clean_pts) for d in d_c_all)
+                y_c_box = base_y + (z_c_top - datum_z) + 4.2 * s
+                x_c_box = base_x + d_c_mid
 
-        x_box_c = orig_x + d_c_mid
-        x_box_c = max(orig_x + w_est_c / 2.0 + 0.8 * s, x_box_c)
-        y_box_c = y_c_top + 2.6 * s + h_est_c / 2.0
+                txt_v1 = "CORTE SEÇÃO {}: {:.2f} m²".format(lbl, s_data['area_total_corte']).replace('.', ',')
+                txt_v2 = "Altura Máx: {:.2f}m".format(s_data['max_h_corte']).replace('.', ',')
+                c_card, (wc, hc) = make_callout_card(x_c_box, y_c_box, txt_v1, txt_v2, s)
+                desenho_completo_secoes_2d.extend(c_card)
 
-        geoms_box_c, (w_c, h_c) = make_callout_card(x_box_c, y_box_c, txt_vol_ret, txt_area_ret, s)
-        cotas_projeto_geoms.extend(geoms_box_c)
+                # Linha guia ao topo do relevo
+                p_c_box_bot = rg.Point3d(x_c_box, y_c_box - hc / 2.0, 0.0)
+                p_crest = rg.Point3d(x_c_box, base_y + (interpolate_terrain_z(d_c_mid, clean_pts) - datum_z), 0.0)
+                desenho_completo_secoes_2d.append(rg.LineCurve(p_c_box_bot, p_crest))
+                desenho_completo_secoes_2d.append(rg.Circle(p_crest, 0.28 * s).ToNurbsCurve())
 
-        # Linha guia conectando a caixa ao relevo com ponto terminal
-        p_box_bot = rg.Point3d(x_box_c, y_box_c - h_c / 2.0, 0.0)
-        p_c_crest = rg.Point3d(x_box_c, orig_y + (interpolate_terrain_z(d_c_mid, clean_pts) - datum_z), 0.0)
-        linha_guia_c = rg.LineCurve(p_box_bot, p_c_crest)
-        cotas_projeto_geoms.append(linha_guia_c)
+            # 2. Caixa Inferior: Aterro
+            d_a_all = [d for r_type, d_list in s_data['regioes'] if r_type == "ATERRO" for d in d_list]
+            if s_data['area_total_aterro'] > 0.01 and d_a_all:
+                d_a_mid = (min(d_a_all) + max(d_a_all)) / 2.0
+                y_a_box = base_y - 3.8 * s
+                x_a_box = base_x + d_a_mid
 
-        # Círculo terminal no relevo
-        circ_c = rg.Circle(p_c_crest, 0.28 * s).ToNurbsCurve()
-        cotas_projeto_geoms.append(circ_c)
+                txt_a1 = "ATERRO SEÇÃO {}: {:.2f} m²".format(lbl, s_data['area_total_aterro']).replace('.', ',')
+                txt_a2 = "Altura Máx: {:.2f}m".format(s_data['max_h_aterro']).replace('.', ',')
+                a_card, (wa, ha) = make_callout_card(x_a_box, y_a_box, txt_a1, txt_a2, s)
+                desenho_completo_secoes_2d.extend(a_card)
 
-    # 2. CAIXA INFERIOR DIREITA: Quantidade realocada (Aterro / Preenchimento)
-    d_aterro_all = [d for r_type, d_list in regioes if r_type == "ATERRO" for d in d_list]
-    if area_total_aterro > 0.01 and d_aterro_all:
-        d_a_min = min(d_aterro_all)
-        d_a_max = max(d_aterro_all)
-        d_a_mid = (d_a_min + d_a_max) / 2.0
+                p_a_box_top = rg.Point3d(x_a_box, y_a_box + ha / 2.0, 0.0)
+                p_datum_conn = rg.Point3d(x_a_box, base_y, 0.0)
+                desenho_completo_secoes_2d.append(rg.LineCurve(p_a_box_top, p_datum_conn))
+                desenho_completo_secoes_2d.append(rg.Circle(p_datum_conn, 0.28 * s).ToNurbsCurve())
 
-        txt_vol_rea  = "REALOCADO: {:.2f} m³".format(vol_aterro_geo).replace('.', ',')
-        txt_area_rea = "Área: {:.2f} m²".format(area_total_aterro).replace('.', ',')
-        if abs(largura_secao - 1.0) > 0.01:
-            txt_area_rea += " | L={:.1f}m".format(largura_secao).replace('.', ',')
+        # Banner de Transferência de Massa entre Seção Atual e a Próxima
+        if idx_s < num_secoes - 1:
+            lbl_prox = labels_t[idx_s + 1]
+            d_t, vc_t, va_t, s_t = vols_trechos[idx_s]
+            nota_t = fluxo_transporte[idx_s]
 
-        w_est_a = max(len(txt_vol_rea) * 0.75, len(txt_area_rea) * 0.55) * s + 2.4 * s
-        w_est_a = max(w_est_a, 11.5 * s)
-        h_est_a = 3.55 * s
-
-        x_box_a = orig_x + d_a_mid
-        x_box_a = min(orig_x + total_ext - w_est_a / 2.0 - 0.8 * s, x_box_a)
-        y_box_a = orig_y - 2.6 * s - h_est_a / 2.0
-
-        geoms_box_a, (w_a, h_a) = make_callout_card(x_box_a, y_box_a, txt_vol_rea, txt_area_rea, s)
-        cotas_projeto_geoms.extend(geoms_box_a)
-
-        # Linha guia conectando a base do datum à caixa com ponto terminal
-        p_box_top = rg.Point3d(x_box_a, y_box_a + h_a / 2.0, 0.0)
-        p_datum_conn = rg.Point3d(x_box_a, orig_y, 0.0)
-        linha_guia_a = rg.LineCurve(p_box_top, p_datum_conn)
-        cotas_projeto_geoms.append(linha_guia_a)
-
-        # Círculo terminal no datum
-        circ_a = rg.Circle(p_datum_conn, 0.28 * s).ToNurbsCurve()
-        cotas_projeto_geoms.append(circ_a)
+            # Posição intermediária no espaçamento vertical entre as seções
+            y_banner = base_y - espacamento_y / 2.0
+            x_banner = base_x + total_ext / 2.0
+            banner_geoms = make_mass_haul_banner(x_banner, y_banner, lbl, lbl_prox, d_t, vc_t, va_t, s_t, nota_t, s)
+            desenho_completo_secoes_2d.extend(banner_geoms)
 
     # =========================================================================
-    # 5. MONTAGEM DO DESENHO COMPLETO DE ACORDO COM O SELETOR
+    # 7. CONSTRUÇÃO DA PLANTA BAIXA TÉCNICA (TOP VIEW: EIXOS, BALÕES E QUADRANTES)
     # =========================================================================
-    desenho_completo_2d = list(base_terreno_2d)
-    desenho_completo_2d.append(crv_greide_2d)
-    if mesh_corte:  desenho_completo_2d.append(mesh_corte)
-    if mesh_aterro: desenho_completo_2d.append(mesh_aterro)
+    planta_baixa_geoms = []
 
-    if modo_cotas == 1:
-        # Modo 1: Apenas Terraplenagem e Cotas de Projeto (Desenho Limpo)
-        desenho_completo_2d.extend(cotas_projeto_geoms)
-        desc_modo = "Modo 1: Apenas Cotas do Greide e Terraplenagem (Perfil Natural Limpo)"
-    elif modo_cotas == 2:
-        # Modo 2: Apenas Cotas do Terreno Natural
-        desenho_completo_2d.extend(cotas_tn_geoms)
-        desc_modo = "Modo 2: Apenas Cotas do Terreno Natural"
+    # 1. Eixos Transversais (Seções A, B, C...) em Planta
+    for idx_s, crv_c in enumerate(lista_linhas):
+        lbl = labels_t[idx_s]
+        p_start = crv_c.PointAtStart
+        p_end = crv_c.PointAtEnd
+        vec_axis = p_end - p_start
+        u_axis = rg.Vector3d(vec_axis)
+        u_axis.Unitize()
+
+        planta_baixa_geoms.append(crv_c)
+
+        # Balão no início
+        p_b_ini = p_start - u_axis * (2.8 * s)
+        planta_baixa_geoms.append(rg.LineCurve(p_start, p_b_ini))
+        b_ini_geoms = draw_plan_axis_bubble(p_b_ini, u_axis, lbl, s)
+        planta_baixa_geoms.extend(b_ini_geoms)
+
+        # Balão no fim
+        p_b_fim = p_end + u_axis * (2.8 * s)
+        planta_baixa_geoms.append(rg.LineCurve(p_end, p_b_fim))
+        b_fim_geoms = draw_plan_axis_bubble(p_b_fim, u_axis, lbl, s)
+        planta_baixa_geoms.extend(b_fim_geoms)
+
+    # 2. Cotas de Distância entre Eixos Transversais Consecutivos em Planta
+    for idx_s in range(num_secoes - 1):
+        crv1 = lista_linhas[idx_s]
+        crv2 = lista_linhas[idx_s + 1]
+        dist_val = distancias_eixos[idx_s]
+
+        # Ponto médio em ambas as linhas
+        t_m1 = crv1.Domain.Min + 0.5 * (crv1.Domain.Max - crv1.Domain.Min)
+        t_m2 = crv2.Domain.Min + 0.5 * (crv2.Domain.Max - crv2.Domain.Min)
+        p_m1 = crv1.PointAt(t_m1)
+        p_m2 = crv2.PointAt(t_m2)
+
+        cota_planta = draw_plan_dimension(p_m1, p_m2, dist_val, s)
+        planta_baixa_geoms.extend(cota_planta)
+
+    # 3. Eixos Longitudinais/Verticais (1, 2, 3...) em Planta
+    num_verticais = len(lista_verticais)
+    labels_v = [str(i + 1) for i in range(num_verticais)]
+
+    for idx_v, crv_v in enumerate(lista_verticais):
+        lbl_v = labels_v[idx_v]
+        p_start_v = crv_v.PointAtStart
+        p_end_v = crv_v.PointAtEnd
+        vec_v = p_end_v - p_start_v
+        u_v = rg.Vector3d(vec_v)
+        u_v.Unitize()
+
+        planta_baixa_geoms.append(crv_v)
+
+        # Balão numérico no início
+        p_bv_ini = p_start_v - u_v * (2.8 * s)
+        planta_baixa_geoms.append(rg.LineCurve(p_start_v, p_bv_ini))
+        bv_ini = draw_plan_axis_bubble(p_bv_ini, None, lbl_v, s)
+        planta_baixa_geoms.extend(bv_ini)
+
+        # Balão numérico no fim
+        p_bv_fim = p_end_v + u_v * (2.8 * s)
+        planta_baixa_geoms.append(rg.LineCurve(p_end_v, p_bv_fim))
+        bv_fim = draw_plan_axis_bubble(p_bv_fim, None, lbl_v, s)
+        planta_baixa_geoms.extend(bv_fim)
+
+    # 4. Malha de Quadrantes de Terraplenagem em Planta (Interseção Transversais x Verticais)
+    if num_secoes >= 2 and num_verticais >= 2:
+        grid_pts = [[None for _ in range(num_verticais)] for _ in range(num_secoes)]
+        for i, ct in enumerate(lista_linhas):
+            for j, cv in enumerate(lista_verticais):
+                ev = rg.Intersect.Intersection.CurveCurve(ct, cv, tol * 10, tol * 10)
+                if ev and ev.Count > 0:
+                    grid_pts[i][j] = ev[0].PointA
+                else:
+                    rc_t, t_t = ct.ClosestPoint(cv.PointAtNormalizedLength(0.5))
+                    rc_v, t_v = cv.ClosestPoint(ct.PointAt(t_t))
+                    if rc_t and rc_v:
+                        grid_pts[i][j] = ct.PointAt(t_t)
+
+        for i in range(num_secoes - 1):
+            for j in range(num_verticais - 1):
+                p00 = grid_pts[i][j]
+                p01 = grid_pts[i][j+1]
+                p11 = grid_pts[i+1][j+1]
+                p10 = grid_pts[i+1][j]
+                if p00 and p01 and p11 and p10:
+                    poly_q = rg.Polyline([p00, p01, p11, p10, p00]).ToPolylineCurve()
+                    planta_baixa_geoms.append(poly_q)
+
+                    p_cen = (p00 + p01 + p11 + p10) / 4.0
+                    txt_q = "Q.{}-{}".format(labels_t[i], labels_v[j])
+                    q_crvs = make_text_geometry(txt_q, p_cen, 0.75 * s, rg.TextJustification.MiddleCenter, s)
+                    if q_crvs: planta_baixa_geoms.extend(q_crvs)
+
+    # =========================================================================
+    # 8. MEMORIAL TÉCNICO DE TERRAPLENAGEM E BALANÇO DE MASSAS (AGPTEA)
+    # =========================================================================
+    vol_total_corte_geo = sum(vt[1] for vt in vols_trechos) if vols_trechos else (sec_data_list[0]['area_total_corte'] * 1.0)
+    vol_total_aterro_geo = sum(vt[2] for vt in vols_trechos) if vols_trechos else (sec_data_list[0]['area_total_aterro'] * 1.0)
+    vol_total_corte_solto = vol_total_corte_geo * fator_k
+    saldo_global = vol_total_corte_geo - vol_total_aterro_geo
+
+    if abs(saldo_global) < 0.1:
+        diag_global = "COMPENSAÇÃO EXATA (Balanço Neutro: Volume de Corte supre o Aterro)."
+    elif saldo_global > 0:
+        diag_global = "SOBRA GLOBAL DE TERRA (Bota-Fora necessário: {:.2f} m³ geométrico / {:.2f} m³ solto).".format(saldo_global, saldo_global * fator_k)
     else:
-        # Modo 0: Completo (Todas as cotas simultâneas)
-        desenho_completo_2d.extend(cotas_tn_geoms)
-        desenho_completo_2d.extend(cotas_projeto_geoms)
-        desc_modo = "Modo 0: Completo (Terreno Natural + Greide + Terraplenagem)"
-
-    # =========================================================================
-    # 6. CUBAÇÃO VOLUMÉTRICA E MEMORIAL TÉCNICO (AGPTEA)
-    # =========================================================================
-    vol_corte_geo  = area_total_corte * largura_secao
-    vol_aterro_geo = area_total_aterro * largura_secao
-    vol_corte_solto = vol_corte_geo * fator_k
-    saldo_vol = vol_corte_geo - vol_aterro_geo
-
-    # Diagnóstico de compensação de massas
-    if abs(saldo_vol) < 0.1:
-        diagnostico = "COMPENSAÇÃO COMPLETA: Volume de corte supre exatamente o aterro!"
-        vol_botafora = 0.0
-        vol_emprestimo = 0.0
-    elif saldo_vol > 0:
-        vol_botafora = saldo_vol * fator_k
-        vol_emprestimo = 0.0
-        diagnostico = "EXCESSO DE TERRA (SOBRA): Necessário transporte para BOTA-FORA de {:.2f} m³ (solto).".format(vol_botafora)
-    else:
-        vol_botafora = 0.0
-        vol_emprestimo = abs(saldo_vol)
-        diagnostico = "FALTA DE TERRA (DÉFICIT): Necessário EMPRÉSTIMO DE JAZIDA de {:.2f} m³ (compactado).".format(vol_emprestimo)
-
-    # Declividade do terreno e do greide
-    decliv_tn_pct = (delta_z / total_ext * 100.0) if total_ext > 0 else 0.0
-    decliv_tn_deg = math.degrees(math.atan2(delta_z, total_ext)) if total_ext > 0 else 0.0
-
-    dz_greide = z_g_fim - z_g_ini
-    decliv_gr_pct = (dz_greide / total_ext * 100.0) if total_ext > 0 else 0.0
-    decliv_gr_deg = math.degrees(math.atan2(abs(dz_greide), total_ext)) if total_ext > 0 else 0.0
-    sentido_gr = "Aclive" if dz_greide > 0 else ("Declive" if dz_greide < 0 else "Plano Horizontal")
-
-    # Lista de pontos de passagem formatados
-    if pontos_passagem:
-        lista_pp = ["  - P.P. {}: d = {:.2f} m | Cota = +{:.2f} m".format(k+1, dp, zp) for k, (dp, zp) in enumerate(pontos_passagem)]
-    else:
-        lista_pp = ["  - Nenhum Ponto de Passagem interceptado (Seção pura em Corte ou pura em Aterro)."]
+        diag_global = "DÉFICIT GLOBAL DE TERRA (Importação de Empréstimo necessária: {:.2f} m³).".format(abs(saldo_global))
 
     relatorio = [
-        "=================================================================",
-        "      MEMORIAL DE CÁLCULO DE TERRAPLENAGEM (NBR 6492 & AGPTEA)    ",
-        "=================================================================",
-        "1. DADOS DA SEÇÃO TOPOGRÁFICA:",
-        "   - Localização no Top View : X = {:.2f}, Y = {:.2f}".format(orig_x, orig_y),
-        "   - Extensão da Linha de Corte: {:.2f} m".format(total_ext),
-        "   - Cota Mín / Máx (TN)     : +{:.2f} m / +{:.2f} m (ΔZ = {:.2f} m)".format(z_min, z_max, delta_z),
-        "   - Declividade Média do TN : {:.2f}% ({:.2f}°)".format(decliv_tn_pct, decliv_tn_deg),
-        "-----------------------------------------------------------------",
-        "2. GREIDE PROJETADO:",
-        "   - Tipo de Definição       : {}".format(tipo_greide),
-        "   - Cota Inicial / Final    : +{:.2f} m / +{:.2f} m ({})".format(z_g_ini, z_g_fim, sentido_gr),
-        "   - Inclinação do Greide    : {:.2f}% ({:.2f}°)".format(decliv_gr_pct, decliv_gr_deg),
-        "-----------------------------------------------------------------",
-        "3. PONTOS DE PASSAGEM (P.P. - TRANSIÇÃO CORTE/ATERRO):",
-    ] + lista_pp + [
-        "-----------------------------------------------------------------",
-        "4. QUADRO DE ÁREAS DA SEÇÃO (MÉTODO DOS TRAPÉZIOS AGPTEA):",
-        "   - Área Total de CORTE  : {:.2f} m²".format(area_total_corte),
-        "   - Área Total de ATERRO : {:.2f} m²".format(area_total_aterro),
-        "   - Altura Máxima de Corte : {:.2f} m (em d = {:.2f} m)".format(max_h_corte, d_max_corte),
-        "   - Altura Máxima de Aterro: {:.2f} m (em d = {:.2f} m)".format(max_h_aterro, d_max_aterro),
-        "-----------------------------------------------------------------",
-        "5. CUBAÇÃO VOLUMÉTRICA:",
-        "   - Faixa de Influência (L) : {:.2f} m".format(largura_secao),
-        "   - Fator de Empolamento (K): {:.2f} ({}% de expansão)".format(fator_k, int((fator_k - 1.0) * 100)),
-        "   - Volume Geométrico de CORTE : {:.2f} m³".format(vol_corte_geo),
-        "   - Volume Geométrico de ATERRO: {:.2f} m³".format(vol_aterro_geo),
-        "   - Volume de Corte Solto (Transporte): {:.2f} m³".format(vol_corte_solto),
-        "-----------------------------------------------------------------",
-        "6. BALANÇO DE MOVIMENTAÇÃO DE MASSA (COMPENSAÇÃO):",
-        "   - Saldo Líquido (Corte - Aterro): {:+.2f} m³".format(saldo_vol),
-        "   - Diagnóstico Operacional:",
-        "     " + diagnostico,
-        "-----------------------------------------------------------------",
-        "7. CONFIGURAÇÃO DE VISUALIZAÇÃO:",
-        "   - " + desc_modo,
-        "================================================================="
+        "=========================================================================================",
+        "      MEMORIAL DE CÁLCULO DE TERRAPLENAGEM E BALANÇO DE MASSAS (NBR 6492 & AGPTEA)       ",
+        "=========================================================================================",
+        "1. QUADRO GERAL DE SEÇÕES TRANSVERSAIS:",
+        "   Seção   | Extensão (m) | Cota Mín (m) | Cota Máx (m) | Área Corte (m²) | Área Aterro (m²)",
+        "   -------------------------------------------------------------------------------------",
     ]
+    for idx_s, sd in enumerate(sec_data_list):
+        relatorio.append("   {:^7} | {:^12.2f} | {:^12.2f} | {:^12.2f} | {:^15.2f} | {:^16.2f}".format(
+            labels_t[idx_s], sd['total_ext'], sd['z_min'], sd['z_max'], sd['area_total_corte'], sd['area_total_aterro']
+        ))
 
-    return out_3d, out_2d, desenho_completo_2d, poligonos_corte_crvs, poligonos_aterro_crvs, relatorio
+    relatorio.extend([
+        "-----------------------------------------------------------------------------------------",
+        "2. VOLUMES POR TRECHO (MÉTODO DAS SEÇÕES TRANSVERSAIS / MÉDIAS AGPTEA):",
+        "   Trecho   | Distância (m) | Vol. Corte (m³) | Vol. Aterro (m³) | Saldo Local do Trecho",
+        "   -------------------------------------------------------------------------------------",
+    ])
+    for i, (dt, vc, va, st) in enumerate(vols_trechos):
+        lbl_trecho = "{} -> {}".format(labels_t[i], labels_t[i+1])
+        status_s = "(Sobra)" if st >= 0 else "(Falta)"
+        relatorio.append("   {:^8} | {:^13.2f} | {:^15.2f} | {:^16.2f} | {:^+12.2f} m³ {}".format(
+            lbl_trecho, dt, vc, va, st, status_s
+        ))
 
-res_3d, res_2d, res_desenho, res_corte, res_aterro, rel = run()
+    relatorio.extend([
+        "-----------------------------------------------------------------------------------------",
+        "3. BALANÇO PROGRESSIVO E COMPENSAÇÃO LONGITUDINAL DE MASSAS (ONDE SAI -> ONDE VAI):",
+    ])
+    for i, nota in enumerate(fluxo_transporte):
+        relatorio.append("   - Trecho {} -> {}:".format(labels_t[i], labels_t[i+1]))
+        relatorio.append("     " + nota)
+
+    relatorio.extend([
+        "-----------------------------------------------------------------------------------------",
+        "4. TOTAIS GERAIS DO EMPREENDIMENTO:",
+        "   - Número de Seções Transversais Analisadas: {}".format(num_secoes),
+        "   - Fator de Empolamento Adotado (K)        : {:.2f} ({}% de expansão)".format(fator_k, int((fator_k - 1.0) * 100)),
+        "   - Volume Total Geométrico de CORTE        : {:.2f} m³".format(vol_total_corte_geo),
+        "   - Volume Total Geométrico de ATERRO       : {:.2f} m³".format(vol_total_aterro_geo),
+        "   - Volume Total de Corte Solto (Transporte): {:.2f} m³".format(vol_total_corte_solto),
+        "   - BALANÇO LÍQUIDO FINAL (Corte - Aterro)   : {:+.2f} m³".format(saldo_global),
+        "   - Diagnóstico Operacional:",
+        "     " + diag_global,
+        "========================================================================================="
+    ])
+
+    return linhas_3d_all, planta_baixa_geoms, desenho_completo_secoes_2d, poligonos_corte_all, poligonos_aterro_all, relatorio
+
+res_3d, res_planta, res_secoes, res_corte, res_aterro, rel = run()
 
 # SAÍDAS CONECTADAS NO GRASSHOPPER:
-a = res_3d         # Linha 3D do corte no relevo natural
-b = res_2d         # Polilinha 2D do terreno natural
-c = res_desenho    # DESENHO COMPLETO (Perfil TN + Greide + Malhas Coloridas Laranja/Verde + Cotas NBR)
-d = res_corte      # Polígonos Fechados de CORTE (Curves para Area / Hatch / Bake)
-e = res_aterro     # Polígonos Fechados de ATERRO (Curves para Area / Hatch / Bake)
-f = rel            # Memorial Técnico de Terraplenagem AGPTEA (Panel)
+a = res_3d         # Linhas 3D dos cortes sobre o terreno natural
+b = res_planta     # PLANTA BAIXA TÉCNICA (Eixos cotados A, B, C... e 1, 2, 3... com balões NBR, setas e quadrantes)
+c = res_secoes     # DESENHO COMPLETO DAS SEÇÕES 2D ALINHADAS (com títulos, malhas Laranja/Verde, cotas NBR e fluxo de massa)
+d = res_corte      # Polígonos de CORTE de todas as seções (Curves para Area / Hatch / Bake)
+e = res_aterro     # Polígonos de ATERRO de todas as seções (Curves para Area / Hatch / Bake)
+f = rel            # Memorial Técnico de Terraplenagem e Balanço Progressivo AGPTEA (Panel)
