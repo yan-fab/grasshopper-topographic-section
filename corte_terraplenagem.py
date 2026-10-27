@@ -481,18 +481,63 @@ def make_text_geometry(text_str, pt, height, justification=None, s=1.0, plane=No
 
 make_text_entity = make_text_geometry
 
-def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0):
-    """Cria uma caixa retangular técnica com textos vetoriais nítidos de volume e área."""
-    txt_h1 = 1.10 * s
-    txt_h2 = 0.75 * s
-    pad_x  = 1.20 * s
-    pad_y  = 0.60 * s
-    gap_y  = 0.50 * s
+def get_stroke_text_width(text_str, height):
+    """Calcula a largura horizontal exata que o texto vetorial ocupará."""
+    if not text_str: return 0.0
+    total_w = 0.0
+    for ch in text_str:
+        base_char = ch
+        if ch in 'ÁáÀàÃãÂâ': base_char = 'A' if ch.isupper() else 'a'
+        elif ch in 'ÉéÊê':   base_char = 'E' if ch.isupper() else 'e'
+        elif ch in 'Íí':     base_char = 'I' if ch.isupper() else 'i'
+        elif ch in 'ÓóÕõÔô': base_char = 'O' if ch.isupper() else 'o'
+        elif ch in 'Úú':     base_char = 'U' if ch.isupper() else 'u'
+        elif ch in 'Çç':     base_char = 'C' if ch.isupper() else 'c'
 
-    w_text1 = len(title_text) * (txt_h1 * 0.65 + txt_h1 * 0.15)
-    w_text2 = len(sub_text) * (txt_h2 * 0.65 + txt_h2 * 0.15)
+        w_factor = 0.60
+        if base_char in '1I.,:|;': w_factor = 0.35
+        elif base_char in 'MW':    w_factor = 0.75
+        elif base_char in ' ':     w_factor = 0.40
+        elif base_char in 'ijlft': w_factor = 0.35
+        elif base_char in 'mw':    w_factor = 0.75
+        elif base_char.upper() in '1I.,:|;': w_factor = 0.35
+        elif base_char.upper() in 'MW':    w_factor = 0.75
+
+        total_w += height * w_factor
+
+    char_gap = height * 0.18
+    total_w += max(0, len(text_str) - 1) * char_gap
+    return total_w
+
+def make_box_background_mesh(p0, p1, p2, p3, color=None):
+    """Gera uma malha 2D retangular que serve como fundo/máscara (wipeout) sob os textos."""
+    if color is None:
+        color = System.Drawing.Color.FromArgb(252, 252, 252)
+    m = rg.Mesh()
+    m.Vertices.Add(p0)
+    m.Vertices.Add(p1)
+    m.Vertices.Add(p2)
+    m.Vertices.Add(p3)
+    m.Faces.AddFace(0, 1, 2, 3)
+    m.VertexColors.Add(color)
+    m.VertexColors.Add(color)
+    m.VertexColors.Add(color)
+    m.VertexColors.Add(color)
+    m.Normals.ComputeNormals()
+    return m
+
+def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0, is_corte=True):
+    """Cria uma caixa retangular técnica com textos perfeitamente enquadrados e margens amplas."""
+    txt_h1 = 1.15 * s
+    txt_h2 = 0.85 * s
+    pad_x  = 3.00 * s   # Margem lateral ampla para nunca encostar nas bordas verticais
+    pad_y  = 1.20 * s   # Margem superior e inferior confortável
+    gap_y  = 1.20 * s   # Folga entre os textos e a divisória central
+
+    w_text1 = get_stroke_text_width(title_text, txt_h1)
+    w_text2 = get_stroke_text_width(sub_text, txt_h2)
     w_content = max(w_text1, w_text2)
-    w_box = max(w_content + pad_x * 2.0, 11.5 * s)
+    w_box = max(w_content + pad_x * 2.0, 18.0 * s)
     h_box = txt_h1 + txt_h2 + gap_y + pad_y * 2.0
 
     p0 = rg.Point3d(center_x - w_box / 2.0, center_y - h_box / 2.0, 0.0)
@@ -501,14 +546,19 @@ def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0):
     p3 = rg.Point3d(center_x - w_box / 2.0, center_y + h_box / 2.0, 0.0)
     box_crv = rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve()
 
+    # Fundo preenchido suave (máscara / wipeout)
+    cor_fundo = System.Drawing.Color.FromArgb(255, 255, 255)
+    bg_mesh = make_box_background_mesh(p0, p1, p2, p3, cor_fundo)
+
     # Linha divisória horizontal interna técnica
-    y_div = center_y + 0.05 * s
-    p_div_l = rg.Point3d(center_x - w_box / 2.0 + 0.5 * s, y_div, 0.0)
-    p_div_r = rg.Point3d(center_x + w_box / 2.0 - 0.5 * s, y_div, 0.0)
+    y_div = center_y
+    p_div_l = rg.Point3d(center_x - w_box / 2.0 + 1.2 * s, y_div, 0.0)
+    p_div_r = rg.Point3d(center_x + w_box / 2.0 - 1.2 * s, y_div, 0.0)
     div_crv = rg.LineCurve(p_div_l, p_div_r)
 
-    y_t1 = center_y + h_box / 4.0 + 0.05 * s
-    y_t2 = center_y - h_box / 4.0 + 0.05 * s
+    # Textos perfeitamente centralizados em suas respectivas metades
+    y_t1 = center_y + (h_box / 4.0)
+    y_t2 = center_y - (h_box / 4.0)
 
     pt_t1 = rg.Point3d(center_x, y_t1, 0.0)
     te1_crvs = make_text_geometry(title_text, pt_t1, txt_h1, rg.TextJustification.MiddleCenter, s)
@@ -516,7 +566,7 @@ def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0):
     pt_t2 = rg.Point3d(center_x, y_t2, 0.0)
     te2_crvs = make_text_geometry(sub_text, pt_t2, txt_h2, rg.TextJustification.MiddleCenter, s)
 
-    geoms = [box_crv, div_crv]
+    geoms = [bg_mesh, box_crv, div_crv]
     if te1_crvs: geoms.extend(te1_crvs)
     if te2_crvs: geoms.extend(te2_crvs)
     return geoms, (w_box, h_box)
@@ -699,45 +749,62 @@ def make_mass_haul_banner(center_x, center_y, label_prev, label_next, dist_val, 
     de transferência de massa de onde sai para onde vai a terra na próxima seção.
     """
     geoms = []
-    w_box = max(len(transfer_note) * 0.70 * s + 2.5 * s, 26.0 * s)
-    h_box = 3.6 * s
+    txt_h1 = 0.95 * s
+    txt_h2 = 0.85 * s
+    pad_x  = 4.00 * s   # Margem lateral ampla para garantir que a linha de texto nunca estoure a caixa
+    pad_y  = 1.30 * s   # Margem vertical
+    gap_y  = 1.30 * s   # Folga entre os textos e a divisória central
+
+    t1_str = "TRECHO {} - {} (D = {:.2f}m) | V.Corte: {:.1f}m³ | V.Aterro: {:.1f}m³ | Saldo: {:+.1f}m³".format(
+        label_prev, label_next, dist_val, vol_corte, vol_aterro, saldo
+    ).replace('.', ',')
+
+    w1 = get_stroke_text_width(t1_str, txt_h1)
+    w2 = get_stroke_text_width(transfer_note, txt_h2)
+    w_content = max(w1, w2)
+    w_box = max(w_content + pad_x * 2.0, 42.0 * s)
+    h_box = txt_h1 + txt_h2 + gap_y + pad_y * 2.0
 
     p0 = rg.Point3d(center_x - w_box / 2.0, center_y - h_box / 2.0, 0.0)
     p1 = rg.Point3d(center_x + w_box / 2.0, center_y - h_box / 2.0, 0.0)
     p2 = rg.Point3d(center_x + w_box / 2.0, center_y + h_box / 2.0, 0.0)
     p3 = rg.Point3d(center_x - w_box / 2.0, center_y + h_box / 2.0, 0.0)
     box_crv = rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve()
+
+    # Fundo preenchido suave (máscara / wipeout)
+    cor_fundo = System.Drawing.Color.FromArgb(255, 255, 255)
+    bg_mesh = make_box_background_mesh(p0, p1, p2, p3, cor_fundo)
+    geoms.append(bg_mesh)
     geoms.append(box_crv)
 
+    # Linha divisória horizontal interna técnica
     y_div = center_y
-    l_div = rg.LineCurve(rg.Point3d(center_x - w_box/2.0 + 0.5*s, y_div, 0.0), rg.Point3d(center_x + w_box/2.0 - 0.5*s, y_div, 0.0))
+    l_div = rg.LineCurve(rg.Point3d(center_x - w_box/2.0 + 1.5*s, y_div, 0.0), rg.Point3d(center_x + w_box/2.0 - 1.5*s, y_div, 0.0))
     geoms.append(l_div)
 
-    t1_str = "TRECHO {} - {} (D = {:.2f}m) | V.Corte: {:.1f}m³ | V.Aterro: {:.1f}m³ | Saldo: {:+.1f}m³".format(
-        label_prev, label_next, dist_val, vol_corte, vol_aterro, saldo
-    ).replace('.', ',')
-    pt_t1 = rg.Point3d(center_x, center_y + h_box / 4.0 + 0.05 * s, 0.0)
-    t1_crvs = make_text_geometry(t1_str, pt_t1, 0.75 * s, rg.TextJustification.MiddleCenter, s)
+    # Textos perfeitamente centralizados em suas metades
+    pt_t1 = rg.Point3d(center_x, center_y + h_box / 4.0, 0.0)
+    t1_crvs = make_text_geometry(t1_str, pt_t1, txt_h1, rg.TextJustification.MiddleCenter, s)
     if t1_crvs: geoms.extend(t1_crvs)
 
-    pt_t2 = rg.Point3d(center_x, center_y - h_box / 4.0 + 0.05 * s, 0.0)
-    t2_crvs = make_text_geometry(transfer_note, pt_t2, 0.70 * s, rg.TextJustification.MiddleCenter, s)
+    pt_t2 = rg.Point3d(center_x, center_y - h_box / 4.0, 0.0)
+    t2_crvs = make_text_geometry(transfer_note, pt_t2, txt_h2, rg.TextJustification.MiddleCenter, s)
     if t2_crvs: geoms.extend(t2_crvs)
 
     # Seta vertical indicando sentido de transporte longitudinal para a próxima seção
     y_arr_top = center_y - h_box / 2.0
-    y_arr_bot = center_y - h_box / 2.0 - 1.4 * s
+    y_arr_bot = center_y - h_box / 2.0 - 2.5 * s
     p_arr_top = rg.Point3d(center_x, y_arr_top, 0.0)
     p_arr_bot = rg.Point3d(center_x, y_arr_bot, 0.0)
     geoms.append(rg.LineCurve(p_arr_top, p_arr_bot))
 
     p_tip = p_arr_bot
-    p_l = rg.Point3d(center_x - 0.40 * s, y_arr_bot + 0.55 * s, 0.0)
-    p_r = rg.Point3d(center_x + 0.40 * s, y_arr_bot + 0.55 * s, 0.0)
+    p_l = rg.Point3d(center_x - 0.55 * s, y_arr_bot + 0.90 * s, 0.0)
+    p_r = rg.Point3d(center_x + 0.55 * s, y_arr_bot + 0.90 * s, 0.0)
     arrow_mesh = make_filled_mesh_tri(p_tip, p_l, p_r)
     geoms.extend([arrow_mesh, rg.LineCurve(p_tip, p_l), rg.LineCurve(p_tip, p_r), rg.LineCurve(p_l, p_r)])
 
-    return geoms
+    return geoms, (w_box, h_box)
 
 # =============================================================================
 # AVALIAÇÃO ANALÍTICA DE UMA SEÇÃO TRANSVERSAL INDIVIDUAL
@@ -1139,17 +1206,32 @@ def run():
         s_data = evaluate_section_data(crv_c, geoms_terreno, crv_p, raw_nivel_proj, tol)
         sec_data_list.append(s_data)
 
-    # 2. Datum e Espaçamento Uniforme para Alinhamento Perfeito (Sem Colisões)
-    # Cada seção recebe sua própria linha de base DATUM (sec_datum_z = math.floor(s_data['z_min'] - 2.0)),
-    # evitando que seções de cotas elevadas colidam ou invadam as seções superiores.
-    max_h_sec = max(sd['z_max'] - math.floor(sd['z_min'] - 2.0) for sd in sec_data_list)
-    h_min_espacamento = max_h_sec + 55.0 * s
+    # 2. Datum e Espaçamento Amplo para Alinhamento Perfeito e Separação Total dos Perfis
+    sec_heights_above = []
+    sec_heights_below = []
+    for sd in sec_data_list:
+        sec_datum_z = math.floor(sd['z_min'] - 2.0)
+        sec_h = sd['z_max'] - sec_datum_z
+        # Altura acima do DATUM: relevo + folga do título e caixa de corte
+        sec_heights_above.append(sec_h + 16.0 * s)
+        # Altura abaixo do DATUM: folga da caixa de aterro e cotas inferiores
+        sec_heights_below.append(12.0 * s)
 
+    max_h_above = max(sec_heights_above)
+    max_h_below = max(sec_heights_below)
+    banner_space = 18.0 * s  # Espaço reservado para o banner de balanço de massas e seta
+
+    # Folga livre visível entre o fim de uma seção e o topo da próxima
     if raw_espacamento is not None:
-        try: espacamento_y = max(float(raw_espacamento), 10.0)
-        except: espacamento_y = max(h_min_espacamento, 80.0 * s)
+        try:
+            val_user = float(raw_espacamento)
+            gap_livre = max(val_user, 45.0 * s)
+        except:
+            gap_livre = max(max_h_above * 0.85 + 50.0 * s, 75.0 * s)
     else:
-        espacamento_y = max(h_min_espacamento, 80.0 * s)
+        gap_livre = max(max_h_above * 0.85 + 50.0 * s, 75.0 * s)
+
+    espacamento_y = max_h_below + banner_space + gap_livre + max_h_above
 
     # 3. Distâncias Reais entre Eixos Consecutivos (para Cubagem AGPTEA)
     distancias_eixos = []
@@ -1229,13 +1311,13 @@ def run():
         sec_h = s_data['z_max'] - sec_datum_z
 
         # Título da Seção
-        p_tit = rg.Point3d(base_x, base_y + sec_h + 7.5 * s, 0.0)
-        tit_crvs = make_text_geometry("SEÇÃO {} - {}".format(lbl, lbl), p_tit, 1.45 * s, rg.TextJustification.BottomLeft, s)
+        p_tit = rg.Point3d(base_x, base_y + sec_h + 8.5 * s, 0.0)
+        tit_crvs = make_text_geometry("SEÇÃO {} - {}".format(lbl, lbl), p_tit, 1.50 * s, rg.TextJustification.BottomLeft, s)
         desenho_completo_secoes_2d.extend(tit_crvs)
 
         sub_str = "Extensão: {:.2f}m | Cota Média: +{:.2f}m".format(total_ext, sum(p[1].Z for p in clean_pts)/len(clean_pts)).replace('.', ',')
-        p_sub = rg.Point3d(base_x, base_y + sec_h + 6.0 * s, 0.0)
-        sub_crvs = make_text_geometry(sub_str, p_sub, 0.75 * s, rg.TextJustification.BottomLeft, s)
+        p_sub = rg.Point3d(base_x, base_y + sec_h + 6.8 * s, 0.0)
+        sub_crvs = make_text_geometry(sub_str, p_sub, 0.85 * s, rg.TextJustification.BottomLeft, s)
         desenho_completo_secoes_2d.extend(sub_crvs)
 
         # Linha e Rótulo de DATUM
@@ -1244,8 +1326,8 @@ def run():
         desenho_completo_secoes_2d.append(rg.LineCurve(p_d_ini, p_d_fim))
 
         lbl_datum = "DATUM +{:.2f}".format(sec_datum_z).replace('.', ',')
-        p_datum_txt = rg.Point3d(base_x - 0.6 * s, base_y, 0.0)
-        datum_crvs = make_text_geometry(lbl_datum, p_datum_txt, 0.70 * s, rg.TextJustification.MiddleRight, s)
+        p_datum_txt = rg.Point3d(base_x - 1.2 * s, base_y, 0.0)
+        datum_crvs = make_text_geometry(lbl_datum, p_datum_txt, 0.80 * s, rg.TextJustification.MiddleRight, s)
         desenho_completo_secoes_2d.extend(datum_crvs)
 
         # Perfil Natural 2D
@@ -1302,7 +1384,7 @@ def run():
         # Cotas de Nível NBR 6492 (Com filtro de espaçamento horizontal mínimo para evitar poluição visual)
         if modo_cotas in [0, 2]:
             last_marker_x = -999999.0
-            min_marker_gap = 7.0 * s
+            min_marker_gap = 9.0 * s
             for idx_pt, (d, pt) in enumerate(clean_pts):
                 is_first = (idx_pt == 0)
                 is_last = (idx_pt == len(clean_pts) - 1)
@@ -1327,44 +1409,48 @@ def run():
                 m_pp, _ = draw_nbr_level_marker(base_x + dp, base_y + (zp - sec_datum_z), "P.P. +{:.2f}".format(zp).replace('.', ','), s)
                 desenho_completo_secoes_2d.extend(m_pp)
 
-            # Caixas de Área / Volume da Seção
+            # Caixas de Área / Volume da Seção com enquadramento perfeito
             # 1. Caixa Superior: Corte
             d_c_all = [d for r_type, d_list in s_data['regioes'] if r_type == "CORTE" for d in d_list]
             if s_data['area_total_corte'] > 0.01 and d_c_all:
                 d_c_mid = (min(d_c_all) + max(d_c_all)) / 2.0
                 z_c_top = max(interpolate_terrain_z(d, clean_pts) for d in d_c_all)
-                y_c_box = base_y + (z_c_top - sec_datum_z) + 4.2 * s
-                x_c_box = base_x + d_c_mid
-
                 txt_v1 = "CORTE SEÇÃO {}: {:.2f} m²".format(lbl, s_data['area_total_corte']).replace('.', ',')
                 txt_v2 = "Altura Máx: {:.2f}m".format(s_data['max_h_corte']).replace('.', ',')
-                c_card, (wc, hc) = make_callout_card(x_c_box, y_c_box, txt_v1, txt_v2, s)
+
+                hc_est = 5.5 * s
+                y_c_box = base_y + (z_c_top - sec_datum_z) + 6.0 * s + (hc_est / 2.0)
+                x_c_box = base_x + d_c_mid
+
+                c_card, (wc, hc) = make_callout_card(x_c_box, y_c_box, txt_v1, txt_v2, s, True)
                 desenho_completo_secoes_2d.extend(c_card)
 
                 # Linha guia ao topo do relevo
                 p_c_box_bot = rg.Point3d(x_c_box, y_c_box - hc / 2.0, 0.0)
                 p_crest = rg.Point3d(x_c_box, base_y + (interpolate_terrain_z(d_c_mid, clean_pts) - sec_datum_z), 0.0)
                 desenho_completo_secoes_2d.append(rg.LineCurve(p_c_box_bot, p_crest))
-                desenho_completo_secoes_2d.append(rg.Circle(p_crest, 0.28 * s).ToNurbsCurve())
+                desenho_completo_secoes_2d.append(rg.Circle(p_crest, 0.30 * s).ToNurbsCurve())
 
             # 2. Caixa Inferior: Aterro
             d_a_all = [d for r_type, d_list in s_data['regioes'] if r_type == "ATERRO" for d in d_list]
             if s_data['area_total_aterro'] > 0.01 and d_a_all:
                 d_a_mid = (min(d_a_all) + max(d_a_all)) / 2.0
-                y_a_box = base_y - 3.8 * s
-                x_a_box = base_x + d_a_mid
-
                 txt_a1 = "ATERRO SEÇÃO {}: {:.2f} m²".format(lbl, s_data['area_total_aterro']).replace('.', ',')
                 txt_a2 = "Altura Máx: {:.2f}m".format(s_data['max_h_aterro']).replace('.', ',')
-                a_card, (wa, ha) = make_callout_card(x_a_box, y_a_box, txt_a1, txt_a2, s)
+
+                ha_est = 5.5 * s
+                y_a_box = base_y - 5.5 * s - (ha_est / 2.0)
+                x_a_box = base_x + d_a_mid
+
+                a_card, (wa, ha) = make_callout_card(x_a_box, y_a_box, txt_a1, txt_a2, s, False)
                 desenho_completo_secoes_2d.extend(a_card)
 
                 p_a_box_top = rg.Point3d(x_a_box, y_a_box + ha / 2.0, 0.0)
                 p_datum_conn = rg.Point3d(x_a_box, base_y, 0.0)
                 desenho_completo_secoes_2d.append(rg.LineCurve(p_a_box_top, p_datum_conn))
-                desenho_completo_secoes_2d.append(rg.Circle(p_datum_conn, 0.28 * s).ToNurbsCurve())
+                desenho_completo_secoes_2d.append(rg.Circle(p_datum_conn, 0.30 * s).ToNurbsCurve())
 
-        # Banner de Transferência de Massa entre Seção Atual e a Próxima
+        # Banner de Transferência de Massa entre Seção Atual e a Próxima (Espaçamento Amplo)
         if idx_s < num_secoes - 1:
             lbl_prox = labels_t[idx_s + 1]
             d_t, vc_t, va_t, s_t = vols_trechos[idx_s]
@@ -1373,13 +1459,13 @@ def run():
             # Posição intermediária perfeitamente centrada no vão livre entre as seções
             next_sec = sec_data_list[idx_s + 1]
             next_datum = math.floor(next_sec['z_min'] - 2.0)
-            next_h_top = (next_sec['z_max'] - next_datum) + 8.5 * s
+            next_h_top = (next_sec['z_max'] - next_datum) + 16.0 * s
 
-            y_bot_current = base_y - 5.5 * s
+            y_bot_current = base_y - 12.0 * s
             y_top_next = (base_y - espacamento_y) + next_h_top
             y_banner = (y_bot_current + y_top_next) / 2.0
             x_banner = base_x + total_ext / 2.0
-            banner_geoms = make_mass_haul_banner(x_banner, y_banner, lbl, lbl_prox, d_t, vc_t, va_t, s_t, nota_t, s)
+            banner_geoms, _ = make_mass_haul_banner(x_banner, y_banner, lbl, lbl_prox, d_t, vc_t, va_t, s_t, nota_t, s)
             desenho_completo_secoes_2d.extend(banner_geoms)
 
     # =========================================================================
