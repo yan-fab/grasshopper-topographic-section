@@ -1442,22 +1442,20 @@ def run():
     if not lista_linhas_raw:
         raise ValueError("LinhasCorte inválidas ou não conectadas. Forneça ao menos uma curva de corte.")
 
-    # 0. ALINHAMENTO AUTOMÁTICO DE TODOS OS EIXOS TRANSVERSAIS (CONFORME CROQUI)
-    # Todos os eixos ganham a mesma direção, comprimento idêntico e partem de uma linha
-    # de base comum perpendicular (linha de alinhamento vermelha na margem externa).
-    
-    # 0.1 Harmonização do sentido de direção (todos apontando do mesmo lado)
-    lista_linhas = [c.DuplicateCurve() for c in lista_linhas_raw]
-    vec_ref = lista_linhas[0].PointAtEnd - lista_linhas[0].PointAtStart
-    for i in range(len(lista_linhas)):
-        vec_i = lista_linhas[i].PointAtEnd - lista_linhas[i].PointAtStart
-        if vec_i.X * vec_ref.X + vec_i.Y * vec_ref.Y < 0.0:
-            lista_linhas[i].Reverse()
+    # =========================================================================
+    # 0. ALINHAMENTO E ORGANIZAÇÃO NORMATIVA DOS EIXOS (NBR 6492)
+    #    "DE CIMA PARA BAIXO E DA ESQUERDA PARA A DIREITA"
+    # =========================================================================
 
-    # 0.2 Vetor diretor médio normalizado das seções transversais (U)
+    # 0.1 Processamento das linhas de corte transversais
+    lista_linhas_raw = [to_rhino_curve(c) for c in to_list(raw_linhas) if to_rhino_curve(c) is not None]
+    if not lista_linhas_raw:
+        raise ValueError("LinhasCorte inválidas ou não conectadas. Forneça ao menos uma curva de corte.")
+
+    # Determinação do vetor transversal médio (U)
     ux_sum = 0.0
     uy_sum = 0.0
-    for c in lista_linhas:
+    for c in lista_linhas_raw:
         dx = c.PointAtEnd.X - c.PointAtStart.X
         dy = c.PointAtEnd.Y - c.PointAtStart.Y
         l_len = math.hypot(dx, dy)
@@ -1471,10 +1469,45 @@ def run():
     else:
         u_corte = rg.Vector3d(ux_sum / u_len, uy_sum / u_len, 0.0)
 
-    # Vetor perpendicular em planta (V) - direção da linha de alinhamento
-    v_perp = rg.Vector3d(-u_corte.Y, u_corte.X, 0.0)
+    # REGRA DA NORMA: "DA ESQUERDA PARA A DIREITA" (Left to Right)
+    # Garante que u_corte aponte estritamente para a direita (+X >= 0, ou se vertical, +Y > 0)
+    if u_corte.X < -1e-5 or (abs(u_corte.X) <= 1e-5 and u_corte.Y < -1e-5):
+        u_corte = -u_corte
 
-    # 0.3 Envelopamento longitudinal do empreendimento ao longo de U
+    # REGRA DA NORMA: "DE CIMA PARA BAIXO" (Top to Bottom)
+    # O vetor longitudinal perpendicular deve apontar estritamente para baixo (-Y < 0)
+    v_cand1 = rg.Vector3d(-u_corte.Y, u_corte.X, 0.0)
+    v_cand2 = rg.Vector3d(u_corte.Y, -u_corte.X, 0.0)
+
+    if v_cand1.Y < -1e-5:
+        u_long_down = v_cand1
+    elif v_cand2.Y < -1e-5:
+        u_long_down = v_cand2
+    else:
+        u_long_down = v_cand1 if v_cand1.X > 0 else v_cand2
+
+    u_vert = u_long_down
+    v_perp = u_long_down
+    w_perp_v = u_corte
+
+    # Harmoniza cada curva transversal para apontar DA ESQUERDA PARA A DIREITA
+    lista_linhas = [c.DuplicateCurve() for c in lista_linhas_raw]
+    for c in lista_linhas:
+        vec_c = c.PointAtEnd - c.PointAtStart
+        if vec_c.X * u_corte.X + vec_c.Y * u_corte.Y < 0.0:
+            c.Reverse()
+
+    # REGRA DA NORMA: ORDENAÇÃO DAS SEÇÕES TRANSVERSAIS "DE CIMA PARA BAIXO"
+    # A seção mais ao topo (norte / início do loteamento) é a Seção A.
+    # Conforme avançamos ao longo de u_long_down (para baixo), a projeção aumenta.
+    # Ordenar em ordem crescente de projeção em u_long_down coloca a seção do TOPO em primeiro lugar (A).
+    def get_sec_proj_down(crv):
+        p_mid = crv.PointAtNormalizedLength(0.5)
+        return p_mid.X * u_long_down.X + p_mid.Y * u_long_down.Y
+
+    lista_linhas.sort(key=get_sec_proj_down)
+
+    # 0.2 Envelopamento transversal do empreendimento ao longo de u_corte
     u_proj_vals = []
     for c in lista_linhas:
         p0 = c.PointAtStart
@@ -1482,109 +1515,98 @@ def run():
         u_proj_vals.append(p0.X * u_corte.X + p0.Y * u_corte.Y)
         u_proj_vals.append(p1.X * u_corte.X + p1.Y * u_corte.Y)
 
-    # Margem extra de 6.0m para garantir que atravesse o relevo confortavelmente
     u_min_aligned = min(u_proj_vals) - 6.0 * s
     u_max_aligned = max(u_proj_vals) + 6.0 * s
 
-    # 0.4 Construção dos eixos alinhados definitivos
+    # 0.3 Construção dos eixos transversais alinhados definitivos (Seções A, B, C...)
+    # Todos partem da esquerda (u_min_aligned) e vão para a direita (u_max_aligned),
+    # organizados estritamente de cima para baixo.
     lista_alinhadas = []
-    v_coords = []
     for c in lista_linhas:
         p_mid = c.PointAtNormalizedLength(0.5)
-        v_c = p_mid.X * v_perp.X + p_mid.Y * v_perp.Y
-        v_coords.append(v_c)
+        v_coord = p_mid.X * u_long_down.X + p_mid.Y * u_long_down.Y
 
-        p_ini_aln = rg.Point3d(u_min_aligned * u_corte.X + v_c * v_perp.X,
-                               u_min_aligned * u_corte.Y + v_c * v_perp.Y,
+        p_ini_aln = rg.Point3d(u_min_aligned * u_corte.X + v_coord * u_long_down.X,
+                               u_min_aligned * u_corte.Y + v_coord * u_long_down.Y,
                                0.0)
-        p_fim_aln = rg.Point3d(u_max_aligned * u_corte.X + v_c * v_perp.X,
-                               u_max_aligned * u_corte.Y + v_c * v_perp.Y,
+        p_fim_aln = rg.Point3d(u_max_aligned * u_corte.X + v_coord * u_long_down.X,
+                               u_max_aligned * u_corte.Y + v_coord * u_long_down.Y,
                                0.0)
         lista_alinhadas.append(rg.LineCurve(p_ini_aln, p_fim_aln))
 
-    # 0.5 ALINHAMENTO AUTOMÁTICO DOS EIXOS LONGITUDINAIS/VERTICAIS (1, 2, 3...)
-    # Mesma metodologia paramétrica dos eixos transversais: harmonização de direção,
-    # comprimento idêntico e linha de base comum perpendicular (A Linha Vermelha no topo).
+    # 0.4 Processamento e Organização dos Eixos Longitudinais/Verticais (1, 2, 3...)
+    # REGRA DA NORMA:
+    # 1. Numerados "DA ESQUERDA PARA A DIREITA" (1 na esquerda, 2 no meio, 3 na direita...)
+    # 2. Desenhados "DE CIMA PARA BAIXO" (início no topo do loteamento, fim na base)
     lista_verticais_raw = [to_rhino_curve(c) for c in to_list(raw_verticais) if to_rhino_curve(c) is not None]
     lista_verticais_alinhadas = []
     distancias_verticais = []
-    u_vert = rg.Vector3d(-u_corte.Y, u_corte.X, 0.0)
-    w_perp_v = rg.Vector3d(u_corte)
 
     if lista_verticais_raw:
         lista_vert_dups = [c.DuplicateCurve() for c in lista_verticais_raw]
 
-        # Direção de referência relativa às seções transversais (do início das seções para o fim)
-        if len(lista_alinhadas) >= 2:
-            vec_dir_secoes = lista_alinhadas[-1].PointAtStart - lista_alinhadas[0].PointAtStart
-        else:
-            vec_dir_secoes = lista_vert_dups[0].PointAtEnd - lista_vert_dups[0].PointAtStart
-
-        # Harmonização de sentido de todos os eixos verticais
-        for i in range(len(lista_vert_dups)):
-            vec_i = lista_vert_dups[i].PointAtEnd - lista_vert_dups[i].PointAtStart
-            if vec_i.X * vec_dir_secoes.X + vec_i.Y * vec_dir_secoes.Y < 0.0:
-                lista_vert_dups[i].Reverse()
-
-        # Vetor diretor médio normalizado dos eixos verticais
-        vx_sum, vy_sum = 0.0, 0.0
+        # Harmoniza cada eixo longitudinal para correr DE CIMA PARA BAIXO (ao longo de u_long_down)
         for c in lista_vert_dups:
-            dx = c.PointAtEnd.X - c.PointAtStart.X
-            dy = c.PointAtEnd.Y - c.PointAtStart.Y
-            l_len = math.hypot(dx, dy)
-            if l_len > 1e-4:
-                vx_sum += dx / l_len
-                vy_sum += dy / l_len
-        v_len = math.hypot(vx_sum, vy_sum)
-        if v_len > 1e-4:
-            u_vert = rg.Vector3d(vx_sum / v_len, vy_sum / v_len, 0.0)
-        else:
-            u_vert = rg.Vector3d(-u_corte.Y, u_corte.X, 0.0)
+            vec_v = c.PointAtEnd - c.PointAtStart
+            if vec_v.X * u_long_down.X + vec_v.Y * u_long_down.Y < 0.0:
+                c.Reverse()
 
-        # Vetor perpendicular aos eixos verticais (linha de base no topo)
-        w_perp_v = rg.Vector3d(-u_vert.Y, u_vert.X, 0.0)
+        # REGRA DA NORMA: ORDENAÇÃO DOS EIXOS VERTICAIS "DA ESQUERDA PARA A DIREITA"
+        # Projeção lateral ao longo de u_corte (que aponta para a direita):
+        # Menor projeção = mais à esquerda -> Eixo 1
+        # Maior projeção = mais à direita -> Eixo N
+        def get_vert_proj_lateral(crv):
+            p_mid = crv.PointAtNormalizedLength(0.5)
+            return p_mid.X * u_corte.X + p_mid.Y * u_corte.Y
 
-        # Envelopamento longitudinal ao longo de u_vert (abrangendo tanto os eixos quanto as seções de corte)
+        lista_vert_dups.sort(key=get_vert_proj_lateral)
+
+        # Envelopamento longitudinal ao longo de u_long_down (abrangendo seções e verticais)
         v_proj_vals = []
         for c in lista_vert_dups:
             p0, p1 = c.PointAtStart, c.PointAtEnd
-            v_proj_vals.append(p0.X * u_vert.X + p0.Y * u_vert.Y)
-            v_proj_vals.append(p1.X * u_vert.X + p1.Y * u_vert.Y)
+            v_proj_vals.append(p0.X * u_long_down.X + p0.Y * u_long_down.Y)
+            v_proj_vals.append(p1.X * u_long_down.X + p1.Y * u_long_down.Y)
 
         for c in lista_alinhadas:
             p0, p1 = c.PointAtStart, c.PointAtEnd
-            v_proj_vals.append(p0.X * u_vert.X + p0.Y * u_vert.Y)
-            v_proj_vals.append(p1.X * u_vert.X + p1.Y * u_vert.Y)
+            v_proj_vals.append(p0.X * u_long_down.X + p0.Y * u_long_down.Y)
+            v_proj_vals.append(p1.X * u_long_down.X + p1.Y * u_long_down.Y)
 
-        v_min_aln = min(v_proj_vals) - 6.0 * s
-        v_max_aln = max(v_proj_vals) + 6.0 * s
+        v_min_aln = min(v_proj_vals) - 6.0 * s  # Topo do loteamento
+        v_max_aln = max(v_proj_vals) + 6.0 * s  # Base do loteamento
 
-        # Ordena os eixos verticais transversalmente da esquerda para a direita (ao longo de w_perp_v)
-        v_items = []
+        # Construção dos eixos verticais alinhados:
+        # Partem do topo (v_min_aln) e vão para a base (v_max_aln),
+        # ordenados da esquerda (Eixo 1) para a direita (Eixo N)
         for c in lista_vert_dups:
             p_mid = c.PointAtNormalizedLength(0.5)
-            w_c = p_mid.X * w_perp_v.X + p_mid.Y * w_perp_v.Y
-            v_items.append((w_c, c))
-        v_items.sort(key=lambda x: x[0])
+            w_coord = p_mid.X * u_corte.X + p_mid.Y * u_corte.Y
 
-        for w_c, _ in v_items:
-            p_ini_v = rg.Point3d(v_min_aln * u_vert.X + w_c * w_perp_v.X,
-                                 v_min_aln * u_vert.Y + w_c * w_perp_v.Y,
+            p_ini_v = rg.Point3d(w_coord * u_corte.X + v_min_aln * u_long_down.X,
+                                 w_coord * u_corte.Y + v_min_aln * u_long_down.Y,
                                  0.0)
-            p_fim_v = rg.Point3d(v_max_aln * u_vert.X + w_c * w_perp_v.X,
-                                 v_max_aln * u_vert.Y + w_c * w_perp_v.Y,
+            p_fim_v = rg.Point3d(w_coord * u_corte.X + v_max_aln * u_long_down.X,
+                                 w_coord * u_corte.Y + v_max_aln * u_long_down.Y,
                                  0.0)
             lista_verticais_alinhadas.append(rg.LineCurve(p_ini_v, p_fim_v))
 
-        # Distâncias entre eixos verticais consecutivos
+        # Distâncias reais entre eixos verticais consecutivos (1-2, 2-3...)
         for j in range(len(lista_verticais_alinhadas) - 1):
             d_v = calculate_axis_distance(lista_verticais_alinhadas[j], lista_verticais_alinhadas[j+1])
             distancias_verticais.append(max(d_v, 0.1))
 
     lista_verticais = lista_verticais_alinhadas
 
-    # Processamento de curvas de projeto
-    lista_projetos = [to_rhino_curve(c) for c in to_list(raw_projeto) if to_rhino_curve(c) is not None]
+    # Processamento de curvas de projeto (harmonizadas da esquerda para a direita)
+    lista_projetos_raw = [to_rhino_curve(c) for c in to_list(raw_projeto) if to_rhino_curve(c) is not None]
+    lista_projetos = []
+    for cp in lista_projetos_raw:
+        cp_dup = cp.DuplicateCurve()
+        vec_cp = cp_dup.PointAtEnd - cp_dup.PointAtStart
+        if vec_cp.X * u_corte.X + vec_cp.Y * u_corte.Y < 0.0:
+            cp_dup.Reverse()
+        lista_projetos.append(cp_dup)
 
     ponto_base = to_rhino_point(raw_ponto)
     orig_x = ponto_base.X if ponto_base else 0.0
@@ -2053,13 +2075,13 @@ def run():
         # Prolongamento e Balão numérico no topo (além da linha de cota)
         p_bv_ini = p_start_v - u_vert * offset_balao_v_fora
         planta_baixa_geoms.append(rg.LineCurve(p_start_v, p_bv_ini))
-        bv_ini = draw_plan_axis_bubble(p_bv_ini, u_vert, lbl_v, s)
+        bv_ini = draw_plan_axis_bubble(p_bv_ini, None, lbl_v, s)
         planta_baixa_geoms.extend(bv_ini)
 
         # Prolongamento e Balão numérico na base (fim do eixo)
         p_bv_fim = p_end_v + u_vert * (4.0 * s)
         planta_baixa_geoms.append(rg.LineCurve(p_end_v, p_bv_fim))
-        bv_fim = draw_plan_axis_bubble(p_bv_fim, u_vert, lbl_v, s)
+        bv_fim = draw_plan_axis_bubble(p_bv_fim, None, lbl_v, s)
         planta_baixa_geoms.extend(bv_fim)
 
     # 3.2 Cotas Técnicas de Distância entre Eixos Verticais FORA DO DESENHO (ao longo do topo)
@@ -2073,23 +2095,7 @@ def run():
 
     # 4. Malha de Quadrantes de Terraplenagem em Planta (Interseção Transversais x Verticais)
     if num_secoes >= 2 and num_verticais >= 2:
-        grid_pts = [[None for _ in range(num_verticais)] for _ in range(num_secoes)]
-        for i, ct in enumerate(lista_alinhadas):
-            for j, cv in enumerate(lista_verticais):
-                ct_xy = rg.Curve.ProjectToPlane(ct, rg.Plane.WorldXY) or ct
-                cv_xy = rg.Curve.ProjectToPlane(cv, rg.Plane.WorldXY) or cv
-                ev = rg.Intersect.Intersection.CurveCurve(ct_xy, cv_xy, tol * 10, tol * 10)
-                if ev and ev.Count > 0:
-                    pt_inter = ev[0].PointA
-                    grid_pts[i][j] = rg.Point3d(pt_inter.X, pt_inter.Y, 0.0)
-                else:
-                    rc_t, t_t = ct_xy.ClosestPoint(cv_xy.PointAtNormalizedLength(0.5))
-                    rc_v, t_v = cv_xy.ClosestPoint(ct_xy.PointAt(t_t))
-                    if rc_t and rc_v:
-                        pt_c = ct_xy.PointAt(t_t)
-                        grid_pts[i][j] = rg.Point3d(pt_c.X, pt_c.Y, 0.0)
-
-        plane_grid = rg.Plane(rg.Point3d.Origin, u_corte, v_perp)
+        plane_grid = rg.Plane(rg.Point3d.Origin, u_corte, -u_long_down)
 
         for i in range(num_secoes - 1):
             for j in range(num_verticais - 1):
