@@ -331,7 +331,7 @@ LOWER_STROKES = {
     'z': [[(0,0.65),(0.55,0.65),(0,0),(0.55,0)]],
 }
 
-def generate_stroke_text(text_str, pt, height, justification=None):
+def generate_stroke_text(text_str, pt, height, justification=None, plane=None):
     curves = []
     if not text_str: return curves
 
@@ -377,27 +377,36 @@ def generate_stroke_text(text_str, pt, height, justification=None):
     char_gap = height * 0.18
     total_w = sum(char_widths) + max(0, len(text_str) - 1) * char_gap
 
-    start_x = pt.X
-    start_y = pt.Y
+    start_x = 0.0
+    start_y = 0.0
 
     if justification == rg.TextJustification.MiddleCenter:
-        start_x = pt.X - total_w / 2.0
-        start_y = pt.Y - height / 2.0
+        start_x = -total_w / 2.0
+        start_y = -height / 2.0
     elif justification == rg.TextJustification.BottomCenter:
-        start_x = pt.X - total_w / 2.0
-        start_y = pt.Y
+        start_x = -total_w / 2.0
+        start_y = 0.0
     elif justification == rg.TextJustification.TopCenter:
-        start_x = pt.X - total_w / 2.0
-        start_y = pt.Y - height
+        start_x = -total_w / 2.0
+        start_y = -height
     elif justification == rg.TextJustification.TopLeft:
-        start_x = pt.X
-        start_y = pt.Y - height
+        start_x = 0.0
+        start_y = -height
     elif justification == rg.TextJustification.MiddleRight:
-        start_x = pt.X - total_w
-        start_y = pt.Y - height / 2.0
+        start_x = -total_w
+        start_y = -height / 2.0
     elif justification == rg.TextJustification.BottomRight:
-        start_x = pt.X - total_w
-        start_y = pt.Y
+        start_x = -total_w
+        start_y = 0.0
+
+    if plane is None:
+        p_origin = rg.Point3d(pt.X, pt.Y, pt.Z)
+        x_axis = rg.Vector3d.XAxis
+        y_axis = rg.Vector3d.YAxis
+    else:
+        p_origin = rg.Point3d(pt.X, pt.Y, pt.Z)
+        x_axis = plane.XAxis
+        y_axis = plane.YAxis
 
     cur_x = start_x
     for strokes, accent_type, cw in char_data:
@@ -405,7 +414,7 @@ def generate_stroke_text(text_str, pt, height, justification=None):
         if strokes:
             for stroke in strokes:
                 if len(stroke) >= 2:
-                    pts = [rg.Point3d(cur_x + sx * scale_x, start_y + sy * height, pt.Z) for sx, sy in stroke]
+                    pts = [p_origin + x_axis * (cur_x + sx * scale_x) + y_axis * (start_y + sy * height) for sx, sy in stroke]
                     if len(pts) == 2:
                         curves.append(rg.LineCurve(pts[0], pts[1]))
                     else:
@@ -413,7 +422,7 @@ def generate_stroke_text(text_str, pt, height, justification=None):
 
         if accent_type and accent_type in ACCENT_STROKES:
             for a_stroke in ACCENT_STROKES[accent_type]:
-                pts = [rg.Point3d(cur_x + sx * scale_x, start_y + sy * height, pt.Z) for sx, sy in a_stroke]
+                pts = [p_origin + x_axis * (cur_x + sx * scale_x) + y_axis * (start_y + sy * height) for sx, sy in a_stroke]
                 if len(pts) == 2:
                     curves.append(rg.LineCurve(pts[0], pts[1]))
                 else:
@@ -423,16 +432,21 @@ def generate_stroke_text(text_str, pt, height, justification=None):
 
     return curves
 
-def make_text_geometry(text_str, pt, height, justification=None, s=1.0):
+def make_text_geometry(text_str, pt, height, justification=None, s=1.0, plane=None):
     if not text_str: return []
     curves = []
 
     # 1. Tenta Explode nativo do Rhino
     try:
-        plane = rg.Plane(pt, rg.Vector3d.ZAxis)
+        if plane is None:
+            text_plane = rg.Plane(pt, rg.Vector3d.ZAxis)
+        else:
+            text_plane = rg.Plane(plane)
+            text_plane.Origin = pt
+
         te = rg.TextEntity()
         te.PlainText = text_str
-        te.Plane = plane
+        te.Plane = text_plane
         te.TextHeight = height
         if justification is not None:
             te.Justification = justification
@@ -463,7 +477,7 @@ def make_text_geometry(text_str, pt, height, justification=None, s=1.0):
     except: pass
 
     # 3. Fallback: Stroke Vector Font integrado
-    return generate_stroke_text(text_str, pt, height, justification)
+    return generate_stroke_text(text_str, pt, height, justification, plane)
 
 make_text_entity = make_text_geometry
 
@@ -592,8 +606,11 @@ def draw_plan_axis_bubble(pt, dir_vec, label_str, s=1.0):
 
     return geoms
 
-def draw_plan_dimension(p1, p2, dist_val, s=1.0):
-    """Desenha uma cota linear técnica com ticks e texto de distância entre dois eixos em planta."""
+def draw_plan_dimension(p1, p2, dist_val, s=1.0, offset_dir=None, offset_dist=0.0):
+    """
+    Desenha uma cota linear técnica com linhas de chamada, ticks NBR a 45° e texto
+    alinhado perfeitamente paralelo à linha de cota fora do desenho.
+    """
     geoms = []
     p1_2d = rg.Point3d(p1.X, p1.Y, 0.0)
     p2_2d = rg.Point3d(p2.X, p2.Y, 0.0)
@@ -601,23 +618,51 @@ def draw_plan_dimension(p1, p2, dist_val, s=1.0):
     d_len = vec.Length
     if d_len < 1e-3: return geoms
 
-    u = rg.Vector3d(vec)
-    u.Unitize()
-    n = rg.Vector3d(-u.Y, u.X, 0.0)
+    u_dim = rg.Vector3d(vec)
+    u_dim.Unitize()
 
-    l_cota = rg.LineCurve(p1_2d, p2_2d)
+    # Se offset for fornecido, desloca a linha de cota para fora do desenho
+    if offset_dir is not None and abs(offset_dist) > 1e-4:
+        off_v = rg.Vector3d(offset_dir.X, offset_dir.Y, 0.0)
+        off_v.Unitize()
+        p1_cota = p1_2d + off_v * offset_dist
+        p2_cota = p2_2d + off_v * offset_dist
+
+        # Linhas de chamada (extension lines)
+        l_ext1 = rg.LineCurve(p1_2d + off_v * (0.8 * s), p1_cota + off_v * (1.2 * s))
+        l_ext2 = rg.LineCurve(p2_2d + off_v * (0.8 * s), p2_cota + off_v * (1.2 * s))
+        geoms.extend([l_ext1, l_ext2])
+    else:
+        p1_cota = p1_2d
+        p2_cota = p2_2d
+        off_v = rg.Vector3d(-u_dim.Y, u_dim.X, 0.0)
+
+    # Linha principal de cota
+    l_cota = rg.LineCurve(p1_cota, p2_cota)
     geoms.append(l_cota)
 
-    tick_len = 0.6 * s
-    t1_a = p1_2d - n * (tick_len / 2.0) - u * (0.2 * s)
-    t1_b = p1_2d + n * (tick_len / 2.0) + u * (0.2 * s)
-    t2_a = p2_2d - n * (tick_len / 2.0) - u * (0.2 * s)
-    t2_b = p2_2d + n * (tick_len / 2.0) + u * (0.2 * s)
+    # Ticks arquitetônicos a 45 graus
+    tick_len = 0.85 * s
+    tick_vec = (u_dim + off_v) * 0.7071
+    t1_a = p1_cota - tick_vec * (tick_len / 2.0)
+    t1_b = p1_cota + tick_vec * (tick_len / 2.0)
+    t2_a = p2_cota - tick_vec * (tick_len / 2.0)
+    t2_b = p2_cota + tick_vec * (tick_len / 2.0)
     geoms.append(rg.LineCurve(t1_a, t1_b))
     geoms.append(rg.LineCurve(t2_a, t2_b))
 
-    p_mid = (p1_2d + p2_2d) / 2.0 + n * (0.60 * s)
-    txt_cota = make_text_geometry("D = {:.2f}m".format(dist_val).replace('.', ','), p_mid, 0.75 * s, rg.TextJustification.MiddleCenter, s)
+    # Orientação legível do texto (evita texto de cabeça para baixo segundo NBR 6492)
+    if u_dim.Y < -1e-4 or (abs(u_dim.Y) <= 1e-4 and u_dim.X < 0):
+        u_txt = -u_dim
+    else:
+        u_txt = u_dim
+    v_txt = rg.Vector3d(-u_txt.Y, u_txt.X, 0.0)
+
+    # Ponto do texto levemente afastado da linha de cota (no lado de fora)
+    p_mid = (p1_cota + p2_cota) / 2.0 + off_v * (0.85 * s)
+    plane_txt = rg.Plane(p_mid, u_txt, v_txt)
+    txt_str = "D = {:.2f}m".format(dist_val).replace('.', ',')
+    txt_cota = make_text_geometry(txt_str, p_mid, 0.85 * s, rg.TextJustification.MiddleCenter, s, plane_txt)
     if txt_cota: geoms.extend(txt_cota)
 
     return geoms
@@ -992,10 +1037,80 @@ def run():
     raw_escala       = globals().get('Escala', globals().get('Scale', globals().get('S', 1.0)))
     raw_nivel_proj   = globals().get('NivelProjeto', globals().get('Plato', globals().get('CotaProjeto', None)))
 
+    try:
+        s = float(raw_escala) if raw_escala is not None else 1.0
+        if s <= 0.05: s = 1.0
+    except: s = 1.0
+
+    try:
+        fator_k = float(raw_empolamento) if raw_empolamento is not None else 1.20
+        if fator_k <= 0.5: fator_k = 1.20
+    except: fator_k = 1.20
+
     # Processamento das linhas de corte transversais
-    lista_linhas = [to_rhino_curve(c) for c in to_list(raw_linhas) if to_rhino_curve(c) is not None]
-    if not lista_linhas:
+    lista_linhas_raw = [to_rhino_curve(c) for c in to_list(raw_linhas) if to_rhino_curve(c) is not None]
+    if not lista_linhas_raw:
         raise ValueError("LinhasCorte inválidas ou não conectadas. Forneça ao menos uma curva de corte.")
+
+    # 0. ALINHAMENTO AUTOMÁTICO DE TODOS OS EIXOS TRANSVERSAIS (CONFORME CROQUI)
+    # Todos os eixos ganham a mesma direção, comprimento idêntico e partem de uma linha
+    # de base comum perpendicular (linha de alinhamento vermelha na margem externa).
+    
+    # 0.1 Harmonização do sentido de direção (todos apontando do mesmo lado)
+    lista_linhas = [c.DuplicateCurve() for c in lista_linhas_raw]
+    vec_ref = lista_linhas[0].PointAtEnd - lista_linhas[0].PointAtStart
+    for i in range(len(lista_linhas)):
+        vec_i = lista_linhas[i].PointAtEnd - lista_linhas[i].PointAtStart
+        if vec_i.X * vec_ref.X + vec_i.Y * vec_ref.Y < 0.0:
+            lista_linhas[i].Reverse()
+
+    # 0.2 Vetor diretor médio normalizado das seções transversais (U)
+    ux_sum = 0.0
+    uy_sum = 0.0
+    for c in lista_linhas:
+        dx = c.PointAtEnd.X - c.PointAtStart.X
+        dy = c.PointAtEnd.Y - c.PointAtStart.Y
+        l_len = math.hypot(dx, dy)
+        if l_len > 1e-4:
+            ux_sum += dx / l_len
+            uy_sum += dy / l_len
+
+    u_len = math.hypot(ux_sum, uy_sum)
+    if u_len < 1e-4:
+        u_corte = rg.Vector3d(1.0, 0.0, 0.0)
+    else:
+        u_corte = rg.Vector3d(ux_sum / u_len, uy_sum / u_len, 0.0)
+
+    # Vetor perpendicular em planta (V) - direção da linha de alinhamento
+    v_perp = rg.Vector3d(-u_corte.Y, u_corte.X, 0.0)
+
+    # 0.3 Envelopamento longitudinal do empreendimento ao longo de U
+    u_proj_vals = []
+    for c in lista_linhas:
+        p0 = c.PointAtStart
+        p1 = c.PointAtEnd
+        u_proj_vals.append(p0.X * u_corte.X + p0.Y * u_corte.Y)
+        u_proj_vals.append(p1.X * u_corte.X + p1.Y * u_corte.Y)
+
+    # Margem extra de 6.0m para garantir que atravesse o relevo confortavelmente
+    u_min_aligned = min(u_proj_vals) - 6.0 * s
+    u_max_aligned = max(u_proj_vals) + 6.0 * s
+
+    # 0.4 Construção dos eixos alinhados definitivos
+    lista_alinhadas = []
+    v_coords = []
+    for c in lista_linhas:
+        p_mid = c.PointAtNormalizedLength(0.5)
+        v_c = p_mid.X * v_perp.X + p_mid.Y * v_perp.Y
+        v_coords.append(v_c)
+
+        p_ini_aln = rg.Point3d(u_min_aligned * u_corte.X + v_c * v_perp.X,
+                               u_min_aligned * u_corte.Y + v_c * v_perp.Y,
+                               0.0)
+        p_fim_aln = rg.Point3d(u_max_aligned * u_corte.X + v_c * v_perp.X,
+                               u_max_aligned * u_corte.Y + v_c * v_perp.Y,
+                               0.0)
+        lista_alinhadas.append(rg.LineCurve(p_ini_aln, p_fim_aln))
 
     # Processamento dos eixos longitudinais/verticais
     lista_verticais = [to_rhino_curve(c) for c in to_list(raw_verticais) if to_rhino_curve(c) is not None]
@@ -1007,16 +1122,6 @@ def run():
     orig_x = ponto_base.X if ponto_base else 0.0
     orig_y = ponto_base.Y if ponto_base else 0.0
 
-    try:
-        fator_k = float(raw_empolamento) if raw_empolamento is not None else 1.20
-        if fator_k <= 0.5: fator_k = 1.20
-    except: fator_k = 1.20
-
-    try:
-        s = float(raw_escala) if raw_escala is not None else 1.0
-        if s <= 0.05: s = 1.0
-    except: s = 1.0
-
     modo_cotas = parse_seletor(raw_seletor)
     geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
 
@@ -1024,12 +1129,12 @@ def run():
         msg = "⚠️ Nenhuma geometria válida encontrada na entrada 'Terreno'. Conecte curvas de nível (Curves), malha (Mesh) ou superfície de terreno."
         return [], [], [], [], [], [msg]
 
-    # 1. Avalia cada seção transversal individualmente
-    num_secoes = len(lista_linhas)
+    # 1. Avalia cada seção transversal individualmente (usando os eixos alinhados)
+    num_secoes = len(lista_alinhadas)
     sec_data_list = []
     labels_t = [format_section_label(i) for i in range(num_secoes)]
 
-    for idx_s, crv_c in enumerate(lista_linhas):
+    for idx_s, crv_c in enumerate(lista_alinhadas):
         crv_p = lista_projetos[idx_s] if idx_s < len(lista_projetos) else (lista_projetos[0] if lista_projetos else None)
         s_data = evaluate_section_data(crv_c, geoms_terreno, crv_p, raw_nivel_proj, tol)
         sec_data_list.append(s_data)
@@ -1049,7 +1154,7 @@ def run():
     # 3. Distâncias Reais entre Eixos Consecutivos (para Cubagem AGPTEA)
     distancias_eixos = []
     for i in range(num_secoes - 1):
-        d_val = calculate_axis_distance(lista_linhas[i], lista_linhas[i+1])
+        d_val = calculate_axis_distance(lista_alinhadas[i], lista_alinhadas[i+1])
         distancias_eixos.append(max(d_val, 0.1))
 
     # Caso haja apenas 1 seção isolada, usa Largura
@@ -1282,43 +1387,50 @@ def run():
     # =========================================================================
     planta_baixa_geoms = []
 
-    # 1. Eixos Transversais (Seções A, B, C...) em Planta
-    for idx_s, crv_c in enumerate(lista_linhas):
+    # Recuos das cotas e balões para fora do desenho (fora da mancha do loteamento)
+    offset_cota_fora = 8.5 * s
+    offset_balao_fora = offset_cota_fora + 7.5 * s
+
+    # Linha de Alinhamento de Referência Externa (A Linha Vermelha do croqui do usuário)
+    if num_secoes >= 2:
+        p_ref_1 = lista_alinhadas[0].PointAtStart
+        p_ref_2 = lista_alinhadas[-1].PointAtStart
+        v_ref = p_ref_2 - p_ref_1
+        if v_ref.Length > 1e-4:
+            u_ref = rg.Vector3d(v_ref)
+            u_ref.Unitize()
+            l_align_ref = rg.LineCurve(p_ref_1 - u_ref * (4.0 * s), p_ref_2 + u_ref * (4.0 * s))
+            planta_baixa_geoms.append(l_align_ref)
+
+    # 1. Eixos Transversais Alinhados em Planta com Balões NBR e Linhas de Chamada
+    for idx_s, crv_aln in enumerate(lista_alinhadas):
         lbl = labels_t[idx_s]
-        p_start = crv_c.PointAtStart
-        p_end = crv_c.PointAtEnd
-        vec_axis = p_end - p_start
-        u_axis = rg.Vector3d(vec_axis)
-        u_axis.Unitize()
+        p_start = crv_aln.PointAtStart
+        p_end = crv_aln.PointAtEnd
 
-        planta_baixa_geoms.append(crv_c)
+        planta_baixa_geoms.append(crv_aln)
 
-        # Balão no início
-        p_b_ini = p_start - u_axis * (2.8 * s)
+        # Prolongamento e Balão no início (lado esquerdo, fora do desenho, além da linha de cota)
+        p_b_ini = p_start - u_corte * offset_balao_fora
         planta_baixa_geoms.append(rg.LineCurve(p_start, p_b_ini))
-        b_ini_geoms = draw_plan_axis_bubble(p_b_ini, u_axis, lbl, s)
+        b_ini_geoms = draw_plan_axis_bubble(p_b_ini, u_corte, lbl, s)
         planta_baixa_geoms.extend(b_ini_geoms)
 
-        # Balão no fim
-        p_b_fim = p_end + u_axis * (2.8 * s)
+        # Prolongamento e Balão no fim (lado direito, fora do desenho)
+        p_b_fim = p_end + u_corte * (4.0 * s)
         planta_baixa_geoms.append(rg.LineCurve(p_end, p_b_fim))
-        b_fim_geoms = draw_plan_axis_bubble(p_b_fim, u_axis, lbl, s)
+        b_fim_geoms = draw_plan_axis_bubble(p_b_fim, u_corte, lbl, s)
         planta_baixa_geoms.extend(b_fim_geoms)
 
-    # 2. Cotas de Distância entre Eixos Transversais Consecutivos em Planta
+    # 2. Cotas Técnicas de Distância entre Eixos FORA DO DESENHO (ao longo da linha vermelha)
     for idx_s in range(num_secoes - 1):
-        crv1 = lista_linhas[idx_s]
-        crv2 = lista_linhas[idx_s + 1]
+        p_start_1 = lista_alinhadas[idx_s].PointAtStart
+        p_start_2 = lista_alinhadas[idx_s + 1].PointAtStart
         dist_val = distancias_eixos[idx_s]
 
-        # Ponto médio em ambas as linhas
-        t_m1 = crv1.Domain.Min + 0.5 * (crv1.Domain.Max - crv1.Domain.Min)
-        t_m2 = crv2.Domain.Min + 0.5 * (crv2.Domain.Max - crv2.Domain.Min)
-        p_m1 = crv1.PointAt(t_m1)
-        p_m2 = crv2.PointAt(t_m2)
-
-        cota_planta = draw_plan_dimension(p_m1, p_m2, dist_val, s)
-        planta_baixa_geoms.extend(cota_planta)
+        # Desenha a cota técnica fora do desenho, recuada ao longo de -u_corte
+        cota_fora = draw_plan_dimension(p_start_1, p_start_2, dist_val, s, -u_corte, offset_cota_fora)
+        planta_baixa_geoms.extend(cota_fora)
 
     # 3. Eixos Longitudinais/Verticais (1, 2, 3...) em Planta
     num_verticais = len(lista_verticais)
@@ -1349,7 +1461,7 @@ def run():
     # 4. Malha de Quadrantes de Terraplenagem em Planta (Interseção Transversais x Verticais)
     if num_secoes >= 2 and num_verticais >= 2:
         grid_pts = [[None for _ in range(num_verticais)] for _ in range(num_secoes)]
-        for i, ct in enumerate(lista_linhas):
+        for i, ct in enumerate(lista_alinhadas):
             for j, cv in enumerate(lista_verticais):
                 ct_xy = rg.Curve.ProjectToPlane(ct, rg.Plane.WorldXY) or ct
                 cv_xy = rg.Curve.ProjectToPlane(cv, rg.Plane.WorldXY) or cv
