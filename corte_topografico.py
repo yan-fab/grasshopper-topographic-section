@@ -50,9 +50,16 @@ import System.Drawing
 
 def to_rhino_curve(geo):
     if geo is None: return None
+    if hasattr(geo, "Value"):
+        val = getattr(geo, "Value", None)
+        if val is not None and val is not geo:
+            c = to_rhino_curve(val)
+            if c is not None: return c
     if isinstance(geo, rg.Curve): return geo
+    if isinstance(geo, rg.Polyline): return geo.ToPolylineCurve()
     if isinstance(geo, rg.Line): return rg.LineCurve(geo)
-    if hasattr(geo, "Value"): return to_rhino_curve(geo.Value)
+    if isinstance(geo, rg.Arc): return rg.ArcCurve(geo)
+    if isinstance(geo, rg.Circle): return rg.ArcCurve(geo)
     try:
         c = rs.coercecurve(geo)
         if c: return c
@@ -61,16 +68,24 @@ def to_rhino_curve(geo):
         doc = Rhino.RhinoDoc.ActiveDoc
         if doc:
             obj = doc.Objects.FindId(geo)
-            if obj and isinstance(obj.Geometry, rg.Curve):
+            if obj and obj.Geometry and isinstance(obj.Geometry, rg.Curve):
                 return obj.Geometry
     except: pass
     return None
 
 def to_rhino_geom(geo):
     if geo is None: return None
+    if hasattr(geo, "Value"):
+        val = getattr(geo, "Value", None)
+        if val is not None and val is not geo:
+            res = to_rhino_geom(val)
+            if res is not None: return res
     if isinstance(geo, (rg.Curve, rg.Mesh, rg.Brep)): return geo
+    if isinstance(geo, rg.Polyline): return geo.ToPolylineCurve()
     if isinstance(geo, rg.Line): return rg.LineCurve(geo)
-    if hasattr(geo, "Value"): return to_rhino_geom(geo.Value)
+    if isinstance(geo, rg.Arc): return rg.ArcCurve(geo)
+    if isinstance(geo, rg.Circle): return rg.ArcCurve(geo)
+    if isinstance(geo, rg.Surface): return geo.ToBrep()
     try:
         c = rs.coercecurve(geo)
         if c: return c
@@ -87,15 +102,22 @@ def to_rhino_geom(geo):
         doc = Rhino.RhinoDoc.ActiveDoc
         if doc:
             obj = doc.Objects.FindId(geo)
-            if obj: return obj.Geometry
+            if obj and obj.Geometry:
+                geom = obj.Geometry
+                if isinstance(geom, (rg.Curve, rg.Mesh, rg.Brep)): return geom
+                if isinstance(geom, rg.Surface): return geom.ToBrep()
     except: pass
     return None
 
 def to_rhino_point(val):
     if val is None: return None
+    if hasattr(val, "Value"):
+        v = getattr(val, "Value", None)
+        if v is not None and v is not val:
+            res = to_rhino_point(v)
+            if res is not None: return res
     if isinstance(val, rg.Point3d): return val
     if isinstance(val, rg.Point): return val.Location
-    if hasattr(val, "Value"): return to_rhino_point(val.Value)
     if hasattr(val, "Location"): return val.Location
     try:
         pt = rs.coerce3dpoint(val)
@@ -105,15 +127,45 @@ def to_rhino_point(val):
         doc = Rhino.RhinoDoc.ActiveDoc
         if doc:
             obj = doc.Objects.FindId(val)
-            if obj and isinstance(obj.Geometry, rg.Point):
+            if obj and obj.Geometry and isinstance(obj.Geometry, rg.Point):
                 return obj.Geometry.Location
     except: pass
     return None
 
 def to_list(val):
     if val is None: return []
-    if isinstance(val, (list, tuple)): return list(val)
-    return [val]
+    out = []
+    def _flatten(v):
+        if v is None: return
+        # Suporte completo a Grasshopper DataTree e GH_Structure
+        if hasattr(v, "AllData"):
+            try:
+                for x in v.AllData(): _flatten(x)
+                return
+            except: pass
+        if hasattr(v, "Branches"):
+            try:
+                for b in v.Branches: _flatten(b)
+                return
+            except: pass
+        # Desempacota coleções iteráveis (List, Array, Tuple, Set), excluindo strings e geometrias Rhino
+        if hasattr(v, "__iter__"):
+            if isinstance(v, (str, bytes)):
+                out.append(v)
+                return
+            is_geom = False
+            try:
+                if isinstance(v, (rg.GeometryBase, rg.Point3d, rg.Vector3d, rg.Plane)):
+                    is_geom = True
+            except: pass
+            if not is_geom:
+                try:
+                    for x in v: _flatten(x)
+                    return
+                except: pass
+        out.append(v)
+    _flatten(val)
+    return out
 
 def parse_seletor(val):
     if val is None: return 1
@@ -514,34 +566,38 @@ def draw_nbr_level_marker(x, y, text_str, s=1.0):
 def draw_plan_axis_bubble(pt, dir_vec, label_str, s=1.0):
     """Gera o balão circular NBR 6492 nas extremidades das linhas de corte em planta com seta de visada."""
     geoms = []
+    p_flat = rg.Point3d(pt.X, pt.Y, 0.0)
     r = 1.35 * s
-    circ = rg.Circle(pt, r).ToNurbsCurve()
+    circ = rg.Circle(p_flat, r).ToNurbsCurve()
     geoms.append(circ)
 
-    txt_crvs = make_text_geometry(label_str, pt, 1.15 * s, rg.TextJustification.MiddleCenter, s)
+    txt_crvs = make_text_geometry(label_str, p_flat, 1.15 * s, rg.TextJustification.MiddleCenter, s)
     if txt_crvs: geoms.extend(txt_crvs)
 
     if dir_vec and dir_vec.Length > 1e-4:
-        v_norm = rg.Vector3d(dir_vec)
-        v_norm.Unitize()
-        n_view = rg.Vector3d(-v_norm.Y, v_norm.X, 0.0)
-        p_base = pt + n_view * r
-        p_tip = pt + n_view * (r + 1.2 * s)
-        p_left = p_base - v_norm * (0.45 * s)
-        p_right = p_base + v_norm * (0.45 * s)
+        v_norm = rg.Vector3d(dir_vec.X, dir_vec.Y, 0.0)
+        if v_norm.Length > 1e-6:
+            v_norm.Unitize()
+            n_view = rg.Vector3d(-v_norm.Y, v_norm.X, 0.0)
+            p_base = p_flat + n_view * r
+            p_tip = p_flat + n_view * (r + 1.2 * s)
+            p_left = p_base - v_norm * (0.45 * s)
+            p_right = p_base + v_norm * (0.45 * s)
 
-        seta_mesh = make_filled_mesh_tri(p_tip, p_left, p_right)
-        l_seta1 = rg.LineCurve(p_tip, p_left)
-        l_seta2 = rg.LineCurve(p_tip, p_right)
-        l_seta3 = rg.LineCurve(p_left, p_right)
-        geoms.extend([seta_mesh, l_seta1, l_seta2, l_seta3])
+            seta_mesh = make_filled_mesh_tri(p_tip, p_left, p_right)
+            l_seta1 = rg.LineCurve(p_tip, p_left)
+            l_seta2 = rg.LineCurve(p_tip, p_right)
+            l_seta3 = rg.LineCurve(p_left, p_right)
+            geoms.extend([seta_mesh, l_seta1, l_seta2, l_seta3])
 
     return geoms
 
 def draw_plan_dimension(p1, p2, dist_val, s=1.0):
     """Desenha uma cota linear técnica com ticks e texto de distância entre dois eixos em planta."""
     geoms = []
-    vec = p2 - p1
+    p1_2d = rg.Point3d(p1.X, p1.Y, 0.0)
+    p2_2d = rg.Point3d(p2.X, p2.Y, 0.0)
+    vec = p2_2d - p1_2d
     d_len = vec.Length
     if d_len < 1e-3: return geoms
 
@@ -549,35 +605,37 @@ def draw_plan_dimension(p1, p2, dist_val, s=1.0):
     u.Unitize()
     n = rg.Vector3d(-u.Y, u.X, 0.0)
 
-    l_cota = rg.LineCurve(p1, p2)
+    l_cota = rg.LineCurve(p1_2d, p2_2d)
     geoms.append(l_cota)
 
     tick_len = 0.6 * s
-    t1_a = p1 - n * (tick_len / 2.0) - u * (0.2 * s)
-    t1_b = p1 + n * (tick_len / 2.0) + u * (0.2 * s)
-    t2_a = p2 - n * (tick_len / 2.0) - u * (0.2 * s)
-    t2_b = p2 + n * (tick_len / 2.0) + u * (0.2 * s)
+    t1_a = p1_2d - n * (tick_len / 2.0) - u * (0.2 * s)
+    t1_b = p1_2d + n * (tick_len / 2.0) + u * (0.2 * s)
+    t2_a = p2_2d - n * (tick_len / 2.0) - u * (0.2 * s)
+    t2_b = p2_2d + n * (tick_len / 2.0) + u * (0.2 * s)
     geoms.append(rg.LineCurve(t1_a, t1_b))
     geoms.append(rg.LineCurve(t2_a, t2_b))
 
-    p_mid = (p1 + p2) / 2.0 + n * (0.60 * s)
+    p_mid = (p1_2d + p2_2d) / 2.0 + n * (0.60 * s)
     txt_cota = make_text_geometry("D = {:.2f}m".format(dist_val).replace('.', ','), p_mid, 0.75 * s, rg.TextJustification.MiddleCenter, s)
     if txt_cota: geoms.extend(txt_cota)
 
     return geoms
 
 def calculate_axis_distance(crv_a, crv_b):
-    """Calcula a distância ortogonal média entre duas linhas de corte consecutivas em planta."""
+    """Calcula a distância ortogonal média horizontal entre duas linhas de corte consecutivas em planta."""
     try:
-        t_mid_a = crv_a.Domain.Min + 0.5 * (crv_a.Domain.Max - crv_a.Domain.Min)
-        p_mid_a = crv_a.PointAt(t_mid_a)
-        rc, t_b = crv_b.ClosestPoint(p_mid_a)
-        d1 = p_mid_a.DistanceTo(crv_b.PointAt(t_b)) if rc else None
+        ca_xy = rg.Curve.ProjectToPlane(crv_a, rg.Plane.WorldXY) or crv_a
+        cb_xy = rg.Curve.ProjectToPlane(crv_b, rg.Plane.WorldXY) or crv_b
+        t_mid_a = ca_xy.Domain.Min + 0.5 * (ca_xy.Domain.Max - ca_xy.Domain.Min)
+        p_mid_a = ca_xy.PointAt(t_mid_a)
+        rc, t_b = cb_xy.ClosestPoint(p_mid_a)
+        d1 = p_mid_a.DistanceTo(cb_xy.PointAt(t_b)) if rc else None
 
-        t_mid_b = crv_b.Domain.Min + 0.5 * (crv_b.Domain.Max - crv_b.Domain.Min)
-        p_mid_b = crv_b.PointAt(t_mid_b)
-        rc2, t_a = crv_a.ClosestPoint(p_mid_b)
-        d2 = p_mid_b.DistanceTo(crv_a.PointAt(t_a)) if rc2 else None
+        t_mid_b = cb_xy.Domain.Min + 0.5 * (cb_xy.Domain.Max - cb_xy.Domain.Min)
+        p_mid_b = cb_xy.PointAt(t_mid_b)
+        rc2, t_a = ca_xy.ClosestPoint(p_mid_b)
+        d2 = p_mid_b.DistanceTo(ca_xy.PointAt(t_a)) if rc2 else None
 
         if d1 is not None and d2 is not None:
             return (d1 + d2) / 2.0
@@ -640,67 +698,165 @@ def make_mass_haul_banner(center_x, center_y, label_prev, label_next, dist_val, 
 # AVALIAÇÃO ANALÍTICA DE UMA SEÇÃO TRANSVERSAL INDIVIDUAL
 # =============================================================================
 
-def evaluate_section_data(crv_corte, lista_terreno, curva_greide_in, raw_nivel_proj, tol):
+def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_proj, tol):
     """Calcula a geometria 3D, perfil de terreno natural e greide de terraplenagem para uma seção."""
-    intersecoes_3d = []
-    for item in lista_terreno:
-        geom = to_rhino_geom(item)
+    p_start = crv_corte.PointAtStart
+    p_end = crv_corte.PointAtEnd
+    dx = p_end.X - p_start.X
+    dy = p_end.Y - p_start.Y
+    L_horiz = math.hypot(dx, dy)
+
+    if L_horiz < 1e-4:
+        L_horiz = 1.0
+        ux, uy = 1.0, 0.0
+    else:
+        ux = dx / L_horiz
+        uy = dy / L_horiz
+
+    cut_plane = rg.Plane(rg.Point3d(p_start.X, p_start.Y, 0.0), rg.Vector3d(ux, uy, 0.0), rg.Vector3d.ZAxis)
+    cut_xy = rg.Curve.ProjectToPlane(crv_corte, rg.Plane.WorldXY)
+    if cut_xy is None: cut_xy = crv_corte
+
+    pts_with_d = []
+
+    for geom in geoms_terreno:
         if geom is None: continue
+
+        # 1. Curvas de Nível (Curves)
         if isinstance(geom, rg.Curve):
-            ev = rg.Intersect.Intersection.CurveCurve(crv_corte, geom, tol, tol)
-            if ev:
-                for cc in ev:
-                    if cc.IsPoint:
-                        t_val = cc.ParameterA
-                        pt_corte = crv_corte.PointAt(t_val)
-                        intersecoes_3d.append((t_val, rg.Point3d(pt_corte.X, pt_corte.Y, cc.PointB.Z)))
+            # A. Interseção com o plano vertical do corte (3D)
+            try:
+                evs = rg.Intersect.Intersection.CurvePlane(geom, cut_plane, tol)
+                if evs:
+                    for ev in evs:
+                        pt = ev.PointA
+                        d = (pt.X - p_start.X) * ux + (pt.Y - p_start.Y) * uy
+                        if -tol <= d <= L_horiz + tol:
+                            d_clamped = max(0.0, min(L_horiz, d))
+                            pts_with_d.append((d_clamped, rg.Point3d(p_start.X + ux * d_clamped, p_start.Y + uy * d_clamped, pt.Z)))
+            except: pass
+
+            # B. Interseção das curvas projetadas no plano XY (2D)
+            try:
+                geom_xy = rg.Curve.ProjectToPlane(geom, rg.Plane.WorldXY)
+                if geom_xy is not None:
+                    cc_evs = rg.Intersect.Intersection.CurveCurve(cut_xy, geom_xy, tol * 10, tol * 10)
+                    if cc_evs:
+                        for cc in cc_evs:
+                            t_c = cc.ParameterA
+                            t_g = cc.ParameterB
+                            pt_c = cut_xy.PointAt(t_c)
+                            pt_3d = geom.PointAt(t_g)
+                            d = (pt_c.X - p_start.X) * ux + (pt_c.Y - p_start.Y) * uy
+                            if -tol <= d <= L_horiz + tol:
+                                d_clamped = max(0.0, min(L_horiz, d))
+                                pts_with_d.append((d_clamped, rg.Point3d(p_start.X + ux * d_clamped, p_start.Y + uy * d_clamped, pt_3d.Z)))
+            except: pass
+
+        # 2. Malha de Terreno (Mesh)
         elif isinstance(geom, rg.Mesh):
-            ev_mc = rg.Intersect.Intersection.MeshPolyline(geom, rg.Polyline([crv_corte.PointAtStart, crv_corte.PointAtEnd]))
-            if ev_mc:
-                for pt in ev_mc[0]:
-                    rc, t_val = crv_corte.ClosestPoint(pt, tol * 10)
-                    if rc: intersecoes_3d.append((t_val, pt))
+            # A. Fatiamento pelo plano vertical do corte
+            try:
+                polys = rg.Intersect.Intersection.MeshPlane(geom, cut_plane)
+                if polys:
+                    for poly in polys:
+                        for pt in poly:
+                            d = (pt.X - p_start.X) * ux + (pt.Y - p_start.Y) * uy
+                            if -tol <= d <= L_horiz + tol:
+                                d_clamped = max(0.0, min(L_horiz, d))
+                                pts_with_d.append((d_clamped, rg.Point3d(p_start.X + ux * d_clamped, p_start.Y + uy * d_clamped, pt.Z)))
+            except: pass
 
-    num_amostras = 150
-    t_start, t_end = crv_corte.Domain.Min, crv_corte.Domain.Max
-    dt = (t_end - t_start) / float(num_amostras)
+            # B. Amostragem contínua via Raios Verticais
+            try:
+                bbox_m = geom.GetBoundingBox(True)
+                if bbox_m.IsValid:
+                    z_top = bbox_m.Max.Z + 1000.0
+                    z_bot = bbox_m.Min.Z - 1000.0
+                    n_samples = max(int(L_horiz / 0.5), 80)
+                    for k in range(n_samples + 1):
+                        d_k = k * (L_horiz / float(n_samples))
+                        p_top = rg.Point3d(p_start.X + ux * d_k, p_start.Y + uy * d_k, z_top)
+                        ray_dn = rg.Ray3d(p_top, -rg.Vector3d.ZAxis)
+                        h_dn = rg.Intersect.Intersection.MeshRay(geom, ray_dn)
+                        if h_dn >= 0:
+                            z_found = z_top - h_dn
+                            pts_with_d.append((d_k, rg.Point3d(p_start.X + ux * d_k, p_start.Y + uy * d_k, z_found)))
+                        else:
+                            p_bot = rg.Point3d(p_start.X + ux * d_k, p_start.Y + uy * d_k, z_bot)
+                            ray_up = rg.Ray3d(p_bot, rg.Vector3d.ZAxis)
+                            h_up = rg.Intersect.Intersection.MeshRay(geom, ray_up)
+                            if h_up >= 0:
+                                z_found = z_bot + h_up
+                                pts_with_d.append((d_k, rg.Point3d(p_start.X + ux * d_k, p_start.Y + uy * d_k, z_found)))
+            except: pass
 
-    pts_amostrados = []
-    for i in range(num_amostras + 1):
-        t_param = t_start + i * dt
-        pt_eval = crv_corte.PointAt(t_param)
-        z_found = None
-        for item in lista_terreno:
-            geom = to_rhino_geom(item)
-            if isinstance(geom, rg.Mesh):
-                ray = rg.Ray3d(rg.Point3d(pt_eval.X, pt_eval.Y, -10000.0), rg.Vector3d.ZAxis)
-                h = rg.Intersect.Intersection.MeshRay(geom, ray)
-                if h >= 0:
-                    z_found = -10000.0 + h
-                    break
-        if z_found is not None:
-            pts_amostrados.append((t_param, rg.Point3d(pt_eval.X, pt_eval.Y, z_found)))
+        # 3. Superfície / Brep
+        elif isinstance(geom, rg.Brep):
+            try:
+                rc, sec_crvs, sec_pts = rg.Intersect.Intersection.BrepPlane(geom, cut_plane, tol)
+                if rc and sec_crvs:
+                    for sc in sec_crvs:
+                        n_div = max(int(sc.GetLength() / 0.5), 10)
+                        t_divs = sc.DivideByCount(n_div, True)
+                        if t_divs:
+                            for td in t_divs:
+                                pt = sc.PointAt(td)
+                                d = (pt.X - p_start.X) * ux + (pt.Y - p_start.Y) * uy
+                                if -tol <= d <= L_horiz + tol:
+                                    d_clamped = max(0.0, min(L_horiz, d))
+                                    pts_with_d.append((d_clamped, rg.Point3d(p_start.X + ux * d_clamped, p_start.Y + uy * d_clamped, pt.Z)))
+            except: pass
 
-    pts_totais = sorted(intersecoes_3d + pts_amostrados, key=lambda x: x[0])
-    if not pts_totais:
-        pts_totais = [
-            (t_start, rg.Point3d(crv_corte.PointAtStart.X, crv_corte.PointAtStart.Y, 0.0)),
-            (t_end, rg.Point3d(crv_corte.PointAtEnd.X, crv_corte.PointAtEnd.Y, 0.0))
+    # Ordenação e deduplicação
+    pts_with_d.sort(key=lambda x: x[0])
+    clean_pts = []
+    for d, pt in pts_with_d:
+        if not clean_pts:
+            clean_pts.append((d, pt))
+        else:
+            if abs(d - clean_pts[-1][0]) > 0.05 or abs(pt.Z - clean_pts[-1][1].Z) > 0.02:
+                clean_pts.append((d, pt))
+
+    # Garantia de fechamento das pontas d = 0.0 e d = L_horiz
+    if clean_pts:
+        if clean_pts[0][0] > 0.01:
+            d0, p0 = clean_pts[0]
+            if len(clean_pts) >= 2:
+                d1, p1 = clean_pts[1]
+                slope = (p1.Z - p0.Z) / (d1 - d0) if abs(d1 - d0) > 1e-4 else 0.0
+                z_ini = p0.Z - slope * d0
+            else:
+                z_ini = p0.Z
+            clean_pts.insert(0, (0.0, rg.Point3d(p_start.X, p_start.Y, z_ini)))
+        else:
+            clean_pts[0] = (0.0, clean_pts[0][1])
+
+        if clean_pts[-1][0] < L_horiz - 0.01:
+            dn, pn = clean_pts[-1]
+            if len(clean_pts) >= 2:
+                dp, pp = clean_pts[-2]
+                slope_e = (pn.Z - pp.Z) / (dn - dp) if abs(dn - dp) > 1e-4 else 0.0
+                z_fim = pn.Z + slope_e * (L_horiz - dn)
+            else:
+                z_fim = pn.Z
+            clean_pts.append((L_horiz, rg.Point3d(p_end.X, p_end.Y, z_fim)))
+        else:
+            clean_pts[-1] = (L_horiz, clean_pts[-1][1])
+    else:
+        # Fallback de segurança usando BoundingBox do terreno
+        z_ref = 0.0
+        for g in geoms_terreno:
+            bb = g.GetBoundingBox(True)
+            if bb.IsValid:
+                z_ref = (bb.Min.Z + bb.Max.Z) / 2.0
+                break
+        clean_pts = [
+            (0.0, rg.Point3d(p_start.X, p_start.Y, z_ref)),
+            (L_horiz, rg.Point3d(p_end.X, p_end.Y, z_ref))
         ]
 
-    clean_pts = []
-    d_acum = 0.0
-    for idx_p, (t_val, pt) in enumerate(pts_totais):
-        if idx_p == 0:
-            clean_pts.append((0.0, pt))
-        else:
-            prev_pt = clean_pts[-1][1]
-            dist_seg = rg.Point3d(pt.X, pt.Y, 0.0).DistanceTo(rg.Point3d(prev_pt.X, prev_pt.Y, 0.0))
-            if dist_seg > 0.005:
-                d_acum += dist_seg
-                clean_pts.append((d_acum, pt))
-
-    total_ext = clean_pts[-1][0] if clean_pts else 1.0
+    total_ext = clean_pts[-1][0] if clean_pts else L_horiz
     crv_3d = rg.PolylineCurve([p[1] for p in clean_pts])
 
     z_min = min(p[1].Z for p in clean_pts)
@@ -709,15 +865,19 @@ def evaluate_section_data(crv_corte, lista_terreno, curva_greide_in, raw_nivel_p
     def get_proj_z(d_val):
         if curva_greide_in is not None:
             c_dom = curva_greide_in.Domain
-            t_greide = c_dom.Min + (d_val / total_ext) * (c_dom.Max - c_dom.Min)
+            t_greide = c_dom.Min + (d_val / max(total_ext, 1e-6)) * (c_dom.Max - c_dom.Min)
             pt_g = curva_greide_in.PointAt(t_greide)
-            if abs(pt_g.Z) < 0.001 and abs(pt_g.Y) > 0.001:
+            if abs(pt_g.Z) > 1e-4:
+                return pt_g.Z
+            elif abs(pt_g.Y) > 1e-4 and z_min <= pt_g.Y <= z_max + 100.0:
                 return pt_g.Y
             return pt_g.Z
         elif raw_nivel_proj is not None:
             try: return float(raw_nivel_proj)
             except: pass
-        return sum(p[1].Z for p in clean_pts) / float(len(clean_pts))
+        if clean_pts:
+            return sum(p[1].Z for p in clean_pts) / float(len(clean_pts))
+        return 0.0
 
     num_passos = max(int(total_ext / 0.25), 80)
     dx = total_ext / float(num_passos)
@@ -852,7 +1012,11 @@ def run():
     except: s = 1.0
 
     modo_cotas = parse_seletor(raw_seletor)
-    lista_terreno = to_list(raw_terreno)
+    geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
+
+    if not geoms_terreno:
+        msg = "⚠️ Nenhuma geometria válida encontrada na entrada 'Terreno'. Conecte curvas de nível (Curves), malha (Mesh) ou superfície de terreno."
+        return [], [], [], [], [], [msg]
 
     # 1. Avalia cada seção transversal individualmente
     num_secoes = len(lista_linhas)
@@ -861,7 +1025,7 @@ def run():
 
     for idx_s, crv_c in enumerate(lista_linhas):
         crv_p = lista_projetos[idx_s] if idx_s < len(lista_projetos) else (lista_projetos[0] if lista_projetos else None)
-        s_data = evaluate_section_data(crv_c, lista_terreno, crv_p, raw_nivel_proj, tol)
+        s_data = evaluate_section_data(crv_c, geoms_terreno, crv_p, raw_nivel_proj, tol)
         sec_data_list.append(s_data)
 
     # 2. Datum e Espaçamento Uniforme para Alinhamento Perfeito
@@ -1159,14 +1323,18 @@ def run():
         grid_pts = [[None for _ in range(num_verticais)] for _ in range(num_secoes)]
         for i, ct in enumerate(lista_linhas):
             for j, cv in enumerate(lista_verticais):
-                ev = rg.Intersect.Intersection.CurveCurve(ct, cv, tol * 10, tol * 10)
+                ct_xy = rg.Curve.ProjectToPlane(ct, rg.Plane.WorldXY) or ct
+                cv_xy = rg.Curve.ProjectToPlane(cv, rg.Plane.WorldXY) or cv
+                ev = rg.Intersect.Intersection.CurveCurve(ct_xy, cv_xy, tol * 10, tol * 10)
                 if ev and ev.Count > 0:
-                    grid_pts[i][j] = ev[0].PointA
+                    pt_inter = ev[0].PointA
+                    grid_pts[i][j] = rg.Point3d(pt_inter.X, pt_inter.Y, 0.0)
                 else:
-                    rc_t, t_t = ct.ClosestPoint(cv.PointAtNormalizedLength(0.5))
-                    rc_v, t_v = cv.ClosestPoint(ct.PointAt(t_t))
+                    rc_t, t_t = ct_xy.ClosestPoint(cv_xy.PointAtNormalizedLength(0.5))
+                    rc_v, t_v = cv_xy.ClosestPoint(ct_xy.PointAt(t_t))
                     if rc_t and rc_v:
-                        grid_pts[i][j] = ct.PointAt(t_t)
+                        pt_c = ct_xy.PointAt(t_t)
+                        grid_pts[i][j] = rg.Point3d(pt_c.X, pt_c.Y, 0.0)
 
         for i in range(num_secoes - 1):
             for j in range(num_verticais - 1):
