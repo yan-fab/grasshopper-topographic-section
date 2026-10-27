@@ -21,6 +21,7 @@ ENTRADAS (INPUTS):
   LinhasCorte      [List, Curve]      : Eixos de corte transversais (Seções A, B, C, D...).
   EixosVerticais   [List, Curve]      : Eixos longitudinais/verticais (1, 2, 3...) [Opcional].
   CurvaProjeto     [Item/List, Curve] : Curva(s) de greide ou projeto em degraus [Opcional].
+  InclinacaoMaxima [Item, float]      : Inclinação máxima permitida para a linha delimitadora/greide [Opcional, Padrão = 15.0 (%)].
   NivelProjeto     [Item/List/Tree]   : Cota(s) de platô individual por trecho/quadrante (float único, lista [102.0, 105.0] ou DataTree por seção) [Opcional].
   Ponto            [Item, Point3d]    : Ponto base de inserção das seções 2D no Top View.
   Espacamento      [Item, float]      : Distância vertical uniforme entre as seções 2D.
@@ -1038,15 +1039,17 @@ def get_terrain_u_range(geoms_terreno, u_corte):
 # AMETRADOR UNIVERSAL DE GREIDE E MAPEAMENTO DE CURVAS DE PROJETO
 # =============================================================================
 
-def make_project_grade_sampler(curva_greide_in, base_x, base_y, sec_datum_z, z_min, z_max, total_ext, curve_base_y=None, p_start_3d=None, u_sec_3d=None, d_terrain_start=0.0):
+def make_project_grade_sampler(curva_greide_in, base_x, base_y, sec_datum_z, z_min, z_max, total_ext, curve_base_y=None, p_start_3d=None, u_sec_3d=None, d_terrain_start=0.0, max_slope=0.15):
     """
-    Amostrador universal e robusto de greide de projeto.
+    Amostrador universal e robusto de greide de projeto com restrição de inclinação máxima.
     Detecta automaticamente se a curva foi desenhada:
     1. Sobre o desenho 2D da seção (Viewport Top, Z ~ 0, Y no espaço do desenho)
     2. Com cotas Z absolutas no espaço 3D (Z real do modelo)
     3. Com cotas Y absolutas no espaço 2D (Y ~ Z real)
     4. Com vetorização invertida (Direita para Esquerda) ou parcial.
-    Garante mapeamento exato com o relevo natural, eliminando paredes falsas de corte.
+    Garante mapeamento exato com o relevo natural e aplica a REGRA NORMATIVA DE INCLINAÇÃO MÁXIMA:
+    Nenhum trecho da linha delimitadora pode exceder max_slope (padrão 15% = 0.15).
+    Se a inclinação exceder o limite, ela é automaticamente limitada a 15%, preservando a cota de referência.
     """
     if curva_greide_in is None:
         return None
@@ -1086,86 +1089,103 @@ def make_project_grade_sampler(curva_greide_in, base_x, base_y, sec_datum_z, z_m
     if (abs(avg_z) > 1.0 and (z_min - 200.0 <= avg_z <= z_max + 200.0)) or        (max_z - min_z > 1.0 and min_z > 10.0):
         is_3d_z = True
 
+    d_z_pairs = []
     if is_3d_z and p_start_3d is not None and u_sec_3d is not None:
-        d_z_pairs = []
         for p in pts:
             d_p = (p.X - p_start_3d.X) * u_sec_3d.X + (p.Y - p_start_3d.Y) * u_sec_3d.Y - d_terrain_start
             d_z_pairs.append((d_p, p.Z))
-        d_z_pairs.sort(key=lambda item: item[0])
+    else:
+        # 2. Curva 2D (Z ~ 0)
+        # Detecta se os pontos usam a coordenada X do desenho 2D ou se usam X relativo [0, total_ext]
+        use_drawing_x = False
+        if abs(min_x - base_x) < total_ext * 0.8 or            abs(max_x - (base_x + total_ext)) < total_ext * 0.8 or            (min_x >= base_x - 10.0 and max_x <= base_x + total_ext + 10.0):
+            use_drawing_x = True
 
-        def sample_3d(d_val):
-            if len(d_z_pairs) == 1:
-                return d_z_pairs[0][1]
-            d_0, z_0 = d_z_pairs[0]
-            d_1, z_1 = d_z_pairs[1]
-            if d_val <= d_0:
-                if abs(d_1 - d_0) < 1e-6: return z_0
-                return z_0 + ((d_val - d_0) / (d_1 - d_0)) * (z_1 - z_0)
-            d_n1, z_n1 = d_z_pairs[-2]
-            d_n, z_n = d_z_pairs[-1]
-            if d_val >= d_n:
-                if abs(d_n - d_n1) < 1e-6: return z_n
-                return z_n + ((d_val - d_n) / (d_n - d_n1)) * (z_n - z_n1)
-            for i in range(len(d_z_pairs) - 1):
-                d_a, z_a = d_z_pairs[i]
-                d_b, z_b = d_z_pairs[i+1]
-                if d_a <= d_val <= d_b:
-                    if abs(d_b - d_a) < 1e-6: return z_a
-                    t = (d_val - d_a) / (d_b - d_a)
-                    return z_a + t * (z_b - z_a)
-            return d_z_pairs[-1][1]
-        return sample_3d
+        is_abs_y = (z_min - 50.0 <= avg_y <= z_max + 100.0)
+        ref_by = curve_base_y if curve_base_y is not None else base_y
 
-    # 2. Curva 2D (Z ~ 0)
-    # Detecta se os pontos usam a coordenada X do desenho 2D ou se usam X relativo [0, total_ext]
-    use_drawing_x = False
-    if abs(min_x - base_x) < total_ext * 0.8 or        abs(max_x - (base_x + total_ext)) < total_ext * 0.8 or        (min_x >= base_x - 10.0 and max_x <= base_x + total_ext + 10.0):
-        use_drawing_x = True
+        for p in pts:
+            d_p = (p.X - base_x) if use_drawing_x else p.X
+            if is_abs_y:
+                z_p = p.Y
+            else:
+                z_p = sec_datum_z + (p.Y - ref_by)
+            d_z_pairs.append((d_p, z_p))
 
-    d_val_pairs = []
-    for p in pts:
-        d_p = (p.X - base_x) if use_drawing_x else p.X
-        d_val_pairs.append((d_p, p.Y))
-    d_val_pairs.sort(key=lambda item: item[0])
+    d_z_pairs.sort(key=lambda item: item[0])
 
-    def interp_y(d_val):
-        if len(d_val_pairs) == 1:
-            return d_val_pairs[0][1]
-        d_0, y_0 = d_val_pairs[0]
-        d_1, y_1 = d_val_pairs[1]
+    # Remove pontos com distância horizontal insignificante para evitar divisão por zero
+    clean_d_z = [d_z_pairs[0]]
+    for item in d_z_pairs[1:]:
+        if item[0] - clean_d_z[-1][0] > 1e-4:
+            clean_d_z.append(item)
+
+    # Aplicação estrita da Regra de Inclinação Máxima de 15% (max_slope)
+    max_orig_slope = 0.0
+    was_clamped = False
+    final_d_z = []
+
+    if len(clean_d_z) >= 2:
+        final_d_z = [(clean_d_z[0][0], clean_d_z[0][1])]
+        for k in range(len(clean_d_z) - 1):
+            d_curr, z_curr = final_d_z[-1]
+            d_next, z_next_orig = clean_d_z[k+1]
+            delta_d = d_next - d_curr
+            if delta_d > 1e-5:
+                s_seg = (z_next_orig - clean_d_z[k][1]) / delta_d
+                if abs(s_seg) > max_orig_slope:
+                    max_orig_slope = abs(s_seg)
+                if s_seg > max_slope:
+                    z_next_clamped = z_curr + max_slope * delta_d
+                    was_clamped = True
+                elif s_seg < -max_slope:
+                    z_next_clamped = z_curr - max_slope * delta_d
+                    was_clamped = True
+                else:
+                    z_next_clamped = z_curr + s_seg * delta_d
+                final_d_z.append((d_next, z_next_clamped))
+            else:
+                final_d_z.append((d_next, z_curr))
+    else:
+        final_d_z = clean_d_z
+
+    def sample_grade(d_val):
+        if not final_d_z:
+            return (z_min + z_max) / 2.0
+        if len(final_d_z) == 1:
+            return final_d_z[0][1]
+        d_0, z_0 = final_d_z[0]
+        d_1, z_1 = final_d_z[1]
         if d_val <= d_0:
-            if abs(d_1 - d_0) < 1e-6: return y_0
-            return y_0 + ((d_val - d_0) / (d_1 - d_0)) * (y_1 - y_0)
-        d_n1, y_n1 = d_val_pairs[-2]
-        d_n, y_n = d_val_pairs[-1]
+            if abs(d_1 - d_0) < 1e-6: return z_0
+            s_ini = (z_1 - z_0) / (d_1 - d_0)
+            return z_0 + (d_val - d_0) * s_ini
+        d_n1, z_n1 = final_d_z[-2]
+        d_n, z_n = final_d_z[-1]
         if d_val >= d_n:
-            if abs(d_n - d_n1) < 1e-6: return y_n
-            return y_n + ((d_val - d_n) / (d_n - d_n1)) * (y_n - y_n1)
-        for i in range(len(d_val_pairs) - 1):
-            d_a, y_a = d_val_pairs[i]
-            d_b, y_b = d_val_pairs[i+1]
+            if abs(d_n - d_n1) < 1e-6: return z_n
+            s_fim = (z_n - z_n1) / (d_n - d_n1)
+            return z_n + (d_val - d_n) * s_fim
+        for i in range(len(final_d_z) - 1):
+            d_a, z_a = final_d_z[i]
+            d_b, z_b = final_d_z[i+1]
             if d_a <= d_val <= d_b:
-                if abs(d_b - d_a) < 1e-6: return y_a
+                if abs(d_b - d_a) < 1e-6: return z_a
                 t = (d_val - d_a) / (d_b - d_a)
-                return y_a + t * (y_b - y_a)
-        return d_val_pairs[-1][1]
+                return z_a + t * (z_b - z_a)
+        return final_d_z[-1][1]
 
-    # Verifica se Y já é a cota absoluta direta (ex: Y entre z_min-50 e z_max+100)
-    if z_min - 50.0 <= avg_y <= z_max + 100.0:
-        def sample_abs_y(d_val):
-            return interp_y(d_val)
-        return sample_abs_y
+    sample_grade.max_slope_limit = max_slope
+    sample_grade.max_orig_slope = max_orig_slope * 100.0
+    if len(final_d_z) >= 2:
+        d_span = final_d_z[-1][0] - final_d_z[0][0]
+        z_span = final_d_z[-1][1] - final_d_z[0][1]
+        sample_grade.effective_slope = (z_span / max(d_span, 1e-4)) * 100.0
+    else:
+        sample_grade.effective_slope = 0.0
+    sample_grade.was_clamped = was_clamped
 
-    # Caso padrão Rhino: Curva 2D traçada no Viewport Top sobre a seção 2D
-    # Y está no espaço do desenho: Y = base_y + (Z_proj - sec_datum_z)
-    ref_by = curve_base_y if curve_base_y is not None else base_y
-
-    def sample_drawing_2d(d_val):
-        y_val = interp_y(d_val)
-        delta_h = y_val - ref_by
-        return sec_datum_z + delta_h
-
-    return sample_drawing_2d
+    return sample_grade
 
 def match_project_curves_to_sections(curves_raw, sec_base_ys, espacamento_y):
     """
@@ -1463,7 +1483,7 @@ def extract_section_terrain(crv_corte, geoms_terreno, tol, intersec_axes=None, s
         'trecho_avg_zs': trecho_avg_zs
     }
 
-def evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, label_sec="A", s=1.0, base_x=0.0, base_y=0.0, curve_base_y=None):
+def evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, label_sec="A", s=1.0, base_x=0.0, base_y=0.0, curve_base_y=None, max_slope=0.15):
     """Calcula greide, classificação de corte/aterro, áreas e volumes de uma seção a partir de t_info."""
     clean_pts = t_info['clean_pts']
     total_ext = t_info['total_ext']
@@ -1487,7 +1507,8 @@ def evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, 
         curve_base_y=curve_base_y,
         p_start_3d=p_start,
         u_sec_3d=rg.Vector3d(ux, uy, 0.0),
-        d_terrain_start=d_terrain_start
+        d_terrain_start=d_terrain_start,
+        max_slope=max_slope
     )
 
     def get_proj_z(d_val):
@@ -1698,13 +1719,18 @@ def evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, 
         'pontos_passagem': pontos_passagem,
         'trechos_data': trechos_data,
         'internal_transfers': internal_transfers,
-        'eixos_secao': eixos_secao
+        'eixos_secao': eixos_secao,
+        'sampler': sampler,
+        'max_slope_limit': max_slope * 100.0,
+        'was_clamped': getattr(sampler, 'was_clamped', False) if sampler else False,
+        'orig_slope': getattr(sampler, 'max_orig_slope', 0.0) if sampler else 0.0,
+        'effective_slope': getattr(sampler, 'effective_slope', 0.0) if sampler else 0.0
     }
 
-def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_proj, tol, intersec_axes=None, label_sec="A", s=1.0, base_x=0.0, base_y=0.0, curve_base_y=None):
+def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_proj, tol, intersec_axes=None, label_sec="A", s=1.0, base_x=0.0, base_y=0.0, curve_base_y=None, max_slope=0.15):
     """Calcula a geometria 3D, perfil de terreno natural e greide de terraplenagem para uma seção."""
     t_info = extract_section_terrain(crv_corte, geoms_terreno, tol, intersec_axes, s)
-    return evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, label_sec, s, base_x, base_y, curve_base_y)
+    return evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, label_sec, s, base_x, base_y, curve_base_y, max_slope=max_slope)
 
 # =============================================================================
 # COORDENADOR PRINCIPAL: MULTI-EIXOS, ALINHAMENTO, CUBAGEM E BALANÇO DE MASSAS
@@ -1725,6 +1751,21 @@ def run():
     raw_seletor      = globals().get('Seletor', globals().get('Modo', globals().get('ModoCotas', 1)))
     raw_escala       = globals().get('Escala', globals().get('Scale', globals().get('S', 1.0)))
     raw_nivel_proj   = globals().get('NivelProjeto', globals().get('Plato', globals().get('CotaProjeto', None)))
+    raw_inclinacao   = globals().get('InclinacaoMaxima', globals().get('MaxSlope', globals().get('RampaMaxima', globals().get('Inclinacao', globals().get('Imax', 15.0)))))
+
+    try:
+        if raw_inclinacao is not None:
+            val_inc = float(raw_inclinacao)
+            if val_inc > 1.0:
+                max_slope = val_inc / 100.0
+            elif val_inc > 0.0:
+                max_slope = val_inc
+            else:
+                max_slope = 0.15
+        else:
+            max_slope = 0.15
+    except:
+        max_slope = 0.15
 
     try:
         s = float(raw_escala) if raw_escala is not None else 1.0
@@ -1994,7 +2035,7 @@ def run():
         sec_levels = parse_nivel_projeto(raw_nivel_proj, idx_s, num_secoes, num_tr)
 
         s_data = evaluate_section_grade_and_volumes(
-            t_info, crv_p, sec_levels, lbl, s, base_x, base_y, curve_base_y
+            t_info, crv_p, sec_levels, lbl, s, base_x, base_y, curve_base_y, max_slope=max_slope
         )
         sec_data_list.append(s_data)
 
@@ -2108,6 +2149,22 @@ def run():
         pts_gr_2d = [rg.Point3d(base_x + d, base_y + (get_proj_z(d) - sec_datum_z), 0.0) for d in s_data['estacas_finais']]
         crv_gr_2d = rg.PolylineCurve(pts_gr_2d)
         desenho_completo_secoes_2d.append(crv_gr_2d)
+
+        # Rótulo e badge de inclinação do greide (quando curva delimitadora fornecida)
+        if s_data.get('sampler') is not None:
+            eff_i = s_data.get('effective_slope', 0.0)
+            was_c = s_data.get('was_clamped', False)
+            d_gr_mid = total_ext * 0.5
+            z_gr_mid = get_proj_z(d_gr_mid)
+            p_gr_lbl = rg.Point3d(base_x + d_gr_mid, base_y + (z_gr_mid - sec_datum_z) + 1.8 * s, 0.0)
+
+            if was_c:
+                lbl_gr_str = "GREIDE: i = {:+.1f}% [LIMITADO A 15,0% MÁX]".format(eff_i).replace('.', ',')
+            else:
+                lbl_gr_str = "GREIDE: i = {:+.1f}% (REGRA <= 15% OK)".format(eff_i).replace('.', ',')
+
+            gr_crvs = make_text_geometry(lbl_gr_str, p_gr_lbl, 0.80 * s, rg.TextJustification.BottomCenter, s)
+            desenho_completo_secoes_2d.extend(gr_crvs)
 
         # Malhas de Corte e Aterro
         quads_corte = []
@@ -2456,6 +2513,12 @@ def run():
         relatorio.append("   {:^7} | {:^12.2f} | {:^12.2f} | {:^12.2f} | {:^15.2f} | {:^16.2f}".format(
             labels_t[idx_s], sd['total_ext'], sd['z_min'], sd['z_max'], sd['area_total_corte'], sd['area_total_aterro']
         ))
+        if sd.get('sampler') is not None:
+            if sd.get('was_clamped', False):
+                c_tag = " [AVISO: Linha original com {:.1f}% de inclinação foi limitada a 15,0% máx]".format(sd['orig_slope'])
+            else:
+                c_tag = " [Conforme: Inclinação <= 15,0%]"
+            relatorio.append("     ↳ Inclinação da Linha Delimitadora: {:+.2f}%{}".format(sd['effective_slope'], c_tag).replace('.', ','))
 
     # Detalhamento por Trechos/Quadrantes individuais quando houver eixos verticais
     has_subdiv = any(len(sd.get('trechos_data', [])) > 1 for sd in sec_data_list)
@@ -2509,6 +2572,10 @@ def run():
         "{}. TOTAIS GERAIS DO EMPREENDIMENTO:".format(sec_num_tot),
         "   - Número de Seções Transversais Analisadas: {}".format(num_secoes),
         "   - Fator de Empolamento Adotado (K)        : {:.2f} ({}% de expansão)".format(fator_k, int((fator_k - 1.0) * 100)),
+        "   - Regra da Linha Delimitadora (Greide)    : Inclinação Máxima {:.1f}% ({})".format(
+            max_slope * 100.0,
+            "Ajustada para o teto de 15% onde excedeu" if any(sd.get('was_clamped') for sd in sec_data_list) else "Atendida em todas as seções"
+        ),
         "   - Volume Total Geométrico de CORTE        : {:.2f} m³".format(vol_total_corte_geo),
         "   - Volume Total Geométrico de ATERRO       : {:.2f} m³".format(vol_total_aterro_geo),
         "   - Volume Total de Corte Solto (Transporte): {:.2f} m³".format(vol_total_corte_solto),
