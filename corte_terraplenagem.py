@@ -20,8 +20,8 @@ ENTRADAS (INPUTS):
   Terreno          [List, Curve/Mesh] : Curvas de nível 3D ou Malha topográfica.
   LinhasCorte      [List, Curve]      : Eixos de corte transversais (Seções A, B, C, D...).
   EixosVerticais   [List, Curve]      : Eixos longitudinais/verticais (1, 2, 3...) [Opcional].
-  CurvaProjeto     [Item/List, Curve] : Greide/Linha de terraplenagem projetada [Opcional].
-  NivelProjeto     [Item, float]      : Cota Z fixa caso projeto seja horizontal [Opcional].
+  CurvaProjeto     [Item/List, Curve] : Curva(s) de greide ou projeto em degraus [Opcional].
+  NivelProjeto     [Item/List/Tree]   : Cota(s) de platô individual por trecho/quadrante (float único, lista [102.0, 105.0] ou DataTree por seção) [Opcional].
   Ponto            [Item, Point3d]    : Ponto base de inserção das seções 2D no Top View.
   Espacamento      [Item, float]      : Distância vertical uniforme entre as seções 2D.
   Largura          [Item, float]      : Faixa de influência para seção unitária (padrão: 1.0 m).
