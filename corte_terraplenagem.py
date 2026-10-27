@@ -20,7 +20,8 @@ ENTRADAS (INPUTS):
   Terreno          [List, Curve/Mesh] : Curvas de nível 3D ou Malha topográfica.
   LinhasCorte      [List, Curve]      : Eixos de corte transversais (Seções A, B, C, D...).
   EixosVerticais   [List, Curve]      : Eixos longitudinais/verticais (1, 2, 3...) [Opcional].
-  CurvaProjeto     [Item/List, Curve] : Curva(s) de greide ou projeto em degraus [Opcional].
+  CurvaProjeto     [Item/List, Curve] : Curva(s) de greide ou projeto / LinhaDelimitadora [Opcional].
+  LinhaDelimitadora[Item/List, Curve] : Alias direto para CurvaProjeto / Greide delimitador [Opcional].
   InclinacaoMaxima [Item, float]      : Inclinação máxima permitida para a linha delimitadora/greide [Opcional, Padrão = 15.0 (%)].
   NivelProjeto     [Item/List/Tree]   : Cota(s) de platô individual por trecho/quadrante (float único, lista [102.0, 105.0] ou DataTree por seção) [Opcional].
   Ponto            [Item, Point3d]    : Ponto base de inserção das seções 2D no Top View.
@@ -1104,10 +1105,20 @@ def make_project_grade_sampler(curva_greide_in, base_x, base_y, sec_datum_z, z_m
         is_abs_y = (z_min - 50.0 <= avg_y <= z_max + 100.0)
         ref_by = curve_base_y if curve_base_y is not None else base_y
 
+        # Detecção de linha solta no vão livre entre seções (Smart Snapping)
+        z_terrain_med = (z_min + z_max) / 2.0
+        y_terrain_section_2d = ref_by + (z_terrain_med - sec_datum_z)
+        dist_to_section = abs(avg_y - y_terrain_section_2d)
+        is_floating_in_void = (not is_abs_y) and (dist_to_section > max(sec_h * 2.0, 15.0))
+
         for p in pts:
             d_p = (p.X - base_x) if use_drawing_x else p.X
             if is_abs_y:
                 z_p = p.Y
+            elif is_floating_in_void:
+                # Ancoragem inteligente na cota média do relevo, preservando inclinação e forma da linha
+                delta_shape = p.Y - avg_y
+                z_p = z_terrain_med + delta_shape
             else:
                 z_p = sec_datum_z + (p.Y - ref_by)
             d_z_pairs.append((d_p, z_p))
@@ -1189,32 +1200,18 @@ def make_project_grade_sampler(curva_greide_in, base_x, base_y, sec_datum_z, z_m
 
 def match_project_curves_to_sections(curves_raw, sec_base_ys, espacamento_y):
     """
-    Mapeia curvas de projeto fornecidas para suas respectivas seções com base
+    Mapeia curvas de projeto / linhas delimitadoras fornecidas para suas respectivas seções com base
     na proximidade vertical (Y no desenho 2D) ou na ordem de entrada.
-    Retorna uma lista de tuplas: (curva_matched, curve_base_y) para cada seção.
+    Garante que cada seção utilize sempre a sua própria referência de base Y (sec_base_ys[idx_s]),
+    eliminando qualquer erro de deslocamento vertical por diferença de DATUM entre seções.
     """
     if not curves_raw:
         return [(None, None) for _ in sec_base_ys]
 
-    # Se há apenas 1 curva fornecida
+    # Se há apenas 1 curva fornecida (aplica a todas as seções com suas bases individuais)
     if len(curves_raw) == 1:
         c = curves_raw[0]
-        try:
-            bb = c.GetBoundingBox(True) if hasattr(c, 'GetBoundingBox') else c.GetBoundingBox()
-            avg_y = (bb.Min.Y + bb.Max.Y) / 2.0 if bb.IsValid else c.PointAtNormalizedLength(0.5).Y
-        except:
-            avg_y = c.PointAtNormalizedLength(0.5).Y
-
-        best_idx = 0
-        best_d = abs(avg_y - sec_base_ys[0])
-        for idx_s, by in enumerate(sec_base_ys):
-            d = abs(avg_y - by)
-            if d < best_d:
-                best_d = d
-                best_idx = idx_s
-
-        c_by = sec_base_ys[best_idx]
-        return [(c, c_by) for _ in sec_base_ys]
+        return [(c, sec_base_ys[idx_s]) for idx_s in range(len(sec_base_ys))]
 
     # Múltiplas curvas: associa cada curva à seção transversal correspondente por proximidade vertical Y
     matched = [None] * len(sec_base_ys)
@@ -1238,12 +1235,12 @@ def match_project_curves_to_sections(curves_raw, sec_base_ys, espacamento_y):
                 best_c = c
                 best_c_idx = c_idx
 
-        if best_c is not None and best_d <= espacamento_y * 1.2:
+        if best_c is not None:
             matched[idx_s] = best_c
             matched_by[idx_s] = by
             used_curves.add(best_c_idx)
 
-    # Fallback sequencial para seções que ainda não receberam curva
+    # Fallback sequencial para seções que ainda não receberam curva individual
     for idx_s in range(len(sec_base_ys)):
         if matched[idx_s] is None:
             if idx_s < len(curves_raw) and idx_s not in used_curves:
@@ -1252,7 +1249,7 @@ def match_project_curves_to_sections(curves_raw, sec_base_ys, espacamento_y):
                 used_curves.add(idx_s)
             elif curves_raw:
                 matched[idx_s] = curves_raw[0]
-                matched_by[idx_s] = sec_base_ys[0]
+                matched_by[idx_s] = sec_base_ys[idx_s]
 
     return list(zip(matched, matched_by))
 
@@ -1743,7 +1740,10 @@ def run():
     raw_terreno      = globals().get('Terreno', globals().get('x', None))
     raw_linhas       = globals().get('LinhasCorte', globals().get('LinhaCorte', globals().get('y', None)))
     raw_verticais    = globals().get('EixosVerticais', globals().get('LinhasLongitudinais', globals().get('Verticais', globals().get('Eixos', None))))
-    raw_projeto      = globals().get('CurvaProjeto', globals().get('Greide', globals().get('Projeto', globals().get('LinhaProjeto', None))))
+    raw_projeto      = globals().get('LinhaDelimitadora', globals().get('CurvaDelimitadora', globals().get('Delimitadora',
+                       globals().get('CurvaProjeto', globals().get('Greide', globals().get('Projeto',
+                       globals().get('LinhaProjeto', globals().get('LinhaCorteAterro', globals().get('CorteAterro',
+                       globals().get('LinhaGrade', globals().get('GreideProjeto', None)))))))))))
     raw_ponto        = globals().get('Ponto', globals().get('Point', globals().get('Origem', globals().get('Localizacao', None))))
     raw_espacamento  = globals().get('Espacamento', globals().get('DistanciaSecoes', globals().get('Pitch', None)))
     raw_largura      = globals().get('Largura', globals().get('Faixa', globals().get('FaixaInfluencia', 1.0)))
