@@ -744,13 +744,14 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
                     if cc_evs:
                         for cc in cc_evs:
                             t_c = cc.ParameterA
-                            t_g = cc.ParameterB
                             pt_c = cut_xy.PointAt(t_c)
-                            pt_3d = geom.PointAt(t_g)
+                            # Amostra a cota Z exata buscando o ponto mais próximo na curva 3D original
+                            rc, t_real = geom.ClosestPoint(rg.Point3d(pt_c.X, pt_c.Y, geom.PointAtStart.Z))
+                            z_val = geom.PointAt(t_real).Z if rc else geom.PointAtStart.Z
                             d = (pt_c.X - p_start.X) * ux + (pt_c.Y - p_start.Y) * uy
                             if -tol <= d <= L_horiz + tol:
                                 d_clamped = max(0.0, min(L_horiz, d))
-                                pts_with_d.append((d_clamped, rg.Point3d(p_start.X + ux * d_clamped, p_start.Y + uy * d_clamped, pt_3d.Z)))
+                                pts_with_d.append((d_clamped, rg.Point3d(p_start.X + ux * d_clamped, p_start.Y + uy * d_clamped, z_val)))
             except: pass
 
         # 2. Malha de Terreno (Mesh)
@@ -818,39 +819,44 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
             if abs(d - clean_pts[-1][0]) > 0.05 or abs(pt.Z - clean_pts[-1][1].Z) > 0.02:
                 clean_pts.append((d, pt))
 
-    # Garantia de fechamento das pontas d = 0.0 e d = L_horiz
+    # Garantia de fechamento das pontas d = 0.0 e d = L_horiz sem extrapolação perigosa (Zero-Spike Clamping)
     if clean_pts:
         if clean_pts[0][0] > 0.01:
-            d0, p0 = clean_pts[0]
-            if len(clean_pts) >= 2:
-                d1, p1 = clean_pts[1]
-                slope = (p1.Z - p0.Z) / (d1 - d0) if abs(d1 - d0) > 1e-4 else 0.0
-                z_ini = p0.Z - slope * d0
-            else:
-                z_ini = p0.Z
+            z_ini = clean_pts[0][1].Z
             clean_pts.insert(0, (0.0, rg.Point3d(p_start.X, p_start.Y, z_ini)))
         else:
             clean_pts[0] = (0.0, clean_pts[0][1])
 
         if clean_pts[-1][0] < L_horiz - 0.01:
-            dn, pn = clean_pts[-1]
-            if len(clean_pts) >= 2:
-                dp, pp = clean_pts[-2]
-                slope_e = (pn.Z - pp.Z) / (dn - dp) if abs(dn - dp) > 1e-4 else 0.0
-                z_fim = pn.Z + slope_e * (L_horiz - dn)
-            else:
-                z_fim = pn.Z
+            z_fim = clean_pts[-1][1].Z
             clean_pts.append((L_horiz, rg.Point3d(p_end.X, p_end.Y, z_fim)))
         else:
             clean_pts[-1] = (L_horiz, clean_pts[-1][1])
     else:
-        # Fallback de segurança usando BoundingBox do terreno
-        z_ref = 0.0
+        # Fallback inteligente: busca cota média real das curvas 3D da topografia
+        valid_zs = []
         for g in geoms_terreno:
             bb = g.GetBoundingBox(True)
-            if bb.IsValid:
-                z_ref = (bb.Min.Z + bb.Max.Z) / 2.0
-                break
+            if bb.IsValid and abs(bb.Max.Z - bb.Min.Z) > 0.01:
+                valid_zs.append((bb.Min.Z + bb.Max.Z) / 2.0)
+            elif bb.IsValid and abs(bb.Min.Z) > 1.0:
+                valid_zs.append(bb.Min.Z)
+
+        z_ref = (sum(valid_zs) / float(len(valid_zs))) if valid_zs else 0.0
+
+        # Refina buscando o ponto mais próximo no relevo
+        p_mid_c = crv_corte.PointAtNormalizedLength(0.5)
+        best_d = 1e12
+        for g in geoms_terreno:
+            if isinstance(g, rg.Curve):
+                rc, t_cl = g.ClosestPoint(p_mid_c)
+                if rc:
+                    pt_cl = g.PointAt(t_cl)
+                    dist_xy = math.hypot(pt_cl.X - p_mid_c.X, pt_cl.Y - p_mid_c.Y)
+                    if dist_xy < best_d:
+                        best_d = dist_xy
+                        z_ref = pt_cl.Z
+
         clean_pts = [
             (0.0, rg.Point3d(p_start.X, p_start.Y, z_ref)),
             (L_horiz, rg.Point3d(p_end.X, p_end.Y, z_ref))
@@ -1028,17 +1034,17 @@ def run():
         s_data = evaluate_section_data(crv_c, geoms_terreno, crv_p, raw_nivel_proj, tol)
         sec_data_list.append(s_data)
 
-    # 2. Datum e Espaçamento Uniforme para Alinhamento Perfeito
-    all_z_min = min(sd['z_min'] for sd in sec_data_list)
-    all_z_max = max(sd['z_max'] for sd in sec_data_list)
-    datum_z = math.floor(all_z_min - 2.0)
-    max_delta_z = all_z_max - datum_z
+    # 2. Datum e Espaçamento Uniforme para Alinhamento Perfeito (Sem Colisões)
+    # Cada seção recebe sua própria linha de base DATUM (sec_datum_z = math.floor(s_data['z_min'] - 2.0)),
+    # evitando que seções de cotas elevadas colidam ou invadam as seções superiores.
+    max_h_sec = max(sd['z_max'] - math.floor(sd['z_min'] - 2.0) for sd in sec_data_list)
+    h_min_espacamento = max_h_sec + 18.0 * s
 
     if raw_espacamento is not None:
         try: espacamento_y = max(float(raw_espacamento), 5.0)
-        except: espacamento_y = max(max_delta_z + 14.0 * s, 22.0 * s)
+        except: espacamento_y = max(h_min_espacamento, 25.0 * s)
     else:
-        espacamento_y = max(max_delta_z + 15.0 * s, 24.0 * s)
+        espacamento_y = max(h_min_espacamento, 25.0 * s)
 
     # 3. Distâncias Reais entre Eixos Consecutivos (para Cubagem AGPTEA)
     distancias_eixos = []
@@ -1113,23 +1119,32 @@ def run():
         get_proj_z = s_data['get_proj_z']
         linhas_3d_all.append(s_data['crv_3d'])
 
+        # Datum Local da Seção (Padrão Topografia / NBR 6492 / AGPTEA)
+        sec_datum_z = math.floor(s_data['z_min'] - 2.0)
+        sec_h = s_data['z_max'] - sec_datum_z
+
         # Título da Seção
-        p_tit = rg.Point3d(base_x, base_y + (s_data['z_max'] - datum_z) + 3.2 * s, 0.0)
+        p_tit = rg.Point3d(base_x, base_y + sec_h + 7.5 * s, 0.0)
         tit_crvs = make_text_geometry("SEÇÃO {} - {}".format(lbl, lbl), p_tit, 1.45 * s, rg.TextJustification.BottomLeft, s)
         desenho_completo_secoes_2d.extend(tit_crvs)
 
         sub_str = "Extensão: {:.2f}m | Cota Média: +{:.2f}m".format(total_ext, sum(p[1].Z for p in clean_pts)/len(clean_pts)).replace('.', ',')
-        p_sub = rg.Point3d(base_x, base_y + (s_data['z_max'] - datum_z) + 1.8 * s, 0.0)
+        p_sub = rg.Point3d(base_x, base_y + sec_h + 6.0 * s, 0.0)
         sub_crvs = make_text_geometry(sub_str, p_sub, 0.75 * s, rg.TextJustification.BottomLeft, s)
         desenho_completo_secoes_2d.extend(sub_crvs)
 
-        # Datum Line
+        # Linha e Rótulo de DATUM
         p_d_ini = rg.Point3d(base_x, base_y, 0.0)
         p_d_fim = rg.Point3d(base_x + total_ext, base_y, 0.0)
         desenho_completo_secoes_2d.append(rg.LineCurve(p_d_ini, p_d_fim))
 
+        lbl_datum = "DATUM +{:.2f}".format(sec_datum_z).replace('.', ',')
+        p_datum_txt = rg.Point3d(base_x - 0.6 * s, base_y, 0.0)
+        datum_crvs = make_text_geometry(lbl_datum, p_datum_txt, 0.70 * s, rg.TextJustification.MiddleRight, s)
+        desenho_completo_secoes_2d.extend(datum_crvs)
+
         # Perfil Natural 2D
-        pts_tn_2d = [rg.Point3d(base_x + d, base_y + (pt.Z - datum_z), 0.0) for d, pt in clean_pts]
+        pts_tn_2d = [rg.Point3d(base_x + d, base_y + (pt.Z - sec_datum_z), 0.0) for d, pt in clean_pts]
         crv_tn_2d = rg.PolylineCurve(pts_tn_2d)
         desenho_completo_secoes_2d.append(crv_tn_2d)
 
@@ -1138,7 +1153,7 @@ def run():
         desenho_completo_secoes_2d.append(rg.Polyline(p_solo).ToPolylineCurve())
 
         # Greide 2D
-        pts_gr_2d = [rg.Point3d(base_x + d, base_y + (get_proj_z(d) - datum_z), 0.0) for d in s_data['estacas_finais']]
+        pts_gr_2d = [rg.Point3d(base_x + d, base_y + (get_proj_z(d) - sec_datum_z), 0.0) for d in s_data['estacas_finais']]
         crv_gr_2d = rg.PolylineCurve(pts_gr_2d)
         desenho_completo_secoes_2d.append(crv_gr_2d)
 
@@ -1150,10 +1165,10 @@ def run():
             for j in range(len(d_list) - 1):
                 d1, d2 = d_list[j], d_list[j+1]
                 if d2 - d1 <= 1e-6: continue
-                p_tn1 = rg.Point3d(base_x + d1, base_y + (interpolate_terrain_z(d1, clean_pts) - datum_z), 0.0)
-                p_tn2 = rg.Point3d(base_x + d2, base_y + (interpolate_terrain_z(d2, clean_pts) - datum_z), 0.0)
-                p_pr1 = rg.Point3d(base_x + d1, base_y + (get_proj_z(d1) - datum_z), 0.0)
-                p_pr2 = rg.Point3d(base_x + d2, base_y + (get_proj_z(d2) - datum_z), 0.0)
+                p_tn1 = rg.Point3d(base_x + d1, base_y + (interpolate_terrain_z(d1, clean_pts) - sec_datum_z), 0.0)
+                p_tn2 = rg.Point3d(base_x + d2, base_y + (interpolate_terrain_z(d2, clean_pts) - sec_datum_z), 0.0)
+                p_pr1 = rg.Point3d(base_x + d1, base_y + (get_proj_z(d1) - sec_datum_z), 0.0)
+                p_pr2 = rg.Point3d(base_x + d2, base_y + (get_proj_z(d2) - sec_datum_z), 0.0)
 
                 if r_type == "CORTE":
                     quads_corte.append([p_tn1, p_tn2, p_pr2, p_pr1])
@@ -1162,14 +1177,14 @@ def run():
 
             pts_poly = []
             if r_type == "CORTE":
-                for d in d_list: pts_poly.append(rg.Point3d(base_x + d, base_y + (interpolate_terrain_z(d, clean_pts) - datum_z), 0.0))
-                for d in reversed(d_list): pts_poly.append(rg.Point3d(base_x + d, base_y + (get_proj_z(d) - datum_z), 0.0))
+                for d in d_list: pts_poly.append(rg.Point3d(base_x + d, base_y + (interpolate_terrain_z(d, clean_pts) - sec_datum_z), 0.0))
+                for d in reversed(d_list): pts_poly.append(rg.Point3d(base_x + d, base_y + (get_proj_z(d) - sec_datum_z), 0.0))
                 pts_poly.append(pts_poly[0])
                 poly_c = rg.Polyline(pts_poly).ToPolylineCurve()
                 poligonos_corte_all.append(poly_c)
             else:
-                for d in d_list: pts_poly.append(rg.Point3d(base_x + d, base_y + (get_proj_z(d) - datum_z), 0.0))
-                for d in reversed(d_list): pts_poly.append(rg.Point3d(base_x + d, base_y + (interpolate_terrain_z(d, clean_pts) - datum_z), 0.0))
+                for d in d_list: pts_poly.append(rg.Point3d(base_x + d, base_y + (get_proj_z(d) - sec_datum_z), 0.0))
+                for d in reversed(d_list): pts_poly.append(rg.Point3d(base_x + d, base_y + (interpolate_terrain_z(d, clean_pts) - sec_datum_z), 0.0))
                 pts_poly.append(pts_poly[0])
                 poly_a = rg.Polyline(pts_poly).ToPolylineCurve()
                 poligonos_aterro_all.append(poly_a)
@@ -1179,25 +1194,32 @@ def run():
         if m_c: desenho_completo_secoes_2d.append(m_c)
         if m_a: desenho_completo_secoes_2d.append(m_a)
 
-        # Cotas de Nível NBR 6492
+        # Cotas de Nível NBR 6492 (Com filtro de espaçamento horizontal mínimo para evitar poluição visual)
         if modo_cotas in [0, 2]:
-            for d, pt in clean_pts:
+            last_marker_x = -999999.0
+            min_marker_gap = 7.0 * s
+            for idx_pt, (d, pt) in enumerate(clean_pts):
+                is_first = (idx_pt == 0)
+                is_last = (idx_pt == len(clean_pts) - 1)
+                if not is_first and not is_last and (d - last_marker_x < min_marker_gap):
+                    continue
+                last_marker_x = d
                 cota_str = "+{:.2f}".format(pt.Z).replace('.', ',') if pt.Z > 0 else "{:.2f}".format(pt.Z).replace('.', ',')
-                m_geoms, _ = draw_nbr_level_marker(base_x + d, base_y + (pt.Z - datum_z), cota_str, s)
+                m_geoms, _ = draw_nbr_level_marker(base_x + d, base_y + (pt.Z - sec_datum_z), cota_str, s)
                 desenho_completo_secoes_2d.extend(m_geoms)
 
         if modo_cotas in [0, 1]:
             # Marcadores de início e fim do greide
             z_ini = get_proj_z(0.0)
             z_fim = get_proj_z(total_ext)
-            m_g_ini, _ = draw_nbr_level_marker(base_x, base_y + (z_ini - datum_z), "GREIDE +{:.2f}".format(z_ini).replace('.', ','), s)
-            m_g_fim, _ = draw_nbr_level_marker(base_x + total_ext, base_y + (z_fim - datum_z), "GREIDE +{:.2f}".format(z_fim).replace('.', ','), s)
+            m_g_ini, _ = draw_nbr_level_marker(base_x, base_y + (z_ini - sec_datum_z), "GREIDE +{:.2f}".format(z_ini).replace('.', ','), s)
+            m_g_fim, _ = draw_nbr_level_marker(base_x + total_ext, base_y + (z_fim - sec_datum_z), "GREIDE +{:.2f}".format(z_fim).replace('.', ','), s)
             desenho_completo_secoes_2d.extend(m_g_ini)
             desenho_completo_secoes_2d.extend(m_g_fim)
 
             # Pontos de Passagem
             for dp, zp in s_data['pontos_passagem']:
-                m_pp, _ = draw_nbr_level_marker(base_x + dp, base_y + (zp - datum_z), "P.P. +{:.2f}".format(zp).replace('.', ','), s)
+                m_pp, _ = draw_nbr_level_marker(base_x + dp, base_y + (zp - sec_datum_z), "P.P. +{:.2f}".format(zp).replace('.', ','), s)
                 desenho_completo_secoes_2d.extend(m_pp)
 
             # Caixas de Área / Volume da Seção
@@ -1206,7 +1228,7 @@ def run():
             if s_data['area_total_corte'] > 0.01 and d_c_all:
                 d_c_mid = (min(d_c_all) + max(d_c_all)) / 2.0
                 z_c_top = max(interpolate_terrain_z(d, clean_pts) for d in d_c_all)
-                y_c_box = base_y + (z_c_top - datum_z) + 4.2 * s
+                y_c_box = base_y + (z_c_top - sec_datum_z) + 4.2 * s
                 x_c_box = base_x + d_c_mid
 
                 txt_v1 = "CORTE SEÇÃO {}: {:.2f} m²".format(lbl, s_data['area_total_corte']).replace('.', ',')
@@ -1216,7 +1238,7 @@ def run():
 
                 # Linha guia ao topo do relevo
                 p_c_box_bot = rg.Point3d(x_c_box, y_c_box - hc / 2.0, 0.0)
-                p_crest = rg.Point3d(x_c_box, base_y + (interpolate_terrain_z(d_c_mid, clean_pts) - datum_z), 0.0)
+                p_crest = rg.Point3d(x_c_box, base_y + (interpolate_terrain_z(d_c_mid, clean_pts) - sec_datum_z), 0.0)
                 desenho_completo_secoes_2d.append(rg.LineCurve(p_c_box_bot, p_crest))
                 desenho_completo_secoes_2d.append(rg.Circle(p_crest, 0.28 * s).ToNurbsCurve())
 
