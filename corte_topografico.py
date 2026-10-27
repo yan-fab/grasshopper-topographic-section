@@ -717,6 +717,46 @@ def draw_plan_dimension(p1, p2, dist_val, s=1.0, offset_dir=None, offset_dist=0.
 
     return geoms
 
+def draw_quadrant_badge(p_cen, txt_str, s=1.0, plane_ref=None):
+    """
+    Desenha o badge retangular técnico com o ID do quadrante perfeitamente
+    centralizado no centroide geométrico, com máscara suave de fundo e contorno nítido.
+    """
+    geoms = []
+    txt_h = 0.90 * s
+    pad_x = 1.60 * s
+    pad_y = 0.75 * s
+
+    w_txt = get_stroke_text_width(txt_str, txt_h)
+    w_box = max(w_txt + pad_x * 2.0, 8.5 * s)
+    h_box = txt_h + pad_y * 2.0
+
+    if plane_ref is None:
+        plane_badge = rg.Plane(p_cen, rg.Vector3d.XAxis, rg.Vector3d.YAxis)
+    else:
+        # Garante leitura da esquerda para a direita (evita texto invertido)
+        u_axis = rg.Vector3d(plane_ref.XAxis)
+        v_axis = rg.Vector3d(plane_ref.YAxis)
+        if u_axis.X < -1e-4 or (abs(u_axis.X) <= 1e-4 and u_axis.Y < 0):
+            u_axis = -u_axis
+            v_axis = -v_axis
+        plane_badge = rg.Plane(p_cen, u_axis, v_axis)
+
+    p0 = p_cen - plane_badge.XAxis * (w_box / 2.0) - plane_badge.YAxis * (h_box / 2.0)
+    p1 = p_cen + plane_badge.XAxis * (w_box / 2.0) - plane_badge.YAxis * (h_box / 2.0)
+    p2 = p_cen + plane_badge.XAxis * (w_box / 2.0) + plane_badge.YAxis * (h_box / 2.0)
+    p3 = p_cen - plane_badge.XAxis * (w_box / 2.0) + plane_badge.YAxis * (h_box / 2.0)
+
+    bg_mesh = make_box_background_mesh(p0, p1, p2, p3, System.Drawing.Color.FromArgb(255, 255, 255))
+    badge_crv = rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve()
+    geoms.append(bg_mesh)
+    geoms.append(badge_crv)
+
+    txt_crvs = make_text_geometry(txt_str, p_cen, txt_h, rg.TextJustification.MiddleCenter, s, plane_badge)
+    if txt_crvs: geoms.extend(txt_crvs)
+
+    return geoms
+
 def calculate_axis_distance(crv_a, crv_b):
     """Calcula a distância ortogonal média horizontal entre duas linhas de corte consecutivas em planta."""
     try:
@@ -1179,8 +1219,86 @@ def run():
                                0.0)
         lista_alinhadas.append(rg.LineCurve(p_ini_aln, p_fim_aln))
 
-    # Processamento dos eixos longitudinais/verticais
-    lista_verticais = [to_rhino_curve(c) for c in to_list(raw_verticais) if to_rhino_curve(c) is not None]
+    # 0.5 ALINHAMENTO AUTOMÁTICO DOS EIXOS LONGITUDINAIS/VERTICAIS (1, 2, 3...)
+    # Mesma metodologia paramétrica dos eixos transversais: harmonização de direção,
+    # comprimento idêntico e linha de base comum perpendicular (A Linha Vermelha no topo).
+    lista_verticais_raw = [to_rhino_curve(c) for c in to_list(raw_verticais) if to_rhino_curve(c) is not None]
+    lista_verticais_alinhadas = []
+    distancias_verticais = []
+    u_vert = rg.Vector3d(-u_corte.Y, u_corte.X, 0.0)
+    w_perp_v = rg.Vector3d(u_corte)
+
+    if lista_verticais_raw:
+        lista_vert_dups = [c.DuplicateCurve() for c in lista_verticais_raw]
+
+        # Direção de referência relativa às seções transversais (do início das seções para o fim)
+        if len(lista_alinhadas) >= 2:
+            vec_dir_secoes = lista_alinhadas[-1].PointAtStart - lista_alinhadas[0].PointAtStart
+        else:
+            vec_dir_secoes = lista_vert_dups[0].PointAtEnd - lista_vert_dups[0].PointAtStart
+
+        # Harmonização de sentido de todos os eixos verticais
+        for i in range(len(lista_vert_dups)):
+            vec_i = lista_vert_dups[i].PointAtEnd - lista_vert_dups[i].PointAtStart
+            if vec_i.X * vec_dir_secoes.X + vec_i.Y * vec_dir_secoes.Y < 0.0:
+                lista_vert_dups[i].Reverse()
+
+        # Vetor diretor médio normalizado dos eixos verticais
+        vx_sum, vy_sum = 0.0, 0.0
+        for c in lista_vert_dups:
+            dx = c.PointAtEnd.X - c.PointAtStart.X
+            dy = c.PointAtEnd.Y - c.PointAtStart.Y
+            l_len = math.hypot(dx, dy)
+            if l_len > 1e-4:
+                vx_sum += dx / l_len
+                vy_sum += dy / l_len
+        v_len = math.hypot(vx_sum, vy_sum)
+        if v_len > 1e-4:
+            u_vert = rg.Vector3d(vx_sum / v_len, vy_sum / v_len, 0.0)
+        else:
+            u_vert = rg.Vector3d(-u_corte.Y, u_corte.X, 0.0)
+
+        # Vetor perpendicular aos eixos verticais (linha de base no topo)
+        w_perp_v = rg.Vector3d(-u_vert.Y, u_vert.X, 0.0)
+
+        # Envelopamento longitudinal ao longo de u_vert (abrangendo tanto os eixos quanto as seções de corte)
+        v_proj_vals = []
+        for c in lista_vert_dups:
+            p0, p1 = c.PointAtStart, c.PointAtEnd
+            v_proj_vals.append(p0.X * u_vert.X + p0.Y * u_vert.Y)
+            v_proj_vals.append(p1.X * u_vert.X + p1.Y * u_vert.Y)
+
+        for c in lista_alinhadas:
+            p0, p1 = c.PointAtStart, c.PointAtEnd
+            v_proj_vals.append(p0.X * u_vert.X + p0.Y * u_vert.Y)
+            v_proj_vals.append(p1.X * u_vert.X + p1.Y * u_vert.Y)
+
+        v_min_aln = min(v_proj_vals) - 6.0 * s
+        v_max_aln = max(v_proj_vals) + 6.0 * s
+
+        # Ordena os eixos verticais transversalmente da esquerda para a direita (ao longo de w_perp_v)
+        v_items = []
+        for c in lista_vert_dups:
+            p_mid = c.PointAtNormalizedLength(0.5)
+            w_c = p_mid.X * w_perp_v.X + p_mid.Y * w_perp_v.Y
+            v_items.append((w_c, c))
+        v_items.sort(key=lambda x: x[0])
+
+        for w_c, _ in v_items:
+            p_ini_v = rg.Point3d(v_min_aln * u_vert.X + w_c * w_perp_v.X,
+                                 v_min_aln * u_vert.Y + w_c * w_perp_v.Y,
+                                 0.0)
+            p_fim_v = rg.Point3d(v_max_aln * u_vert.X + w_c * w_perp_v.X,
+                                 v_max_aln * u_vert.Y + w_c * w_perp_v.Y,
+                                 0.0)
+            lista_verticais_alinhadas.append(rg.LineCurve(p_ini_v, p_fim_v))
+
+        # Distâncias entre eixos verticais consecutivos
+        for j in range(len(lista_verticais_alinhadas) - 1):
+            d_v = calculate_axis_distance(lista_verticais_alinhadas[j], lista_verticais_alinhadas[j+1])
+            distancias_verticais.append(max(d_v, 0.1))
+
+    lista_verticais = lista_verticais_alinhadas
 
     # Processamento de curvas de projeto
     lista_projetos = [to_rhino_curve(c) for c in to_list(raw_projeto) if to_rhino_curve(c) is not None]
@@ -1518,31 +1636,52 @@ def run():
         cota_fora = draw_plan_dimension(p_start_1, p_start_2, dist_val, s, -u_corte, offset_cota_fora)
         planta_baixa_geoms.extend(cota_fora)
 
-    # 3. Eixos Longitudinais/Verticais (1, 2, 3...) em Planta
+    # 3. Eixos Longitudinais/Verticais Alinhados em Planta com Linha de Referência e Balões
     num_verticais = len(lista_verticais)
     labels_v = [str(i + 1) for i in range(num_verticais)]
 
+    offset_cota_v_fora = 8.5 * s
+    offset_balao_v_fora = offset_cota_v_fora + 7.5 * s
+
+    # Linha de Alinhamento de Referência Externa no Topo (A Linha Vermelha no topo do croqui)
+    if num_verticais >= 2:
+        p_vref_1 = lista_verticais[0].PointAtStart
+        p_vref_2 = lista_verticais[-1].PointAtStart
+        v_vref = p_vref_2 - p_vref_1
+        if v_vref.Length > 1e-4:
+            u_vref = rg.Vector3d(v_vref)
+            u_vref.Unitize()
+            l_align_v_ref = rg.LineCurve(p_vref_1 - u_vref * (4.0 * s), p_vref_2 + u_vref * (4.0 * s))
+            planta_baixa_geoms.append(l_align_v_ref)
+
+    # 3.1 Eixos verticais desenhados com balões NBR no início (topo) e no fim (base)
     for idx_v, crv_v in enumerate(lista_verticais):
         lbl_v = labels_v[idx_v]
         p_start_v = crv_v.PointAtStart
         p_end_v = crv_v.PointAtEnd
-        vec_v = p_end_v - p_start_v
-        u_v = rg.Vector3d(vec_v)
-        u_v.Unitize()
 
         planta_baixa_geoms.append(crv_v)
 
-        # Balão numérico no início
-        p_bv_ini = p_start_v - u_v * (2.8 * s)
+        # Prolongamento e Balão numérico no topo (além da linha de cota)
+        p_bv_ini = p_start_v - u_vert * offset_balao_v_fora
         planta_baixa_geoms.append(rg.LineCurve(p_start_v, p_bv_ini))
-        bv_ini = draw_plan_axis_bubble(p_bv_ini, None, lbl_v, s)
+        bv_ini = draw_plan_axis_bubble(p_bv_ini, u_vert, lbl_v, s)
         planta_baixa_geoms.extend(bv_ini)
 
-        # Balão numérico no fim
-        p_bv_fim = p_end_v + u_v * (2.8 * s)
+        # Prolongamento e Balão numérico na base (fim do eixo)
+        p_bv_fim = p_end_v + u_vert * (4.0 * s)
         planta_baixa_geoms.append(rg.LineCurve(p_end_v, p_bv_fim))
-        bv_fim = draw_plan_axis_bubble(p_bv_fim, None, lbl_v, s)
+        bv_fim = draw_plan_axis_bubble(p_bv_fim, u_vert, lbl_v, s)
         planta_baixa_geoms.extend(bv_fim)
+
+    # 3.2 Cotas Técnicas de Distância entre Eixos Verticais FORA DO DESENHO (ao longo do topo)
+    for idx_v in range(num_verticais - 1):
+        p_sv1 = lista_verticais[idx_v].PointAtStart
+        p_sv2 = lista_verticais[idx_v + 1].PointAtStart
+        dist_v_val = distancias_verticais[idx_v] if idx_v < len(distancias_verticais) else 0.0
+
+        cota_v_fora = draw_plan_dimension(p_sv1, p_sv2, dist_v_val, s, -u_vert, offset_cota_v_fora)
+        planta_baixa_geoms.extend(cota_v_fora)
 
     # 4. Malha de Quadrantes de Terraplenagem em Planta (Interseção Transversais x Verticais)
     if num_secoes >= 2 and num_verticais >= 2:
@@ -1562,6 +1701,8 @@ def run():
                         pt_c = ct_xy.PointAt(t_t)
                         grid_pts[i][j] = rg.Point3d(pt_c.X, pt_c.Y, 0.0)
 
+        plane_grid = rg.Plane(rg.Point3d.Origin, u_corte, v_perp)
+
         for i in range(num_secoes - 1):
             for j in range(num_verticais - 1):
                 p00 = grid_pts[i][j]
@@ -1572,10 +1713,23 @@ def run():
                     poly_q = rg.Polyline([p00, p01, p11, p10, p00]).ToPolylineCurve()
                     planta_baixa_geoms.append(poly_q)
 
-                    p_cen = (p00 + p01 + p11 + p10) / 4.0
+                    # Cálculo analítico do Centroide Geométrico exato do quadrante
+                    amp = rg.AreaMassProperties.Compute(poly_q)
+                    if amp and amp.Centroid.IsValid:
+                        p_cen = amp.Centroid
+                    else:
+                        # Fallback: Interseção das diagonais (o exato "X" desenhado no croqui)
+                        l_diag1 = rg.Line(p00, p11)
+                        l_diag2 = rg.Line(p01, p10)
+                        rc, t1, t2 = rg.Intersect.Intersection.LineLine(l_diag1, l_diag2)
+                        if rc:
+                            p_cen = l_diag1.PointAt(t1)
+                        else:
+                            p_cen = (p00 + p01 + p11 + p10) / 4.0
+
                     txt_q = "Q.{}-{}".format(labels_t[i], labels_v[j])
-                    q_crvs = make_text_geometry(txt_q, p_cen, 0.75 * s, rg.TextJustification.MiddleCenter, s)
-                    if q_crvs: planta_baixa_geoms.extend(q_crvs)
+                    badge_geoms = draw_quadrant_badge(p_cen, txt_q, s, plane_grid)
+                    planta_baixa_geoms.extend(badge_geoms)
 
     # =========================================================================
     # 8. MEMORIAL TÉCNICO DE TERRAPLENAGEM E BALANÇO DE MASSAS (AGPTEA)
