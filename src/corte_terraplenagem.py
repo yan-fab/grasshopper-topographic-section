@@ -179,7 +179,212 @@ def create_colored_mesh(quads_and_tris, color):
     m.Normals.ComputeNormals()
     return m
 
-def make_text_entity(text_str, pt, height, justification=None):
+# =============================================================================
+# TABELAS VETORIAIS DE ALTA DEFINIÇÃO PARA TEXTO (STROKE VECTOR FONT ENGINE)
+# Garante visualização imediata, nítida e 100% visível no viewport do Grasshopper
+# =============================================================================
+STROKES = {
+    '0': [[(0.1,0),(0.5,0),(0.6,0.2),(0.6,0.8),(0.5,1),(0.1,1),(0,0.8),(0,0.2),(0.1,0)], [(0.1,0.2),(0.5,0.8)]],
+    '1': [[(0.1,0.8),(0.35,1),(0.35,0)], [(0.1,0),(0.6,0)]],
+    '2': [[(0,0.8),(0.15,1),(0.45,1),(0.6,0.8),(0.6,0.55),(0,0),(0.6,0)]],
+    '3': [[(0,1),(0.6,1),(0.3,0.55),(0.5,0.55),(0.6,0.4),(0.6,0.15),(0.45,0),(0.1,0),(0,0.15)]],
+    '4': [[(0.45,0),(0.45,1),(0,0.3),(0.6,0.3)]],
+    '5': [[(0.6,1),(0,1),(0,0.55),(0.45,0.55),(0.6,0.4),(0.6,0.15),(0.45,0),(0,0)]],
+    '6': [[(0.5,1),(0.15,0.8),(0,0.4),(0,0.2),(0.15,0),(0.45,0),(0.6,0.2),(0.6,0.4),(0.45,0.55),(0,0.55)]],
+    '7': [[(0,1),(0.6,1),(0.2,0)]],
+    '8': [[(0.15,0.5),(0,0.75),(0.15,1),(0.45,1),(0.6,0.75),(0.45,0.5),(0.6,0.25),(0.45,0),(0.15,0),(0,0.25),(0.15,0.5),(0.45,0.5)]],
+    '9': [[(0.6,0.45),(0.15,0.45),(0,0.6),(0,0.8),(0.15,1),(0.45,1),(0.6,0.8),(0.6,0.2),(0.45,0),(0.1,0)]],
+    'A': [[(0,0),(0.3,1),(0.6,0)], [(0.12,0.35),(0.48,0.35)]],
+    'B': [[(0,0),(0,1),(0.4,1),(0.55,0.85),(0.4,0.55),(0.55,0.3),(0.4,0),(0,0)], [(0,0.55),(0.4,0.55)]],
+    'C': [[(0.6,0.85),(0.45,1),(0.15,1),(0,0.75),(0,0.25),(0.15,0),(0.45,0),(0.6,0.15)]],
+    'D': [[(0,0),(0,1),(0.35,1),(0.6,0.75),(0.6,0.25),(0.35,0),(0,0)]],
+    'E': [[(0.6,1),(0,1),(0,0),(0.6,0)], [(0,0.5),(0.45,0.5)]],
+    'F': [[(0.6,1),(0,1),(0,0)], [(0,0.55),(0.45,0.55)]],
+    'G': [[(0.6,0.85),(0.45,1),(0.15,1),(0,0.75),(0,0.25),(0.15,0),(0.45,0),(0.6,0.15),(0.6,0.45),(0.35,0.45)]],
+    'H': [[(0,0),(0,1)], [(0.6,0),(0.6,1)], [(0,0.5),(0.6,0.5)]],
+    'I': [[(0.15,1),(0.45,1)], [(0.3,1),(0.3,0)], [(0.15,0),(0.45,0)]],
+    'J': [[(0,0.25),(0.15,0),(0.4,0),(0.5,0.15),(0.5,1)]],
+    'K': [[(0,0),(0,1)], [(0.6,1),(0,0.45)], [(0.2,0.55),(0.6,0)]],
+    'L': [[(0,1),(0,0),(0.6,0)]],
+    'M': [[(0,0),(0,1),(0.3,0.45),(0.6,1),(0.6,0)]],
+    'N': [[(0,0),(0,1),(0.6,0),(0.6,1)]],
+    'O': [[(0.15,0),(0.45,0),(0.6,0.25),(0.6,0.75),(0.45,1),(0.15,1),(0,0.75),(0,0.25),(0.15,0)]],
+    'P': [[(0,0),(0,1),(0.45,1),(0.6,0.8),(0.45,0.55),(0,0.55)]],
+    'Q': [[(0.15,0),(0.45,0),(0.6,0.25),(0.6,0.75),(0.45,1),(0.15,1),(0,0.75),(0,0.25),(0.15,0)], [(0.35,0.25),(0.6,-0.1)]],
+    'R': [[(0,0),(0,1),(0.45,1),(0.6,0.8),(0.45,0.55),(0,0.55)], [(0.3,0.55),(0.6,0)]],
+    'S': [[(0.6,0.85),(0.45,1),(0.15,1),(0,0.8),(0.15,0.55),(0.45,0.45),(0.6,0.25),(0.45,0),(0.15,0),(0,0.15)]],
+    'T': [[(0,1),(0.6,1)], [(0.3,1),(0.3,0)]],
+    'U': [[(0,1),(0,0.25),(0.15,0),(0.45,0),(0.6,0.25),(0.6,1)]],
+    'V': [[(0,1),(0.3,0),(0.6,1)]],
+    'W': [[(0,1),(0.15,0),(0.3,0.6),(0.45,0),(0.6,1)]],
+    'X': [[(0,0),(0.6,1)], [(0,1),(0.6,0)]],
+    'Y': [[(0,1),(0.3,0.5),(0.6,1)], [(0.3,0.5),(0.3,0)]],
+    'Z': [[(0,1),(0.6,1),(0,0),(0.6,0)]],
+    '+': [[(0.3,0.2),(0.3,0.8)], [(0.05,0.5),(0.55,0.5)]],
+    '-': [[(0.05,0.5),(0.55,0.5)]],
+    '.': [[(0.25,0),(0.35,0),(0.35,0.1),(0.25,0.1),(0.25,0)]],
+    ',': [[(0.35,0.1),(0.35,0),(0.2,-0.15)]],
+    ':': [[(0.25,0.2),(0.35,0.2),(0.35,0.3),(0.25,0.3),(0.25,0.2)], [(0.25,0.65),(0.35,0.65),(0.35,0.75),(0.25,0.75),(0.25,0.65)]],
+    ';': [[(0.35,0.1),(0.35,0),(0.2,-0.15)], [(0.25,0.65),(0.35,0.65),(0.35,0.75),(0.25,0.75),(0.25,0.65)]],
+    '|': [[(0.3,-0.1),(0.3,1.05)]],
+    '/': [[(0.05,0),(0.55,1)]],
+    '\\': [[(0.05,1),(0.55,0)]],
+    '=': [[(0.05,0.35),(0.55,0.35)], [(0.05,0.65),(0.55,0.65)]],
+    '(': [[(0.45,1),(0.2,0.75),(0.2,0.25),(0.45,0)]],
+    ')': [[(0.15,1),(0.4,0.75),(0.4,0.25),(0.15,0)]],
+    '[': [[(0.45,1),(0.2,1),(0.2,0),(0.45,0)]],
+    ']': [[(0.15,1),(0.4,1),(0.4,0),(0.15,0)]],
+    '%': [[(0.55,1),(0.05,0)], [(0.15,0.75),(0.25,0.75),(0.25,0.85),(0.15,0.85),(0.15,0.75)], [(0.35,0.15),(0.45,0.15),(0.45,0.25),(0.35,0.25),(0.35,0.15)]],
+    '°': [[(0.2,0.75),(0.4,0.75),(0.4,0.95),(0.2,0.95),(0.2,0.75)]],
+    '²': [[(0.2,0.9),(0.4,1),(0.5,0.9),(0.2,0.65),(0.5,0.65)]],
+    '³': [[(0.2,1),(0.5,1),(0.35,0.82),(0.5,0.82),(0.4,0.65),(0.2,0.65)]],
+    ' ': [],
+}
+
+ACCENT_STROKES = {
+    'acute': [[(0.25, 1.1), (0.45, 1.25)]],
+    'grave': [[(0.45, 1.1), (0.25, 1.25)]],
+    'tilde': [[(0.15, 1.12), (0.28, 1.24), (0.42, 1.12), (0.55, 1.24)]],
+    'circ':  [[(0.18, 1.1), (0.35, 1.25), (0.52, 1.1)]],
+    'cedil': [[(0.3, 0), (0.3, -0.15), (0.42, -0.2)]],
+}
+
+LOWER_STROKES = {
+    'a': [[(0.55,0.65),(0.15,0.65),(0,0.5),(0,0.15),(0.15,0),(0.45,0),(0.55,0.15),(0.55,0)], [(0.55,0.65),(0.55,0)], [(0,0.35),(0.55,0.35)]],
+    'b': [[(0,1),(0,0)], [(0,0.65),(0.4,0.65),(0.55,0.45),(0.55,0.2),(0.4,0),(0,0)]],
+    'c': [[(0.55,0.55),(0.4,0.65),(0.15,0.65),(0,0.45),(0,0.2),(0.15,0),(0.4,0),(0.55,0.1)]],
+    'd': [[(0.55,1),(0.55,0)], [(0.55,0.65),(0.15,0.65),(0,0.45),(0,0.2),(0.15,0),(0.55,0)]],
+    'e': [[(0,0.35),(0.55,0.35),(0.55,0.5),(0.4,0.65),(0.15,0.65),(0,0.45),(0,0.2),(0.15,0),(0.4,0),(0.55,0.1)]],
+    'f': [[(0.45,1),(0.3,1),(0.15,0.85),(0.15,0)], [(0,0.65),(0.45,0.65)]],
+    'g': [[(0.55,0.65),(0.15,0.65),(0,0.45),(0,0.2),(0.15,0),(0.55,0),(0.55,-0.25),(0.35,-0.35),(0.15,-0.35)]],
+    'h': [[(0,1),(0,0)], [(0,0.45),(0.2,0.65),(0.4,0.65),(0.55,0.45),(0.55,0)]],
+    'i': [[(0.3,0.65),(0.3,0)], [(0.25,0.85),(0.35,0.85),(0.35,0.95),(0.25,0.95),(0.25,0.85)]],
+    'j': [[(0.4,0.65),(0.4,-0.25),(0.2,-0.35),(0.05,-0.25)], [(0.35,0.85),(0.45,0.85),(0.45,0.95),(0.35,0.95),(0.35,0.85)]],
+    'k': [[(0,1),(0,0)], [(0.55,0.65),(0,0.25)], [(0.2,0.38),(0.55,0)]],
+    'l': [[(0.2,1),(0.2,0.1),(0.35,0)]],
+    'm': [[(0,0.65),(0,0)], [(0,0.5),(0.2,0.65),(0.35,0.5),(0.35,0)], [(0.35,0.5),(0.55,0.65),(0.7,0.5),(0.7,0)]],
+    'n': [[(0,0.65),(0,0)], [(0,0.5),(0.2,0.65),(0.4,0.65),(0.55,0.45),(0.55,0)]],
+    'o': [[(0.15,0),(0.4,0),(0.55,0.15),(0.55,0.5),(0.4,0.65),(0.15,0.65),(0,0.5),(0,0.15),(0.15,0)]],
+    'p': [[(0,0.65),(0,-0.35)], [(0,0.65),(0.4,0.65),(0.55,0.45),(0.55,0.2),(0.4,0),(0,0)]],
+    'q': [[(0.55,0.65),(0.55,-0.35)], [(0.55,0.65),(0.15,0.65),(0,0.45),(0,0.2),(0.15,0),(0.55,0)]],
+    'r': [[(0,0.65),(0,0)], [(0,0.45),(0.2,0.65),(0.45,0.65)]],
+    's': [[(0.55,0.55),(0.4,0.65),(0.15,0.65),(0,0.5),(0.15,0.35),(0.4,0.3),(0.55,0.15),(0.4,0),(0.15,0),(0,0.1)]],
+    't': [[(0.25,0.9),(0.25,0.1),(0.4,0)], [(0.1,0.65),(0.45,0.65)]],
+    'u': [[(0,0.65),(0,0.15),(0.15,0),(0.4,0),(0.55,0.15),(0.55,0.65),(0.55,0)]],
+    'v': [[(0,0.65),(0.3,0),(0.6,0.65)]],
+    'w': [[(0,0.65),(0.15,0),(0.3,0.45),(0.45,0),(0.6,0.65)]],
+    'x': [[(0,0.65),(0.55,0)], [(0,0),(0.55,0.65)]],
+    'y': [[(0,0.65),(0.3,0),(0.6,0.65)], [(0.3,0),(0.15,-0.35)]],
+    'z': [[(0,0.65),(0.55,0.65),(0,0),(0.55,0)]],
+}
+
+def generate_stroke_text(text_str, pt, height, justification=None):
+    """Gera curvas vetoriais a partir do traçado das letras para visualização perfeita em qualquer viewport."""
+    curves = []
+    if not text_str:
+        return curves
+
+    char_widths = []
+    char_data = []
+
+    for ch in text_str:
+        accent_type = None
+        base_char = ch
+        if ch in 'Áá':   base_char, accent_type = ('A' if ch.isupper() else 'a'), 'acute'
+        elif ch in 'Àà': base_char, accent_type = ('A' if ch.isupper() else 'a'), 'grave'
+        elif ch in 'Ãã': base_char, accent_type = ('A' if ch.isupper() else 'a'), 'tilde'
+        elif ch in 'Ââ': base_char, accent_type = ('A' if ch.isupper() else 'a'), 'circ'
+        elif ch in 'Éé': base_char, accent_type = ('E' if ch.isupper() else 'e'), 'acute'
+        elif ch in 'Êê': base_char, accent_type = ('E' if ch.isupper() else 'e'), 'circ'
+        elif ch in 'Íí': base_char, accent_type = ('I' if ch.isupper() else 'i'), 'acute'
+        elif ch in 'Óó': base_char, accent_type = ('O' if ch.isupper() else 'o'), 'acute'
+        elif ch in 'Õõ': base_char, accent_type = ('O' if ch.isupper() else 'o'), 'tilde'
+        elif ch in 'Ôô': base_char, accent_type = ('O' if ch.isupper() else 'o'), 'circ'
+        elif ch in 'Úú': base_char, accent_type = ('U' if ch.isupper() else 'u'), 'acute'
+        elif ch in 'Çç': base_char, accent_type = ('C' if ch.isupper() else 'c'), 'cedil'
+
+        strokes = None
+        w_factor = 0.60
+        if base_char in STROKES:
+            strokes = STROKES[base_char]
+            if base_char in '1I.,:|;': w_factor = 0.35
+            elif base_char in 'MW': w_factor = 0.75
+            elif base_char in ' ': w_factor = 0.40
+        elif base_char in LOWER_STROKES:
+            strokes = LOWER_STROKES[base_char]
+            if base_char in 'ijlft': w_factor = 0.35
+            elif base_char in 'mw': w_factor = 0.75
+        elif base_char.upper() in STROKES:
+            strokes = STROKES[base_char.upper()]
+            if base_char.upper() in '1I.,:|;': w_factor = 0.35
+            elif base_char.upper() in 'MW': w_factor = 0.75
+
+        cw = height * w_factor
+        char_widths.append(cw)
+        char_data.append((strokes, accent_type, cw))
+
+    char_gap = height * 0.18
+    total_w = sum(char_widths) + max(0, len(text_str) - 1) * char_gap
+
+    start_x = pt.X
+    start_y = pt.Y
+
+    if justification == rg.TextJustification.MiddleCenter:
+        start_x = pt.X - total_w / 2.0
+        start_y = pt.Y - height / 2.0
+    elif justification == rg.TextJustification.BottomCenter:
+        start_x = pt.X - total_w / 2.0
+        start_y = pt.Y
+    elif justification == rg.TextJustification.TopCenter:
+        start_x = pt.X - total_w / 2.0
+        start_y = pt.Y - height
+    elif justification == rg.TextJustification.TopLeft:
+        start_x = pt.X
+        start_y = pt.Y - height
+    elif justification == rg.TextJustification.MiddleRight:
+        start_x = pt.X - total_w
+        start_y = pt.Y - height / 2.0
+    elif justification == rg.TextJustification.BottomRight:
+        start_x = pt.X - total_w
+        start_y = pt.Y
+
+    cur_x = start_x
+    for strokes, accent_type, cw in char_data:
+        scale_x = cw / 0.60
+        if strokes:
+            for stroke in strokes:
+                if len(stroke) >= 2:
+                    pts = [rg.Point3d(cur_x + sx * scale_x, start_y + sy * height, pt.Z) for sx, sy in stroke]
+                    if len(pts) == 2:
+                        curves.append(rg.LineCurve(pts[0], pts[1]))
+                    else:
+                        curves.append(rg.Polyline(pts).ToPolylineCurve())
+
+        if accent_type and accent_type in ACCENT_STROKES:
+            for a_stroke in ACCENT_STROKES[accent_type]:
+                pts = [rg.Point3d(cur_x + sx * scale_x, start_y + sy * height, pt.Z) for sx, sy in a_stroke]
+                if len(pts) == 2:
+                    curves.append(rg.LineCurve(pts[0], pts[1]))
+                else:
+                    curves.append(rg.Polyline(pts).ToPolylineCurve())
+
+        cur_x += cw + char_gap
+
+    return curves
+
+def make_text_geometry(text_str, pt, height, justification=None, s=1.0):
+    """
+    Gera geometria vetorial para texto garantindo 100% de visibilidade no viewport do Grasshopper.
+    1. Tenta TextEntity.Explode() nativo do Rhino.
+    2. Tenta TextEntity.CreateCurves() com estilo ativo.
+    3. Fallback: Stroke Vector Font integrado de alta definição.
+    """
+    if not text_str:
+        return []
+
+    curves = []
+
+    # 1. Tenta Explode nativo do Rhino
     try:
         plane = rg.Plane(pt, rg.Vector3d.ZAxis)
         te = rg.TextEntity()
@@ -190,20 +395,54 @@ def make_text_entity(text_str, pt, height, justification=None):
             te.Justification = justification
         else:
             te.Justification = rg.TextJustification.BottomLeft
-        return te
-    except:
-        return None
+
+        doc = Rhino.RhinoDoc.ActiveDoc
+        if doc and hasattr(doc, 'DimStyles') and doc.DimStyles.Current:
+            te.DimensionStyleId = doc.DimStyles.Current.Id
+
+        exp = te.Explode()
+        if exp and len(exp) > 0:
+            for c in exp:
+                if c and c.IsValid:
+                    curves.append(c)
+            if len(curves) > 0:
+                return curves
+    except Exception:
+        pass
+
+    # 2. Tenta CreateCurves com DimensionStyle
+    try:
+        doc = Rhino.RhinoDoc.ActiveDoc
+        dim_style = doc.DimStyles.Current if (doc and hasattr(doc, 'DimStyles')) else None
+        if dim_style:
+            exp2 = te.CreateCurves(dim_style, False, 1.0, 1.0)
+            if exp2 and len(exp2) > 0:
+                for c in exp2:
+                    if c and c.IsValid:
+                        curves.append(c)
+                if len(curves) > 0:
+                    return curves
+    except Exception:
+        pass
+
+    # 3. Fallback absoluto: Traçado vetorial nítido (Stroke Vector Font)
+    return generate_stroke_text(text_str, pt, height, justification)
+
+# Alias de compatibilidade
+make_text_entity = make_text_geometry
 
 def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0):
-    """Cria uma caixa retangular técnica com textos centralizados de volume e área."""
-    txt_h1 = 0.65 * s
-    txt_h2 = 0.45 * s
-    gap_y  = 0.35 * s
-    pad_x  = 0.85 * s
-    pad_y  = 0.45 * s
+    """Cria uma caixa retangular técnica com textos vetoriais nítidos de volume e área."""
+    txt_h1 = 1.10 * s
+    txt_h2 = 0.75 * s
+    pad_x  = 1.20 * s
+    pad_y  = 0.60 * s
+    gap_y  = 0.50 * s
 
-    max_chars = max(len(title_text), len(sub_text))
-    w_box = max(max_chars * 0.44 * s + pad_x * 2.0, 7.5 * s)
+    w_text1 = len(title_text) * (txt_h1 * 0.65 + txt_h1 * 0.15)
+    w_text2 = len(sub_text) * (txt_h2 * 0.65 + txt_h2 * 0.15)
+    w_content = max(w_text1, w_text2)
+    w_box = max(w_content + pad_x * 2.0, 11.5 * s)
     h_box = txt_h1 + txt_h2 + gap_y + pad_y * 2.0
 
     p0 = rg.Point3d(center_x - w_box / 2.0, center_y - h_box / 2.0, 0.0)
@@ -212,15 +451,25 @@ def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0):
     p3 = rg.Point3d(center_x - w_box / 2.0, center_y + h_box / 2.0, 0.0)
     box_crv = rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve()
 
-    pt_t1 = rg.Point3d(center_x, center_y + 0.35 * s, 0.0)
-    te1 = make_text_entity(title_text, pt_t1, txt_h1, rg.TextJustification.MiddleCenter)
+    # Linha divisória horizontal interna técnica
+    y_div = center_y + 0.05 * s
+    p_div_l = rg.Point3d(center_x - w_box / 2.0 + 0.5 * s, y_div, 0.0)
+    p_div_r = rg.Point3d(center_x + w_box / 2.0 - 0.5 * s, y_div, 0.0)
+    div_crv = rg.LineCurve(p_div_l, p_div_r)
 
-    pt_t2 = rg.Point3d(center_x, center_y - 0.45 * s, 0.0)
-    te2 = make_text_entity(sub_text, pt_t2, txt_h2, rg.TextJustification.MiddleCenter)
+    # Posições verticais dos textos
+    y_t1 = center_y + h_box / 4.0 + 0.05 * s
+    y_t2 = center_y - h_box / 4.0 + 0.05 * s
 
-    geoms = [box_crv]
-    if te1: geoms.append(te1)
-    if te2: geoms.append(te2)
+    pt_t1 = rg.Point3d(center_x, y_t1, 0.0)
+    te1_crvs = make_text_geometry(title_text, pt_t1, txt_h1, rg.TextJustification.MiddleCenter, s)
+
+    pt_t2 = rg.Point3d(center_x, y_t2, 0.0)
+    te2_crvs = make_text_geometry(sub_text, pt_t2, txt_h2, rg.TextJustification.MiddleCenter, s)
+
+    geoms = [box_crv, div_crv]
+    if te1_crvs: geoms.extend(te1_crvs)
+    if te2_crvs: geoms.extend(te2_crvs)
     return geoms, (w_box, h_box)
 
 def interpolate_terrain_z(d_val, clean_pts=None):
@@ -238,12 +487,14 @@ def interpolate_terrain_z(d_val, clean_pts=None):
     return clean_pts[-1][1].Z
 
 def draw_nbr_level_marker(x, y, text_str, s=1.0):
-    """Gera o símbolo de cota de nível padrão NBR 6492."""
-    h_tri = 0.7 * s
-    w_tri = 0.9 * s
-    h_stem = 0.5 * s
-    w_shelf = 2.4 * s
-    txt_h = 0.65 * s
+    """Gera o símbolo de cota de nível padrão NBR 6492 com texto vetorial nítido e estante dinâmica."""
+    h_tri = 0.85 * s
+    w_tri = 1.10 * s
+    h_stem = 0.60 * s
+    txt_h = 0.85 * s
+
+    char_w = 0.65 * txt_h
+    w_shelf = max(len(text_str) * char_w + 0.6 * s, 3.2 * s)
 
     v_bot = rg.Point3d(x, y, 0.0)
     v_top_mid = rg.Point3d(x, y + h_tri, 0.0)
@@ -258,16 +509,20 @@ def draw_nbr_level_marker(x, y, text_str, s=1.0):
     lr2 = rg.LineCurve(v_tr, v_top_mid)
 
     v_stem = rg.Point3d(x, y + h_tri + h_stem, 0.0)
-    v_shelf = rg.Point3d(x + w_shelf * 1.2, y + h_tri + h_stem, 0.0)
+    v_shelf = rg.Point3d(x + w_shelf, y + h_tri + h_stem, 0.0)
     l_stem = rg.LineCurve(v_top_mid, v_stem)
     l_shelf = rg.LineCurve(v_stem, v_shelf)
 
-    p_txt = rg.Point3d(x + 0.15 * s, y + h_tri + h_stem + 0.1 * s, 0.0)
-    te = make_text_entity(text_str, p_txt, txt_h)
+    p_txt = rg.Point3d(x + 0.20 * s, y + h_tri + h_stem + 0.12 * s, 0.0)
+    te_crvs = make_text_geometry(text_str, p_txt, txt_h, rg.TextJustification.BottomLeft, s)
 
     geoms = [l1, l2, l_mid, mesh_dir, lr1, lr2, l_stem, l_shelf]
-    if te: geoms.append(te)
-    return geoms, te
+    if te_crvs:
+        if isinstance(te_crvs, list):
+            geoms.extend(te_crvs)
+        else:
+            geoms.append(te_crvs)
+    return geoms, te_crvs
 
 def run():
     doc = Rhino.RhinoDoc.ActiveDoc
@@ -694,16 +949,24 @@ def run():
         m_pp, _ = draw_nbr_level_marker(orig_x + dp, orig_y + (zp - datum_z), "P.P. +{:.2f}".format(zp).replace('.', ','), s)
         cotas_projeto_geoms.extend(m_pp)
 
-    # Textos indicativos das alturas máximas
+    # Textos indicativos das alturas máximas (vetoriais nítidos)
     if max_h_corte > 0.05:
-        p_cmax = rg.Point3d(orig_x + d_max_corte, orig_y + (interpolate_terrain_z(d_max_corte, clean_pts) - datum_z) + 0.3 * s, 0.0)
-        t_cmax = make_text_entity("Corte Máx: {:.2f}m".format(max_h_corte), p_cmax, 0.55 * s)
-        if t_cmax: cotas_projeto_geoms.append(t_cmax)
+        p_cmax = rg.Point3d(orig_x + d_max_corte, orig_y + (interpolate_terrain_z(d_max_corte, clean_pts) - datum_z) + 0.45 * s, 0.0)
+        t_cmax = make_text_geometry("Corte Máx: {:.2f}m".format(max_h_corte).replace('.', ','), p_cmax, 0.75 * s, rg.TextJustification.BottomCenter, s)
+        if t_cmax:
+            if isinstance(t_cmax, list):
+                cotas_projeto_geoms.extend(t_cmax)
+            else:
+                cotas_projeto_geoms.append(t_cmax)
 
     if max_h_aterro > 0.05:
-        p_amax = rg.Point3d(orig_x + d_max_aterro, orig_y + (interpolate_proj_z(d_max_aterro) - datum_z) + 0.3 * s, 0.0)
-        t_amax = make_text_entity("Aterro Máx: {:.2f}m".format(max_h_aterro), p_amax, 0.55 * s)
-        if t_amax: cotas_projeto_geoms.append(t_amax)
+        p_amax = rg.Point3d(orig_x + d_max_aterro, orig_y + (interpolate_proj_z(d_max_aterro) - datum_z) + 0.45 * s, 0.0)
+        t_amax = make_text_geometry("Aterro Máx: {:.2f}m".format(max_h_aterro).replace('.', ','), p_amax, 0.75 * s, rg.TextJustification.BottomCenter, s)
+        if t_amax:
+            if isinstance(t_amax, list):
+                cotas_projeto_geoms.extend(t_amax)
+            else:
+                cotas_projeto_geoms.append(t_amax)
 
     # Cubação volumétrica para apresentação gráfica
     vol_corte_geo   = area_total_corte * largura_secao
@@ -728,19 +991,26 @@ def run():
         if abs(largura_secao - 1.0) > 0.01:
             txt_area_ret += " | L={:.1f}m".format(largura_secao).replace('.', ',')
 
-        w_est_c = max(len(txt_vol_ret), len(txt_area_ret)) * 0.44 * s + 1.7 * s
+        w_est_c = max(len(txt_vol_ret) * 0.75, len(txt_area_ret) * 0.55) * s + 2.4 * s
+        w_est_c = max(w_est_c, 11.5 * s)
+        h_est_c = 3.55 * s
+
         x_box_c = orig_x + d_c_mid
-        x_box_c = max(orig_x + w_est_c / 2.0 + 0.5 * s, x_box_c)
-        y_box_c = y_c_top + 2.5 * s + 1.2 * s
+        x_box_c = max(orig_x + w_est_c / 2.0 + 0.8 * s, x_box_c)
+        y_box_c = y_c_top + 2.6 * s + h_est_c / 2.0
 
         geoms_box_c, (w_c, h_c) = make_callout_card(x_box_c, y_box_c, txt_vol_ret, txt_area_ret, s)
         cotas_projeto_geoms.extend(geoms_box_c)
 
-        # Linha guia conectando a caixa ao relevo
+        # Linha guia conectando a caixa ao relevo com ponto terminal
         p_box_bot = rg.Point3d(x_box_c, y_box_c - h_c / 2.0, 0.0)
         p_c_crest = rg.Point3d(x_box_c, orig_y + (interpolate_terrain_z(d_c_mid, clean_pts) - datum_z), 0.0)
         linha_guia_c = rg.LineCurve(p_box_bot, p_c_crest)
         cotas_projeto_geoms.append(linha_guia_c)
+
+        # Círculo terminal no relevo
+        circ_c = rg.Circle(p_c_crest, 0.28 * s).ToNurbsCurve()
+        cotas_projeto_geoms.append(circ_c)
 
     # 2. CAIXA INFERIOR DIREITA: Quantidade realocada (Aterro / Preenchimento)
     d_aterro_all = [d for r_type, d_list in regioes if r_type == "ATERRO" for d in d_list]
@@ -754,19 +1024,26 @@ def run():
         if abs(largura_secao - 1.0) > 0.01:
             txt_area_rea += " | L={:.1f}m".format(largura_secao).replace('.', ',')
 
-        w_est_a = max(len(txt_vol_rea), len(txt_area_rea)) * 0.44 * s + 1.7 * s
+        w_est_a = max(len(txt_vol_rea) * 0.75, len(txt_area_rea) * 0.55) * s + 2.4 * s
+        w_est_a = max(w_est_a, 11.5 * s)
+        h_est_a = 3.55 * s
+
         x_box_a = orig_x + d_a_mid
-        x_box_a = min(orig_x + total_ext - w_est_a / 2.0 - 0.5 * s, x_box_a)
-        y_box_a = orig_y - 2.5 * s - 1.2 * s
+        x_box_a = min(orig_x + total_ext - w_est_a / 2.0 - 0.8 * s, x_box_a)
+        y_box_a = orig_y - 2.6 * s - h_est_a / 2.0
 
         geoms_box_a, (w_a, h_a) = make_callout_card(x_box_a, y_box_a, txt_vol_rea, txt_area_rea, s)
         cotas_projeto_geoms.extend(geoms_box_a)
 
-        # Linha guia conectando a base do datum à caixa
+        # Linha guia conectando a base do datum à caixa com ponto terminal
         p_box_top = rg.Point3d(x_box_a, y_box_a + h_a / 2.0, 0.0)
         p_datum_conn = rg.Point3d(x_box_a, orig_y, 0.0)
         linha_guia_a = rg.LineCurve(p_box_top, p_datum_conn)
         cotas_projeto_geoms.append(linha_guia_a)
+
+        # Círculo terminal no datum
+        circ_a = rg.Circle(p_datum_conn, 0.28 * s).ToNurbsCurve()
+        cotas_projeto_geoms.append(circ_a)
 
     # =========================================================================
     # 5. MONTAGEM DO DESENHO COMPLETO DE ACORDO COM O SELETOR
