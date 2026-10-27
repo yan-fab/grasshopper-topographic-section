@@ -191,7 +191,9 @@ def make_text_entity(text_str, pt, height):
     except:
         return None
 
-def interpolate_terrain_z(d_val, clean_pts):
+def interpolate_terrain_z(d_val, clean_pts=None):
+    if clean_pts is None:
+        clean_pts = globals().get('_cached_clean_pts', None)
     if not clean_pts: return 0.0
     if d_val <= clean_pts[0][0]: return clean_pts[0][1].Z
     if d_val >= clean_pts[-1][0]: return clean_pts[-1][1].Z
@@ -324,6 +326,8 @@ def run():
 
     if len(clean_pts) < 2:
         return None, None, None, [], [], ["AVISO: A linha de corte cruza menos de 2 pontos de relevo."]
+
+    globals()['_cached_clean_pts'] = clean_pts
 
     # Perfil 3D
     pts_3d = [pt for d, pt in clean_pts]
@@ -619,7 +623,7 @@ def run():
                 z = interpolate_proj_z(d)
                 pts_poly.append(rg.Point3d(orig_x + d, orig_y + (z - datum_z), 0.0))
             for d in reversed(d_list):
-                z = interpolate_terrain_z(d)
+                z = interpolate_terrain_z(d, clean_pts)
                 pts_poly.append(rg.Point3d(orig_x + d, orig_y + (z - datum_z), 0.0))
             pts_poly.append(pts_poly[0])
             crv_fechada = rg.Polyline(pts_poly).ToPolylineCurve()
