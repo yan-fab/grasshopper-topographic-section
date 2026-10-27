@@ -179,17 +179,49 @@ def create_colored_mesh(quads_and_tris, color):
     m.Normals.ComputeNormals()
     return m
 
-def make_text_entity(text_str, pt, height):
+def make_text_entity(text_str, pt, height, justification=None):
     try:
         plane = rg.Plane(pt, rg.Vector3d.ZAxis)
         te = rg.TextEntity()
         te.PlainText = text_str
         te.Plane = plane
         te.TextHeight = height
-        te.Justification = rg.TextJustification.BottomLeft
+        if justification is not None:
+            te.Justification = justification
+        else:
+            te.Justification = rg.TextJustification.BottomLeft
         return te
     except:
         return None
+
+def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0):
+    """Cria uma caixa retangular técnica com textos centralizados de volume e área."""
+    txt_h1 = 0.65 * s
+    txt_h2 = 0.45 * s
+    gap_y  = 0.35 * s
+    pad_x  = 0.85 * s
+    pad_y  = 0.45 * s
+
+    max_chars = max(len(title_text), len(sub_text))
+    w_box = max(max_chars * 0.44 * s + pad_x * 2.0, 7.5 * s)
+    h_box = txt_h1 + txt_h2 + gap_y + pad_y * 2.0
+
+    p0 = rg.Point3d(center_x - w_box / 2.0, center_y - h_box / 2.0, 0.0)
+    p1 = rg.Point3d(center_x + w_box / 2.0, center_y - h_box / 2.0, 0.0)
+    p2 = rg.Point3d(center_x + w_box / 2.0, center_y + h_box / 2.0, 0.0)
+    p3 = rg.Point3d(center_x - w_box / 2.0, center_y + h_box / 2.0, 0.0)
+    box_crv = rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve()
+
+    pt_t1 = rg.Point3d(center_x, center_y + 0.35 * s, 0.0)
+    te1 = make_text_entity(title_text, pt_t1, txt_h1, rg.TextJustification.MiddleCenter)
+
+    pt_t2 = rg.Point3d(center_x, center_y - 0.45 * s, 0.0)
+    te2 = make_text_entity(sub_text, pt_t2, txt_h2, rg.TextJustification.MiddleCenter)
+
+    geoms = [box_crv]
+    if te1: geoms.append(te1)
+    if te2: geoms.append(te2)
+    return geoms, (w_box, h_box)
 
 def interpolate_terrain_z(d_val, clean_pts=None):
     if clean_pts is None:
@@ -672,6 +704,69 @@ def run():
         p_amax = rg.Point3d(orig_x + d_max_aterro, orig_y + (interpolate_proj_z(d_max_aterro) - datum_z) + 0.3 * s, 0.0)
         t_amax = make_text_entity("Aterro Máx: {:.2f}m".format(max_h_aterro), p_amax, 0.55 * s)
         if t_amax: cotas_projeto_geoms.append(t_amax)
+
+    # Cubação volumétrica para apresentação gráfica
+    vol_corte_geo   = area_total_corte * largura_secao
+    vol_aterro_geo  = area_total_aterro * largura_secao
+    vol_corte_solto = vol_corte_geo * fator_k
+    saldo_vol       = vol_corte_geo - vol_aterro_geo
+
+    # -------------------------------------------------------------------------
+    # CAIXAS DE VOLUME RETIRADO E REALOCADO (CONFORME IMAGEM DE REFERÊNCIA)
+    # -------------------------------------------------------------------------
+    # 1. CAIXA SUPERIOR ESQUERDA: Quantidade retirada (Corte / Escavação)
+    d_corte_all = [d for r_type, d_list in regioes if r_type == "CORTE" for d in d_list]
+    if area_total_corte > 0.01 and d_corte_all:
+        d_c_min = min(d_corte_all)
+        d_c_max = max(d_corte_all)
+        d_c_mid = (d_c_min + d_c_max) / 2.0
+        z_c_top = max(interpolate_terrain_z(d, clean_pts) for d in d_corte_all)
+        y_c_top = orig_y + (z_c_top - datum_z)
+
+        txt_vol_ret  = "RETIRADO: {:.2f} m³".format(vol_corte_geo).replace('.', ',')
+        txt_area_ret = "Área: {:.2f} m²".format(area_total_corte).replace('.', ',')
+        if abs(largura_secao - 1.0) > 0.01:
+            txt_area_ret += " | L={:.1f}m".format(largura_secao).replace('.', ',')
+
+        w_est_c = max(len(txt_vol_ret), len(txt_area_ret)) * 0.44 * s + 1.7 * s
+        x_box_c = orig_x + d_c_mid
+        x_box_c = max(orig_x + w_est_c / 2.0 + 0.5 * s, x_box_c)
+        y_box_c = y_c_top + 2.5 * s + 1.2 * s
+
+        geoms_box_c, (w_c, h_c) = make_callout_card(x_box_c, y_box_c, txt_vol_ret, txt_area_ret, s)
+        cotas_projeto_geoms.extend(geoms_box_c)
+
+        # Linha guia conectando a caixa ao relevo
+        p_box_bot = rg.Point3d(x_box_c, y_box_c - h_c / 2.0, 0.0)
+        p_c_crest = rg.Point3d(x_box_c, orig_y + (interpolate_terrain_z(d_c_mid, clean_pts) - datum_z), 0.0)
+        linha_guia_c = rg.LineCurve(p_box_bot, p_c_crest)
+        cotas_projeto_geoms.append(linha_guia_c)
+
+    # 2. CAIXA INFERIOR DIREITA: Quantidade realocada (Aterro / Preenchimento)
+    d_aterro_all = [d for r_type, d_list in regioes if r_type == "ATERRO" for d in d_list]
+    if area_total_aterro > 0.01 and d_aterro_all:
+        d_a_min = min(d_aterro_all)
+        d_a_max = max(d_aterro_all)
+        d_a_mid = (d_a_min + d_a_max) / 2.0
+
+        txt_vol_rea  = "REALOCADO: {:.2f} m³".format(vol_aterro_geo).replace('.', ',')
+        txt_area_rea = "Área: {:.2f} m²".format(area_total_aterro).replace('.', ',')
+        if abs(largura_secao - 1.0) > 0.01:
+            txt_area_rea += " | L={:.1f}m".format(largura_secao).replace('.', ',')
+
+        w_est_a = max(len(txt_vol_rea), len(txt_area_rea)) * 0.44 * s + 1.7 * s
+        x_box_a = orig_x + d_a_mid
+        x_box_a = min(orig_x + total_ext - w_est_a / 2.0 - 0.5 * s, x_box_a)
+        y_box_a = orig_y - 2.5 * s - 1.2 * s
+
+        geoms_box_a, (w_a, h_a) = make_callout_card(x_box_a, y_box_a, txt_vol_rea, txt_area_rea, s)
+        cotas_projeto_geoms.extend(geoms_box_a)
+
+        # Linha guia conectando a base do datum à caixa
+        p_box_top = rg.Point3d(x_box_a, y_box_a + h_a / 2.0, 0.0)
+        p_datum_conn = rg.Point3d(x_box_a, orig_y, 0.0)
+        linha_guia_a = rg.LineCurve(p_box_top, p_datum_conn)
+        cotas_projeto_geoms.append(linha_guia_a)
 
     # =========================================================================
     # 5. MONTAGEM DO DESENHO COMPLETO DE ACORDO COM O SELETOR
