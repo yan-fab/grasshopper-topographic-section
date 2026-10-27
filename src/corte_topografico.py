@@ -992,6 +992,48 @@ def make_mass_haul_banner(center_x, center_y, label_prev, label_next, dist_val, 
 
     return geoms, (w_box, h_box)
 
+def get_terrain_u_range(geoms_terreno, u_corte):
+    """Calcula a extensão mínima e máxima das curvas de nível/terreno projetadas no vetor transversal u_corte."""
+    u_vals = []
+    for g in geoms_terreno:
+        if g is None: continue
+        try:
+            bb = g.GetBoundingBox(True) if hasattr(g, 'GetBoundingBox') else None
+            if bb and bb.IsValid:
+                corners = [
+                    (bb.Min.X, bb.Min.Y),
+                    (bb.Min.X, bb.Max.Y),
+                    (bb.Max.X, bb.Min.Y),
+                    (bb.Max.X, bb.Max.Y)
+                ]
+                for cx, cy in corners:
+                    u_vals.append(cx * u_corte.X + cy * u_corte.Y)
+        except: pass
+
+        if isinstance(g, rg.Curve):
+            try:
+                p0 = g.PointAtStart
+                p1 = g.PointAtEnd
+                u_vals.append(p0.X * u_corte.X + p0.Y * u_corte.Y)
+                u_vals.append(p1.X * u_corte.X + p1.Y * u_corte.Y)
+                dom = g.Domain
+                t0 = getattr(dom, 'Min', getattr(dom, 'T0', 0.0))
+                t1 = getattr(dom, 'Max', getattr(dom, 'T1', 1.0))
+                for k in range(1, 10):
+                    pt = g.PointAt(t0 + (k / 10.0) * (t1 - t0))
+                    u_vals.append(pt.X * u_corte.X + pt.Y * u_corte.Y)
+            except: pass
+        elif isinstance(g, rg.Mesh):
+            try:
+                for v in g.Vertices:
+                    u_vals.append(v.X * u_corte.X + v.Y * u_corte.Y)
+            except: pass
+        elif isinstance(g, rg.Point3d):
+            u_vals.append(g.X * u_corte.X + g.Y * u_corte.Y)
+    if u_vals:
+        return min(u_vals), max(u_vals)
+    return None, None
+
 # =============================================================================
 # AVALIAÇÃO ANALÍTICA DE UMA SEÇÃO TRANSVERSAL INDIVIDUAL
 # =============================================================================
@@ -1118,27 +1160,31 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
             if abs(d - clean_pts[-1][0]) > 0.05 or abs(pt.Z - clean_pts[-1][1].Z) > 0.02:
                 clean_pts.append((d, pt))
 
-    # Garantia de fechamento das pontas d = 0.0 e d = L_horiz sem extrapolação perigosa (Zero-Spike Clamping)
-    if clean_pts:
-        if clean_pts[0][0] > 0.01:
-            z_ini = clean_pts[0][1].Z
-            clean_pts.insert(0, (0.0, rg.Point3d(p_start.X, p_start.Y, z_ini)))
-        else:
-            clean_pts[0] = (0.0, clean_pts[0][1])
+    # DELIMITAÇÃO ESTRITA ÀS CURVAS DE NÍVEL (Fim das Curvas de Nível é o Limite Real do Perfil)
+    # Elimina completamente a extrapolação plana e falsas áreas de corte/aterro além das curvas de nível
+    if len(clean_pts) >= 2:
+        d_terrain_start = clean_pts[0][0]
+        d_terrain_end = clean_pts[-1][0]
+        total_ext = d_terrain_end - d_terrain_start
 
-        if clean_pts[-1][0] < L_horiz - 0.01:
-            z_fim = clean_pts[-1][1].Z
-            clean_pts.append((L_horiz, rg.Point3d(p_end.X, p_end.Y, z_fim)))
+        if total_ext > 0.1:
+            # Normaliza clean_pts para que o perfil 2D e o DATUM comecem na estaca 0.0 (primeira curva de nível)
+            # e terminem exatamente na estaca total_ext (última curva de nível)
+            clean_pts = [(d - d_terrain_start, pt) for d, pt in clean_pts]
+            if intersec_axes:
+                intersec_axes = [(item[0] - d_terrain_start, item[1], item[2]) for item in intersec_axes]
         else:
-            clean_pts[-1] = (L_horiz, clean_pts[-1][1])
+            total_ext = L_horiz
     else:
         valid_zs = []
         for g in geoms_terreno:
-            bb = g.GetBoundingBox(True)
-            if bb.IsValid and abs(bb.Max.Z - bb.Min.Z) > 0.01:
-                valid_zs.append((bb.Min.Z + bb.Max.Z) / 2.0)
-            elif bb.IsValid and abs(bb.Min.Z) > 1.0:
-                valid_zs.append(bb.Min.Z)
+            try:
+                bb = g.GetBoundingBox(True) if hasattr(g, 'GetBoundingBox') else g.GetBoundingBox()
+                if bb.IsValid and abs(bb.Max.Z - bb.Min.Z) > 0.01:
+                    valid_zs.append((bb.Min.Z + bb.Max.Z) / 2.0)
+                elif bb.IsValid and abs(bb.Min.Z) > 1.0:
+                    valid_zs.append(bb.Min.Z)
+            except: pass
 
         z_ref = (sum(valid_zs) / float(len(valid_zs))) if valid_zs else 0.0
 
@@ -1146,18 +1192,21 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
         best_d = 1e12
         for g in geoms_terreno:
             if isinstance(g, rg.Curve):
-                rc, t_cl = g.ClosestPoint(p_mid_c)
-                if rc:
-                    pt_cl = g.PointAt(t_cl)
-                    dist_xy = math.hypot(pt_cl.X - p_mid_c.X, pt_cl.Y - p_mid_c.Y)
-                    if dist_xy < best_d:
-                        best_d = dist_xy
-                        z_ref = pt_cl.Z
+                try:
+                    rc, t_cl = g.ClosestPoint(p_mid_c)
+                    if rc:
+                        pt_cl = g.PointAt(t_cl)
+                        dist_xy = math.hypot(pt_cl.X - p_mid_c.X, pt_cl.Y - p_mid_c.Y)
+                        if dist_xy < best_d:
+                            best_d = dist_xy
+                            z_ref = pt_cl.Z
+                except: pass
 
         clean_pts = [
             (0.0, rg.Point3d(p_start.X, p_start.Y, z_ref)),
             (L_horiz, rg.Point3d(p_end.X, p_end.Y, z_ref))
         ]
+        total_ext = L_horiz
 
     total_ext = clean_pts[-1][0] if clean_pts else L_horiz
     crv_3d = rg.PolylineCurve([p[1] for p in clean_pts])
@@ -1199,7 +1248,9 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
         # 1. Se CurvaProjeto for fornecida
         if curva_greide_in is not None:
             c_dom = curva_greide_in.Domain
-            t_greide = c_dom.Min + (d_val / max(total_ext, 1e-6)) * (c_dom.Max - c_dom.Min)
+            t0 = getattr(c_dom, 'Min', getattr(c_dom, 'T0', 0.0))
+            t1 = getattr(c_dom, 'Max', getattr(c_dom, 'T1', 1.0))
+            t_greide = t0 + (d_val / max(total_ext, 1e-6)) * (t1 - t0)
             pt_g = curva_greide_in.PointAt(t_greide)
             if abs(pt_g.Z) > 1e-4:
                 return pt_g.Z
@@ -1437,6 +1488,11 @@ def run():
         if fator_k <= 0.5: fator_k = 1.20
     except: fator_k = 1.20
 
+    geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
+    if not geoms_terreno:
+        msg = "⚠️ Nenhuma geometria válida encontrada na entrada 'Terreno'. Conecte curvas de nível (Curves), malha (Mesh) ou superfície de terreno."
+        return [], [], [], [], [], [msg]
+
     # Processamento das linhas de corte transversais
     lista_linhas_raw = [to_rhino_curve(c) for c in to_list(raw_linhas) if to_rhino_curve(c) is not None]
     if not lista_linhas_raw:
@@ -1447,12 +1503,7 @@ def run():
     #    "DE CIMA PARA BAIXO E DA ESQUERDA PARA A DIREITA"
     # =========================================================================
 
-    # 0.1 Processamento das linhas de corte transversais
-    lista_linhas_raw = [to_rhino_curve(c) for c in to_list(raw_linhas) if to_rhino_curve(c) is not None]
-    if not lista_linhas_raw:
-        raise ValueError("LinhasCorte inválidas ou não conectadas. Forneça ao menos uma curva de corte.")
-
-    # Determinação do vetor transversal médio (U)
+    # 0.1 Determinação do vetor transversal médio (U)
     ux_sum = 0.0
     uy_sum = 0.0
     for c in lista_linhas_raw:
@@ -1508,15 +1559,20 @@ def run():
     lista_linhas.sort(key=get_sec_proj_down)
 
     # 0.2 Envelopamento transversal do empreendimento ao longo de u_corte
-    u_proj_vals = []
-    for c in lista_linhas:
-        p0 = c.PointAtStart
-        p1 = c.PointAtEnd
-        u_proj_vals.append(p0.X * u_corte.X + p0.Y * u_corte.Y)
-        u_proj_vals.append(p1.X * u_corte.X + p1.Y * u_corte.Y)
-
-    u_min_aligned = min(u_proj_vals) - 6.0 * s
-    u_max_aligned = max(u_proj_vals) + 6.0 * s
+    # O limite do alinhamento das seções baseia-se prioritariamente no limite real das curvas de nível
+    u_terr_min, u_terr_max = get_terrain_u_range(geoms_terreno, u_corte)
+    if u_terr_min is not None and u_terr_max is not None and (u_terr_max - u_terr_min) > 1.0:
+        u_min_aligned = u_terr_min
+        u_max_aligned = u_terr_max
+    else:
+        u_proj_vals = []
+        for c in lista_linhas:
+            p0 = c.PointAtStart
+            p1 = c.PointAtEnd
+            u_proj_vals.append(p0.X * u_corte.X + p0.Y * u_corte.Y)
+            u_proj_vals.append(p1.X * u_corte.X + p1.Y * u_corte.Y)
+        u_min_aligned = min(u_proj_vals) - 6.0 * s
+        u_max_aligned = max(u_proj_vals) + 6.0 * s
 
     # 0.3 Construção dos eixos transversais alinhados definitivos (Seções A, B, C...)
     # Todos partem da esquerda (u_min_aligned) e vão para a direita (u_max_aligned),
@@ -1613,11 +1669,6 @@ def run():
     orig_y = ponto_base.Y if ponto_base else 0.0
 
     modo_cotas = parse_seletor(raw_seletor)
-    geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
-
-    if not geoms_terreno:
-        msg = "⚠️ Nenhuma geometria válida encontrada na entrada 'Terreno'. Conecte curvas de nível (Curves), malha (Mesh) ou superfície de terreno."
-        return [], [], [], [], [], [msg]
 
     # 1. Mapeamento prévio das interseções entre as seções e os eixos verticais
     num_secoes = len(lista_alinhadas)
