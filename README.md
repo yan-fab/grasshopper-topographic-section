@@ -1,6 +1,6 @@
 # Grasshopper Topographic & Earthwork Suite (NBR 6492 / AGPTEA) 📐🏔️🚜
 
-[![Release](https://img.shields.io/badge/release-v3.2.2-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.2)
+[![Release](https://img.shields.io/badge/release-v3.2.3-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.3)
 [![Rhino 8](https://img.shields.io/badge/Rhino-8%20%7C%20Grasshopper-0080FF.svg)](https://www.rhino3d.com/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B%20%7C%20GhPython-yellow.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -42,6 +42,13 @@ The suite provides two specialized, production-ready modules:
 ---
 
 ## 🌟 What's New in v3.1.0 & v3.0.0
+
+### Version 3.2.3
+- **High-Definition 3D BIM Surface & Viewport Cleanup**:
+  - Upgraded 3D terrain surface generation from 1D section strips to a high-density bidirectional $1.5\,\text{m} \times 1.5\,\text{m}$ quad mesh grid, capturing roads, cul-de-sacs, and terrain transitions with crisp detail.
+  - Removed vertical section cut slice curtains (`m_3d_corte_sec`) from the primary 3D output `a` (moving them to dedicated outputs `Fatias3D` / `SectionSlices3D`), eliminating giant vertical obstruction walls in the 3D viewport.
+  - Automatically drapes road curb outlines and site boundary curves onto the 3D terrain surface with $+0.05\,\text{m}$ vertical relief.
+  - Enforced $+0.15\,\text{m}$ 3D physical elevation for sidewalks above the roadway pavement.
 
 ### Version 3.2.2 (Hotfix)
 - **Resolved Runtime `KeyError: 'label'` in Memorial Report**:

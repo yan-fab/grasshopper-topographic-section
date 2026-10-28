@@ -3405,43 +3405,69 @@ def run():
             ux_a = dx_a / max(La, 1e-4); uy_a = dy_a / max(La, 1e-4)
             ux_b = dx_b / max(Lb, 1e-4); uy_b = dy_b / max(Lb, 1e-4)
 
-            n_divs = max(int(max(La, Lb) / 1.5), 25)
+            d_ab = distancias_eixos[i] if i < len(distancias_eixos) else 20.0
+            n_trans = max(int(max(La, Lb) / 1.5), 30)
+            n_long  = max(int(d_ab / 1.5), 12)
 
-            for k in range(n_divs):
-                ta = k / float(n_divs)
-                tb = (k + 1) / float(n_divs)
+            def eval_surf_pt(u_param, v_param):
+                da = u_param * La
+                db = u_param * Lb
+                xa = p_sa.X + ux_a * da; ya = p_sa.Y + uy_a * da
+                xb = p_sb.X + ux_b * db; yb = p_sb.Y + uy_b * db
+                px = (1.0 - v_param) * xa + v_param * xb
+                py = (1.0 - v_param) * ya + v_param * yb
+                
+                za_pr = s_data_a['get_proj_z'](da)
+                zb_pr = s_data_b['get_proj_z'](db)
+                z_pr = (1.0 - v_param) * za_pr + v_param * zb_pr
+                
+                za_tn = interpolate_terrain_z(da, s_data_a['clean_pts'])
+                zb_tn = interpolate_terrain_z(db, s_data_b['clean_pts'])
+                z_tn = (1.0 - v_param) * za_tn + v_param * zb_tn
+                
+                return rg.Point3d(px, py, z_pr), z_tn
 
-                da0 = ta * La; da1 = tb * La
-                db0 = ta * Lb; db1 = tb * Lb
+            for m in range(n_long):
+                v0 = m / float(n_long)
+                v1 = (m + 1) / float(n_long)
 
-                p00 = rg.Point3d(p_sa.X + ux_a * da0, p_sa.Y + uy_a * da0, s_data_a['get_proj_z'](da0))
-                p10 = rg.Point3d(p_sa.X + ux_a * da1, p_sa.Y + uy_a * da1, s_data_a['get_proj_z'](da1))
-                p11 = rg.Point3d(p_sb.X + ux_b * db1, p_sb.Y + uy_b * db1, s_data_b['get_proj_z'](db1))
-                p01 = rg.Point3d(p_sb.X + ux_b * db0, p_sb.Y + uy_b * db0, s_data_b['get_proj_z'](db0))
+                for k in range(n_trans):
+                    u0 = k / float(n_trans)
+                    u1 = (k + 1) / float(n_trans)
 
-                t00 = rg.Point3d(p00.X, p00.Y, interpolate_terrain_z(da0, s_data_a['clean_pts']))
-                t10 = rg.Point3d(p10.X, p10.Y, interpolate_terrain_z(da1, s_data_a['clean_pts']))
-                t11 = rg.Point3d(p11.X, p11.Y, interpolate_terrain_z(db1, s_data_b['clean_pts']))
-                t01 = rg.Point3d(p01.X, p01.Y, interpolate_terrain_z(db0, s_data_b['clean_pts']))
+                    p00, t00_z = eval_surf_pt(u0, v0)
+                    p10, t10_z = eval_surf_pt(u1, v0)
+                    p11, t11_z = eval_surf_pt(u1, v1)
+                    p01, t01_z = eval_surf_pt(u0, v1)
 
-                z_pr_m = (p00.Z + p10.Z + p11.Z + p01.Z) / 4.0
-                z_tn_m = (t00.Z + t10.Z + t11.Z + t01.Z) / 4.0
-                diff_z = z_tn_m - z_pr_m
-                p_cen_m = rg.Point3d((p00.X + p10.X + p11.X + p01.X)/4.0, (p00.Y + p10.Y + p11.Y + p01.Y)/4.0, z_pr_m)
+                    cx = (p00.X + p10.X + p11.X + p01.X) / 4.0
+                    cy = (p00.Y + p10.Y + p11.Y + p01.Y) / 4.0
+                    z_pr_m = (p00.Z + p10.Z + p11.Z + p01.Z) / 4.0
+                    z_tn_m = (t00_z + t10_z + t11_z + t01_z) / 4.0
+                    diff_z = z_tn_m - z_pr_m
+                    p_cen_m = rg.Point3d(cx, cy, z_pr_m)
 
-                in_road, in_pista, in_sw = is_point_in_road(p_cen_m, road_polygons, tol)
-                if in_road:
-                    if in_sw:
-                        quads_sup_3d_calcada.append([p00, p10, p11, p01])
+                    in_road, in_pista, in_sw = is_point_in_road(p_cen_m, road_polygons, tol)
+                    if in_road:
+                        if in_sw:
+                            # Pedestrian Sidewalk with +0.15m curb step
+                            sw_h = 0.15
+                            quads_sup_3d_calcada.append([
+                                rg.Point3d(p00.X, p00.Y, p00.Z + sw_h),
+                                rg.Point3d(p10.X, p10.Y, p10.Z + sw_h),
+                                rg.Point3d(p11.X, p11.Y, p11.Z + sw_h),
+                                rg.Point3d(p01.X, p01.Y, p01.Z + sw_h)
+                            ])
+                        else:
+                            # Asphalt Pavement
+                            quads_sup_3d_asfalto.append([p00, p10, p11, p01])
                     else:
-                        quads_sup_3d_asfalto.append([p00, p10, p11, p01])
-                else:
-                    if diff_z > 0.03:
-                        quads_sup_3d_corte.append([p00, p10, p11, p01])
-                    elif diff_z < -0.03:
-                        quads_sup_3d_aterro.append([p00, p10, p11, p01])
-                    else:
-                        quads_sup_3d_neutro.append([p00, p10, p11, p01])
+                        if diff_z > 0.04:
+                            quads_sup_3d_corte.append([p00, p10, p11, p01])
+                        elif diff_z < -0.04:
+                            quads_sup_3d_aterro.append([p00, p10, p11, p01])
+                        else:
+                            quads_sup_3d_neutro.append([p00, p10, p11, p01])
 
     m_3d_corte_sec  = create_colored_mesh(quads_3d_corte_secoes, cor_corte)
     m_3d_aterro_sec = create_colored_mesh(quads_3d_aterro_secoes, cor_aterro)
@@ -3452,7 +3478,7 @@ def run():
     m_3d_calcada    = create_colored_mesh(quads_sup_3d_calcada, cor_calcada)
 
     mesh_terreno_projetado = rg.Mesh()
-    for m_part in [m_3d_sup_corte, m_3d_sup_aterro, m_3d_sup_neutro, m_3d_asfalto, m_3d_calcada]:
+    for m_part in [m_3d_asfalto, m_3d_calcada, m_3d_sup_corte, m_3d_sup_aterro, m_3d_sup_neutro]:
         if m_part and getattr(m_part, 'IsValid', False):
             mesh_terreno_projetado.Append(m_part)
     if mesh_terreno_projetado.Faces.Count > 0:
@@ -3466,41 +3492,76 @@ def run():
     else:
         mesh_terreno_projetado = None
 
-    # Full 3D Earthwork Model Compilation (3D Perspective View)
+    # Full 3D BIM Presentation Model (Clean surface + draped road/curb outlines)
+    # Notice: Vertical slice walls (m_3d_corte_sec / m_3d_aterro_sec) are separated into dedicated outputs
+    # so they do NOT obstruct the 3D surface view!
     modelo_3d_completo = []
-    for m_part in [m_3d_sup_corte, m_3d_sup_aterro, m_3d_sup_neutro, m_3d_asfalto, m_3d_calcada, m_3d_corte_sec, m_3d_aterro_sec]:
-        if m_part and getattr(m_part, 'IsValid', False):
-            modelo_3d_completo.append(m_part)
+    if mesh_terreno_projetado and getattr(mesh_terreno_projetado, 'IsValid', False):
+        modelo_3d_completo.append(mesh_terreno_projetado)
+
+    # 3D Draped Road Network Outlines (Curb edges and cul-de-sacs with +0.05m relief)
+    draped_road_curves_3d = []
+    for p_info in road_polygons:
+        r_crv = p_info['curve']
+        pts_3d_r = []
+        n_pts_r = max(int(r_crv.GetLength() / 1.0), 30)
+        for i_pt in range(n_pts_r + 1):
+            t_crv = r_crv.Domain.Min + (i_pt / float(n_pts_r)) * (r_crv.Domain.Max - r_crv.Domain.Min)
+            pt_xy = r_crv.PointAt(t_crv)
+            best_dist = 1e9
+            best_z = 0.0
+            for idx_s, c_aln in enumerate(lista_alinhadas):
+                rc_cp, t_cp = c_aln.ClosestPoint(pt_xy)
+                if rc_cp:
+                    cp_pt = c_aln.PointAt(t_cp)
+                    dist_s = pt_xy.DistanceTo(cp_pt)
+                    if dist_s < best_dist:
+                        best_dist = dist_s
+                        u_dir = c_aln.PointAtEnd - c_aln.PointAtStart
+                        u_dir.Unitize()
+                        d_st = (pt_xy.X - c_aln.PointAtStart.X) * u_dir.X + (pt_xy.Y - c_aln.PointAtStart.Y) * u_dir.Y
+                        d_st_clamp = max(0.0, min(sec_data_list[idx_s]['total_ext'], d_st))
+                        best_z = sec_data_list[idx_s]['get_proj_z'](d_st_clamp)
+            pts_3d_r.append(rg.Point3d(pt_xy.X, pt_xy.Y, best_z + 0.05 * s))
+        if len(pts_3d_r) >= 2:
+            crv_3d_road = rg.PolylineCurve(pts_3d_r)
+            if crv_3d_road and crv_3d_road.IsValid:
+                draped_road_curves_3d.append(crv_3d_road)
+                modelo_3d_completo.append(crv_3d_road)
+
+    # 3D Draped Boundary Curves (if supplied)
+    if raw_projeto is not None:
+        for c_item in to_list(raw_projeto):
+            c_b = to_rhino_curve(c_item)
+            if c_b and c_b.IsValid:
+                pts_b = []
+                n_b = max(int(c_b.GetLength() / 2.0), 30)
+                for i_pt in range(n_b + 1):
+                    tb = c_b.Domain.Min + (i_pt / float(n_b)) * (c_b.Domain.Max - c_b.Domain.Min)
+                    pt_xy = c_b.PointAt(tb)
+                    best_dist = 1e9
+                    best_z = 0.0
+                    for idx_s, c_aln in enumerate(lista_alinhadas):
+                        rc_cp, t_cp = c_aln.ClosestPoint(pt_xy)
+                        if rc_cp:
+                            cp_pt = c_aln.PointAt(t_cp)
+                            dist_s = pt_xy.DistanceTo(cp_pt)
+                            if dist_s < best_dist:
+                                best_dist = dist_s
+                                u_dir = c_aln.PointAtEnd - c_aln.PointAtStart
+                                u_dir.Unitize()
+                                d_st = (pt_xy.X - c_aln.PointAtStart.X) * u_dir.X + (pt_xy.Y - c_aln.PointAtStart.Y) * u_dir.Y
+                                d_st_clamp = max(0.0, min(sec_data_list[idx_s]['total_ext'], d_st))
+                                best_z = sec_data_list[idx_s]['get_proj_z'](d_st_clamp)
+                    pts_b.append(rg.Point3d(pt_xy.X, pt_xy.Y, best_z + 0.08 * s))
+                if len(pts_b) >= 2:
+                    crv_draped_b = rg.PolylineCurve(pts_b)
+                    if crv_draped_b and crv_draped_b.IsValid:
+                        modelo_3d_completo.append(crv_draped_b)
 
     for crv in greides_3d_all:
         if crv and getattr(crv, 'IsValid', False):
             modelo_3d_completo.append(crv)
-
-    for crv in linhas_3d_all:
-        if crv and getattr(crv, 'IsValid', False):
-            modelo_3d_completo.append(crv)
-
-    # 3D Draped Road Network Outlines (Curb edges and cul-de-sacs with +0.04m relief)
-    for p_info in road_polygons:
-        r_crv = p_info['curve']
-        pts_3d_r = []
-        n_pts_r = max(int(r_crv.GetLength() / 1.5), 30)
-        for i_pt in range(n_pts_r + 1):
-            t_crv = r_crv.Domain.Min + (i_pt / float(n_pts_r)) * (r_crv.Domain.Max - r_crv.Domain.Min)
-            pt_xy = r_crv.PointAt(t_crv)
-            z_hit_found = None
-            if mesh_terreno_projetado and mesh_terreno_projetado.Faces.Count > 0:
-                ray_r = rg.Ray3d(rg.Point3d(pt_xy.X, pt_xy.Y, 2000.0), -rg.Vector3d.ZAxis)
-                h_ray = rg.Intersect.Intersection.MeshRay(mesh_terreno_projetado, ray_r)
-                if h_ray >= 0:
-                    z_hit_found = 2000.0 - h_ray
-            if z_hit_found is None:
-                z_hit_found = sum(sd['get_proj_z'](sd['total_ext']/2.0) for sd in sec_data_list)/float(len(sec_data_list))
-            pts_3d_r.append(rg.Point3d(pt_xy.X, pt_xy.Y, z_hit_found + 0.04 * s))
-        if len(pts_3d_r) >= 2:
-            crv_3d_road = rg.PolylineCurve(pts_3d_r)
-            if crv_3d_road and crv_3d_road.IsValid:
-                modelo_3d_completo.append(crv_3d_road)
 
     # Dynamic outputs for optional Grasshopper connections (bilingual aliases)
     globals()['Viario3D'] = [m for m in [m_3d_asfalto, m_3d_calcada] if m and getattr(m, 'IsValid', False)]
