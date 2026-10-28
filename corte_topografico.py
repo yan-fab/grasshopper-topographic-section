@@ -402,12 +402,15 @@ LOWER_STROKES = {
 
 def generate_stroke_text(text_str, pt, height, justification=None, plane=None):
     curves = []
+    if text_str is None: return curves
+    text_str = str(text_str)
     if not text_str: return curves
 
     char_widths = []
     char_data = []
 
-    for ch in text_str:
+    for raw_ch in text_str:
+        ch = str(raw_ch)
         accent_type = None
         base_char = ch
         if ch in 'Áá':   base_char, accent_type = ('A' if ch.isupper() else 'a'), 'acute'
@@ -513,6 +516,8 @@ def make_text_geometry(text_str, pt, height, justification=None, s=1.0, plane=No
     """Generates clean, lightweight 2D vector curves for technical text (Stroke Vector Font Engine).
     100% autonomous execution in Python, immune to null Viewport or DimStyle crashes in Rhino 8 / .NET Core.
     """
+    if text_str is None: return []
+    text_str = str(text_str)
     if not text_str: return []
     return generate_stroke_text(text_str, pt, height, justification, plane)
 
@@ -520,6 +525,8 @@ make_text_entity = make_text_geometry
 
 def get_stroke_text_width(text_str, height):
     """Calculates the exact horizontal width that the vector text will occupy."""
+    if text_str is None: return 0.0
+    text_str = str(text_str)
     if not text_str: return 0.0
     total_w = 0.0
     for ch in text_str:
@@ -671,8 +678,20 @@ def draw_nbr_level_marker(x, y, text_str, s=1.0):
 # MULTI-AXIS SUPPORT FUNCTIONS: PLAN VIEW, NBR BUBBLES AND DIMENSIONS
 # =============================================================================
 
-def draw_plan_axis_bubble(pt, dir_vec, label_str, s=1.0):
+def draw_plan_axis_bubble(pt, arg2, arg3=None, s=1.0):
     """Generates NBR 6492 circular axis bubble at cut line ends in plan view with sight arrow."""
+    # Robustly handle both parameter orders:
+    # (pt, label_str, dir_vec, s) or (pt, dir_vec, label_str, s)
+    if isinstance(arg2, (rg.Vector3d, rg.Vector3f)):
+        dir_vec = arg2
+        label_str = str(arg3) if arg3 is not None else ""
+    elif isinstance(arg3, (rg.Vector3d, rg.Vector3f)):
+        label_str = str(arg2) if arg2 is not None else ""
+        dir_vec = arg3
+    else:
+        label_str = str(arg2) if arg2 is not None else ""
+        dir_vec = arg3
+
     geoms = []
     p_flat = rg.Point3d(pt.X, pt.Y, 0.0)
     r = 1.35 * s
@@ -755,7 +774,12 @@ def draw_plan_dimension(p1, p2, dist_val, s=1.0, offset_dir=None, offset_dist=0.
     # Text position slightly offset outward from the dimension line
     p_mid = (p1_cota + p2_cota) / 2.0 + off_v * (0.85 * s)
     plane_txt = rg.Plane(p_mid, u_txt, v_txt)
-    txt_str = "D = {:.2f}m".format(dist_val).replace('.', ',')
+    if isinstance(dist_val, str):
+        txt_str = dist_val
+    elif isinstance(dist_val, (int, float)):
+        txt_str = "D = {:.2f}m".format(dist_val).replace('.', ',')
+    else:
+        txt_str = str(dist_val)
     txt_cota = make_text_geometry(txt_str, p_mid, 0.85 * s, rg.TextJustification.MiddleCenter, s, plane_txt)
     if txt_cota: geoms.extend(txt_cota)
 
