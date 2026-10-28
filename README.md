@@ -1,6 +1,6 @@
 # Grasshopper Topographic & Earthwork Suite (NBR 6492 / AGPTEA) 📐🏔️🚜
 
-[![Release](https://img.shields.io/badge/release-v3.2.3-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.3)
+[![Release](https://img.shields.io/badge/release-v3.2.4-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.4)
 [![Rhino 8](https://img.shields.io/badge/Rhino-8%20%7C%20Grasshopper-0080FF.svg)](https://www.rhino3d.com/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B%20%7C%20GhPython-yellow.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -42,6 +42,20 @@ The suite provides two specialized, production-ready modules:
 ---
 
 ## 🌟 What's New in v3.1.0 & v3.0.0
+
+### Version 3.2.4
+- **Ultra-Robust Roadway & BIM Pavement Visualization**:
+  - **Pure Math Ray-Casting (point_in_polygon_2d)**: Replaced fragile RhinoCommon curve containment with mathematical 2D ray-casting, rendering cul-de-sacs, irregular perimeters, and concave road networks with 100% precision.
+  - **Automatic Multi-Curve Welding (rg.Curve.JoinCurves)**: Ingests fragmented CAD drawings (unjoined lines, arcs, polylines) and welds them automatically with a 2.5m tolerance bridge.
+  - **Automatic Entrance Closure**: Detects street openings at site boundaries (up to 35m) and closes them across property lines to form complete closed road corridors.
+  - **Open Centerline & Curb Buffer**: Supports open centerlines and curb lines with a default 4.70m half-width buffer (9.40m standard right-of-way).
+  - **Multi-Type Geometry Ingestion**: Accepts Curve, Polyline, Line, Arc, Brep, Surface, and Mesh without requiring pre-conversion in Rhino.
+  - **Realistic BIM Pavement Styling**:
+    - Dark charcoal matte asphalt (RGB 45, 47, 52) with +0.03m micro-relief to prevent Z-fighting with raw terrain.
+    - Clean concrete sidewalks (RGB 218, 220, 224) with +0.18m elevation (15cm physical curb step above asphalt).
+    - Dual 3D draped road outlines: outer street boundary (alinhamento predial) at +0.08m and inner curb line (meio-fio/guia) at +0.12m.
+    - Primary output  emits distinct surface parts so asphalt, sidewalks, and earthwork slopes can be baked and inspected independently.
+    - New dedicated outputs: Viario3D, Asfalto3D, Calcadas3D, BordasViario3D, MeioFio3D, Guias3D.
 
 ### Version 3.2.3
 - **High-Definition 3D BIM Surface & Viewport Cleanup**:

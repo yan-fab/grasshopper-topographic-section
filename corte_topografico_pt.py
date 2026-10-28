@@ -310,77 +310,282 @@ def create_colored_mesh(quads_pts, color):
     return m
 
 # =============================================================================
-# ROAD NETWORK & DRIVABILITY ENGINE (VIÁRIO CARROÇÁVEL NBR / DNIT)
+# MOTOR DE VIÁRIO E TRAFEGABILIDADE (VIÁRIO CARROÇÁVEL NBR / DNIT)
 # =============================================================================
+
+def point_in_polygon_2d(x, y, poly_pts):
+    """
+    Algoritmo padrão de Ray-Casting para contenção de ponto em polígono 2D.
+    100% imune a tolerâncias do RhinoCommon e orientações de curva,
+    suportando geometrias côncavas, balões de retorno e poligonais complexas de CAD.
+    """
+    if not poly_pts or len(poly_pts) < 3:
+        return False
+    inside = False
+    n = len(poly_pts)
+    j = n - 1
+    for i in range(n):
+        xi, yi = poly_pts[i][0], poly_pts[i][1]
+        xj, yj = poly_pts[j][0], poly_pts[j][1]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+def point_distance_to_segments(x, y, pts):
+    """
+    Calcula a distância euclidiana mínima de um ponto 2D (x, y) a uma lista de segmentos de polilinha.
+    Utilizado para classificação de calçada vs pista de asfalto e cálculo de buffers de corredor.
+    """
+    if not pts or len(pts) < 2:
+        return 9999.0
+    min_dist = float('inf')
+    n = len(pts)
+    for i in range(n - 1):
+        x1, y1 = pts[i][0], pts[i][1]
+        x2, y2 = pts[i+1][0], pts[i+1][1]
+        dx = x2 - x1
+        dy = y2 - y1
+        L2 = dx*dx + dy*dy
+        if L2 < 1e-12:
+            dist = math.hypot(x - x1, y - y1)
+        else:
+            t = max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / L2))
+            proj_x = x1 + t * dx
+            proj_y = y1 + t * dy
+            dist = math.hypot(x - proj_x, y - proj_y)
+        if dist < min_dist:
+            min_dist = dist
+    return min_dist
 
 def sanitize_road_polygons(raw_viario, tol=0.001):
     """
-    Sanitizes, planarizes to XY, and validates closed road network polygons from CAD.
-    Supports single or multiple closed polylines/curves (roadway, sidewalks, cul-de-sacs).
+    Higieniza, projeta em XY, une e valida geometrias de malha viária de CAD/BIM/Civil 3D.
+    Suporta:
+      1. Poligonais/curvas fechadas únicas ou múltiplas (calçadas + pistas, lotes, balões de retorno).
+      2. Segmentos de curva de CAD desmembrados (linhas, arcos, polilinhas) - unidos via rg.Curve.JoinCurves.
+      3. Balões de retorno/ruas abertas na divisa do terreno - fechadas automaticamente na embocadura (até 35m).
+      4. Eixos de rua ou guias abertas - convertidos em corredores trafegáveis com largura de faixa.
+      5. Breps, Superfícies e Malhas - extrai automaticamente as bordas de contorno.
+    Retorna lista de dicionários com arrays discretos de vértices 2D para ray-casting de alta velocidade.
     """
     if not raw_viario:
         return []
-    polys = []
-    for item in to_list(raw_viario):
+
+    def extract_curves(item):
+        extracted = []
+        if item is None:
+            return extracted
+        if hasattr(item, "Value"):
+            val = getattr(item, "Value", None)
+            if val is not None and val is not item:
+                return extract_curves(val)
+        if isinstance(item, (list, tuple)):
+            for sub in item:
+                extracted.extend(extract_curves(sub))
+            return extracted
+
         c = to_rhino_curve(item)
-        if c is None: continue
-        c_xy = rg.Curve.ProjectToPlane(c, rg.Plane.WorldXY)
-        if c_xy is None: c_xy = c
-        if not c_xy.IsClosed:
+        if c is not None and c.IsValid:
+            extracted.append(c)
+            return extracted
+
+        if isinstance(item, rg.Brep):
+            naked = item.DuplicateNakedEdgeCurves(True, True)
+            if naked:
+                extracted.extend(naked)
+            else:
+                extracted.extend(item.DuplicateEdgeCurves(True))
+            return extracted
+
+        if isinstance(item, rg.Surface):
+            b = item.ToBrep()
+            if b:
+                naked = b.DuplicateNakedEdgeCurves(True, True)
+                extracted.extend(naked if naked else b.DuplicateEdgeCurves(True))
+            return extracted
+
+        if isinstance(item, rg.Mesh):
             try:
-                c_xy.MakeClosed(tol * 10.0)
+                naked_polys = item.GetNakedEdges()
+                if naked_polys:
+                    for poly in naked_polys:
+                        extracted.append(poly.ToPolylineCurve())
             except:
                 pass
-            if not c_xy.IsClosed and c_xy.PointAtStart.DistanceTo(c_xy.PointAtEnd) < 2.5:
-                l_close = rg.LineCurve(c_xy.PointAtEnd, c_xy.PointAtStart)
-                joined = rg.Curve.JoinCurves([c_xy, l_close])
-                if joined and len(joined) > 0 and joined[0].IsClosed:
-                    c_xy = joined[0]
-        if c_xy and c_xy.IsValid:
-            bb = c_xy.GetBoundingBox(True)
-            area_val = 0.0
+            return extracted
+
+        try:
+            b = rs.coercebrep(item)
+            if b:
+                naked = b.DuplicateNakedEdgeCurves(True, True)
+                extracted.extend(naked if naked else b.DuplicateEdgeCurves(True))
+                return extracted
+        except:
+            pass
+
+        return extracted
+
+    raw_curves = extract_curves(raw_viario)
+    if not raw_curves:
+        return []
+
+    xy_curves = []
+    for c in raw_curves:
+        if c is None or not c.IsValid:
+            continue
+        try:
+            c_xy = rg.Curve.ProjectToPlane(c, rg.Plane.WorldXY)
+            if c_xy is not None and c_xy.IsValid:
+                xy_curves.append(c_xy)
+            else:
+                xy_curves.append(c)
+        except:
+            xy_curves.append(c)
+
+    if not xy_curves:
+        return []
+
+    # 1. União automática de curvas fragmentadas de CAD
+    joined_curves = []
+    if len(xy_curves) > 1:
+        try:
+            joined = rg.Curve.JoinCurves(xy_curves, 2.5)
+            if joined and len(joined) > 0:
+                joined_curves = list(joined)
+            else:
+                joined_curves = list(xy_curves)
+        except:
+            joined_curves = list(xy_curves)
+    else:
+        joined_curves = list(xy_curves)
+
+    # 2. Fechamento automático de curvas quase-fechadas (ex: balão com embocadura aberta na divisa)
+    processed_curves = []
+    for c in joined_curves:
+        if c is None or not c.IsValid:
+            continue
+        if c.IsClosed:
+            processed_curves.append(c)
+            continue
+        d_ends = c.PointAtStart.DistanceTo(c.PointAtEnd)
+        # No desenho viário, embocaduras de acesso na divisa do lote medem tipicamente de 6m a 35m
+        if d_ends <= 35.0:
+            closed_success = False
             try:
-                amp = rg.AreaMassProperties.Compute(c_xy)
+                c_copy = c.DuplicateCurve()
+                if c_copy.MakeClosed(d_ends + 0.1) and c_copy.IsClosed:
+                    processed_curves.append(c_copy)
+                    closed_success = True
+            except:
+                pass
+            if not closed_success:
+                try:
+                    l_close = rg.LineCurve(c.PointAtEnd, c.PointAtStart)
+                    rejoined = rg.Curve.JoinCurves([c, l_close], 0.5)
+                    if rejoined and len(rejoined) > 0 and rejoined[0].IsClosed:
+                        processed_curves.append(rejoined[0])
+                        closed_success = True
+                except:
+                    pass
+            if closed_success:
+                continue
+        processed_curves.append(c)
+
+    # 3. Discretização em arrays de vértices para cálculos ultra-rápidos (ray-casting e distância)
+    polys = []
+    for c in processed_curves:
+        if c is None or not c.IsValid:
+            continue
+        bb = c.GetBoundingBox(True)
+        is_closed = bool(c.IsClosed)
+
+        length = c.GetLength()
+        n_samples = max(int(length / 1.0), 30)
+        pts_2d = []
+        for i_pt in range(n_samples + 1):
+            t_pt = c.Domain.Min + (i_pt / float(n_samples)) * (c.Domain.Max - c.Domain.Min)
+            p_ev = c.PointAt(t_pt)
+            pts_2d.append((p_ev.X, p_ev.Y))
+
+        if is_closed and pts_2d and pts_2d[0] != pts_2d[-1]:
+            pts_2d.append(pts_2d[0])
+
+        area_val = 0.0
+        if is_closed:
+            try:
+                amp = rg.AreaMassProperties.Compute(c)
                 if amp: area_val = abs(amp.Area)
             except:
                 pass
-            polys.append({
-                'curve': c_xy,
-                'bbox': bb,
-                'area': area_val
-            })
-    polys.sort(key=lambda p: p['area'], reverse=True)
+            if area_val < 1e-4 and len(pts_2d) >= 3:
+                area_val = abs(sum(pts_2d[i][0]*pts_2d[i+1][1] - pts_2d[i+1][0]*pts_2d[i][1] for i in range(len(pts_2d)-1))) * 0.5
+
+        polys.append({
+            'curve': c,
+            'bbox': bb,
+            'bbox_xy': (bb.Min.X, bb.Min.Y, bb.Max.X, bb.Max.Y),
+            'pts_2d': pts_2d,
+            'is_closed': is_closed,
+            'area': area_val,
+            'half_width': 4.70  # Meia-largura padrão para corredores abertos (via padrão 9.40m)
+        })
+
+    polys.sort(key=lambda p: (1 if p['is_closed'] else 0, p['area']), reverse=True)
     return polys
 
 def is_point_in_road(pt, road_polygons, tol=0.001):
     """
-    Fast point-in-polygon check against closed road polygons using 2D BoundingBox pre-filtering.
-    Returns (is_inside, is_roadway_pista, is_sidewalk_calcada).
+    Motor ultra-robusto de contenção e classificação de ponto na malha viária.
+    Utiliza Ray-Casting para polígonos fechados e distância de buffer para eixos abertos.
+    Retorna: (esta_no_viario, eh_pista_asfalto, eh_calcada_pedestre)
     """
     if not road_polygons:
         return False, False, False
+
     px, py = pt.X, pt.Y
     pt_2d = rg.Point3d(px, py, 0.0)
 
+    # 1. Verificação de polígonos fechados (Ray-Casting + Buffer de calçada NBR)
     for p_info in road_polygons:
-        bb = p_info['bbox']
-        if bb.Min.X - tol <= px <= bb.Max.X + tol and bb.Min.Y - tol <= py <= bb.Max.Y + tol:
-            try:
-                rc = p_info['curve'].Contains(pt_2d, rg.Plane.WorldXY, tol)
-                if rc == rg.PointContainment.Inside:
-                    rc_cp, t_cp = p_info['curve'].ClosestPoint(pt_2d)
-                    dist_to_edge = pt_2d.DistanceTo(p_info['curve'].PointAt(t_cp)) if rc_cp else 2.0
-                    is_sidewalk = (dist_to_edge < 1.20)
-                    is_pista = not is_sidewalk
-                    return True, is_pista, is_sidewalk
-            except:
-                pass
+        if not p_info['is_closed']:
+            continue
+        min_x, min_y, max_x, max_y = p_info['bbox_xy']
+        if min_x - 0.05 <= px <= max_x + 0.05 and min_y - 0.05 <= py <= max_y + 0.05:
+            inside = point_in_polygon_2d(px, py, p_info['pts_2d'])
+            if not inside:
+                try:
+                    rc = p_info['curve'].Contains(pt_2d, rg.Plane.WorldXY, 0.01)
+                    if rc in (rg.PointContainment.Inside, rg.PointContainment.Coincident):
+                        inside = True
+                except:
+                    pass
+            if inside:
+                d_edge = point_distance_to_segments(px, py, p_info['pts_2d'])
+                # Faixa de passeio NBR 9050: 1.25m junto às bordas externas
+                is_sidewalk = (d_edge < 1.25)
+                is_pista = not is_sidewalk
+                return True, is_pista, is_sidewalk
+
+    # 2. Verificação de eixos/guias abertas (Buffer de proximidade)
+    for c_info in road_polygons:
+        if c_info['is_closed']:
+            continue
+        min_x, min_y, max_x, max_y = c_info['bbox_xy']
+        half_w = c_info.get('half_width', 4.70)
+        if min_x - half_w <= px <= max_x + half_w and min_y - half_w <= py <= max_y + half_w:
+            d_cor = point_distance_to_segments(px, py, c_info['pts_2d'])
+            if d_cor <= half_w:
+                is_sidewalk = (d_cor > half_w - 1.25)
+                is_pista = not is_sidewalk
+                return True, is_pista, is_sidewalk
+
     return False, False, False
 
 def compute_road_corridors_for_section(crv_corte, road_polygons, tol=0.001):
     """
-    Finds all road entry/exit station intervals [d_in, d_out] where a section cut line
-    crosses one or more closed road polygons (calçada + pista).
+    Localiza todos os intervalos de estaca [d_in, d_out] onde a linha de corte da seção
+    atravessa um ou mais polígonos de viário ou eixos de via (calçada + pista).
     """
     if not crv_corte or not road_polygons:
         return []
@@ -399,48 +604,64 @@ def compute_road_corridors_for_section(crv_corte, road_polygons, tol=0.001):
     corridors = []
 
     for p_info in road_polygons:
-        r_poly_xy = p_info['curve']
+        r_crv = p_info['curve']
         bb_r = p_info['bbox']
-        if bb_r.Max.X < bb_c.Min.X or bb_r.Min.X > bb_c.Max.X or bb_r.Max.Y < bb_c.Min.Y or bb_r.Min.Y > bb_c.Max.Y:
-            continue
 
-        events = rg.Intersect.Intersection.CurveCurve(crv_xy, r_poly_xy, tol, tol)
-        dists = []
-        if events:
-            for ev in events:
-                pt = ev.PointA
-                d = (pt.X - p_start.X) * ux + (pt.Y - p_start.Y) * uy
-                if -tol <= d <= L_h + tol:
-                    dists.append(max(0.0, min(L_h, d)))
+        if p_info['is_closed']:
+            if bb_r.Max.X < bb_c.Min.X or bb_r.Min.X > bb_c.Max.X or bb_r.Max.Y < bb_c.Min.Y or bb_r.Min.Y > bb_c.Max.Y:
+                continue
 
-        try:
-            if r_poly_xy.Contains(rg.Point3d(p_start.X, p_start.Y, 0.0), rg.Plane.WorldXY, tol) == rg.PointContainment.Inside:
+            events = rg.Intersect.Intersection.CurveCurve(crv_xy, r_crv, tol, tol)
+            dists = []
+            if events:
+                for ev in events:
+                    pt = ev.PointA
+                    d = (pt.X - p_start.X) * ux + (pt.Y - p_start.Y) * uy
+                    if -tol <= d <= L_h + tol:
+                        dists.append(max(0.0, min(L_h, d)))
+
+            if point_in_polygon_2d(p_start.X, p_start.Y, p_info['pts_2d']):
                 dists.append(0.0)
-        except: pass
-        try:
-            if r_poly_xy.Contains(rg.Point3d(p_end.X, p_end.Y, 0.0), rg.Plane.WorldXY, tol) == rg.PointContainment.Inside:
+            if point_in_polygon_2d(p_end.X, p_end.Y, p_info['pts_2d']):
                 dists.append(L_h)
-        except: pass
 
-        dists = sorted(list(set([round(d, 3) for d in dists])))
-        for k in range(0, len(dists) - 1, 2):
-            d1 = dists[k]
-            d2 = dists[k+1]
-            if d2 - d1 > 0.4:
-                d_test = (d1 + d2) / 2.0
-                p_test = rg.Point3d(p_start.X + ux * d_test, p_start.Y + uy * d_test, 0.0)
-                try:
-                    is_in = (r_poly_xy.Contains(p_test, rg.Plane.WorldXY, tol) == rg.PointContainment.Inside)
-                except:
-                    is_in = True
-                if is_in:
-                    corridors.append({
-                        'd_in': d1,
-                        'd_out': d2,
-                        'width': d2 - d1,
-                        'd_mid': d_test,
-                        'poly': r_poly_xy
-                    })
+            dists = sorted(list(set([round(d, 3) for d in dists])))
+            for k in range(0, len(dists) - 1, 2):
+                d1 = dists[k]
+                d2 = dists[k+1]
+                if d2 - d1 > 0.4:
+                    d_test = (d1 + d2) / 2.0
+                    px_t = p_start.X + ux * d_test
+                    py_t = p_start.Y + uy * d_test
+                    if point_in_polygon_2d(px_t, py_t, p_info['pts_2d']):
+                        corridors.append({
+                            'd_in': d1,
+                            'd_out': d2,
+                            'width': d2 - d1,
+                            'd_mid': d_test,
+                            'poly': r_crv
+                        })
+        else:
+            # Eixo de via aberto ou guia aberta:
+            half_w = p_info.get('half_width', 4.70)
+            if bb_r.Max.X + half_w < bb_c.Min.X or bb_r.Min.X - half_w > bb_c.Max.X or bb_r.Max.Y + half_w < bb_c.Min.Y or bb_r.Min.Y - half_w > bb_c.Max.Y:
+                continue
+            events = rg.Intersect.Intersection.CurveCurve(crv_xy, r_crv, half_w, tol)
+            if events:
+                for ev in events:
+                    pt = ev.PointA
+                    d = (pt.X - p_start.X) * ux + (pt.Y - p_start.Y) * uy
+                    if -tol <= d <= L_h + tol:
+                        d1 = max(0.0, d - half_w)
+                        d2 = min(L_h, d + half_w)
+                        if d2 - d1 > 0.4:
+                            corridors.append({
+                                'd_in': d1,
+                                'd_out': d2,
+                                'width': d2 - d1,
+                                'd_mid': d,
+                                'poly': r_crv
+                            })
 
     if len(corridors) > 1:
         corridors.sort(key=lambda c: c['d_in'])
@@ -456,7 +677,6 @@ def compute_road_corridors_for_section(crv_corte, road_polygons, tol=0.001):
         corridors = merged
 
     return corridors
-
 def make_drivable_road_z(d_val, z_base, corridors, cross_slope=0.02, curb_h=0.15, sw_w=1.20):
     """
     Computes normative drivable road elevation at station d_val:
@@ -2512,7 +2732,7 @@ def run():
     raw_escala       = get_input(['Scale', 'Escala', 'S'], 1.0)
     raw_nivel_proj   = get_input(['ProjectElevation', 'PadElevation', 'GradeElevation', 'NivelProjeto', 'Plato', 'CotaProjeto'])
     raw_inclinacao   = get_input(['MaxSlope', 'InclinacaoMaxima', 'RampaMaxima', 'Inclinacao', 'Imax'], 15.0)
-    raw_viario       = get_input(['Roadway', 'Viario', 'RoadNetwork', 'RoadBoundary', 'Pista', 'Ruas', 'CADViario', 'PoligonoViario', 'Vias'])
+    raw_viario       = get_input(['Roadway', 'Viario', 'RoadNetwork', 'RoadBoundary', 'Pista', 'Ruas', 'CADViario', 'PoligonoViario', 'Vias', 'PoligonalViario', 'MalhaViaria', 'EixoViario', 'EixosViarios', 'Rua', 'RuasCAD', 'EixoRua', 'EixosRuas', 'Pistas'])
 
     try:
         if raw_inclinacao is not None:
@@ -3358,7 +3578,7 @@ def run():
         "========================================================================================="
     ])
 
-    total_area_viario = sum(p['area'] for p in road_polygons)
+    total_area_viario = sum(p['area'] if p.get('is_closed', True) else (p['curve'].GetLength() * (2.0 * p.get('half_width', 4.70))) for p in road_polygons)
     if total_area_viario > 0.0:
         area_pista_est = total_area_viario * 0.74
         area_calcada_est = total_area_viario * 0.26
@@ -3376,7 +3596,7 @@ def run():
         ])
 
     # =========================================================================
-    # 10. CONSTRUCTION OF 3D EARTHWORK SURFACE & SLICES (PROPOSED TERRAIN)
+    # 10. CONSTRUÇÃO DA SUPERFÍCIE 3D DE TERRAPLENAGEM & PAVIMENTO BIM
     # =========================================================================
     quads_sup_3d_corte = []
     quads_sup_3d_aterro = []
@@ -3384,9 +3604,11 @@ def run():
     quads_sup_3d_asfalto = []
     quads_sup_3d_calcada = []
 
-    cor_asfalto = System.Drawing.Color.FromArgb(55, 55, 60)
-    cor_calcada = System.Drawing.Color.FromArgb(200, 200, 205)
-    cor_neutro  = System.Drawing.Color.FromArgb(205, 210, 205)
+    cor_asfalto = System.Drawing.Color.FromArgb(45, 47, 52)      # Asfalto escuro grafite acetinado
+    cor_calcada = System.Drawing.Color.FromArgb(218, 220, 224)   # Concreto claro / piso de calçada
+    cor_corte   = System.Drawing.Color.FromArgb(230, 92, 0)      # Laranja vibrante para taludes de corte
+    cor_aterro  = System.Drawing.Color.FromArgb(46, 139, 87)     # Verde floresta para taludes de aterro
+    cor_neutro  = System.Drawing.Color.FromArgb(195, 198, 192)   # Terreno natural neutro
 
     if num_secoes >= 2:
         for i in range(num_secoes - 1):
@@ -3450,8 +3672,8 @@ def run():
                     in_road, in_pista, in_sw = is_point_in_road(p_cen_m, road_polygons, tol)
                     if in_road:
                         if in_sw:
-                            # Pedestrian Sidewalk with +0.15m curb step
-                            sw_h = 0.15
+                            # Passeio de pedestres com desnível de guia +0.18m (espelho de 15cm sobre o asfalto)
+                            sw_h = 0.18
                             quads_sup_3d_calcada.append([
                                 rg.Point3d(p00.X, p00.Y, p00.Z + sw_h),
                                 rg.Point3d(p10.X, p10.Y, p10.Z + sw_h),
@@ -3459,8 +3681,14 @@ def run():
                                 rg.Point3d(p01.X, p01.Y, p01.Z + sw_h)
                             ])
                         else:
-                            # Asphalt Pavement
-                            quads_sup_3d_asfalto.append([p00, p10, p11, p01])
+                            # Pista de rolamento de asfalto com micro-elevação +0.03m (evita z-fighting)
+                            asp_h = 0.03
+                            quads_sup_3d_asfalto.append([
+                                rg.Point3d(p00.X, p00.Y, p00.Z + asp_h),
+                                rg.Point3d(p10.X, p10.Y, p10.Z + asp_h),
+                                rg.Point3d(p11.X, p11.Y, p11.Z + asp_h),
+                                rg.Point3d(p01.X, p01.Y, p01.Z + asp_h)
+                            ])
                     else:
                         if diff_z > 0.04:
                             quads_sup_3d_corte.append([p00, p10, p11, p01])
@@ -3492,14 +3720,16 @@ def run():
     else:
         mesh_terreno_projetado = None
 
-    # Full 3D BIM Presentation Model (Clean surface + draped road/curb outlines)
-    # Notice: Vertical slice walls (m_3d_corte_sec / m_3d_aterro_sec) are separated into dedicated outputs
-    # so they do NOT obstruct the 3D surface view!
+    # Modelo 3D BIM Completo (Superfície limpa + pavimentação distinta + bordas 3D projetadas)
+    # A separação das partes garante cores 100% fiéis sem degradação por mesclagem de vértices
     modelo_3d_completo = []
-    if mesh_terreno_projetado and getattr(mesh_terreno_projetado, 'IsValid', False):
+    for m_part in [m_3d_asfalto, m_3d_calcada, m_3d_sup_corte, m_3d_sup_aterro, m_3d_sup_neutro]:
+        if m_part and getattr(m_part, 'IsValid', False):
+            modelo_3d_completo.append(m_part)
+    if not modelo_3d_completo and mesh_terreno_projetado and getattr(mesh_terreno_projetado, 'IsValid', False):
         modelo_3d_completo.append(mesh_terreno_projetado)
 
-    # 3D Draped Road Network Outlines (Curb edges and cul-de-sacs with +0.05m relief)
+    # Contornos e Guias 3D da Malha Viária projetadas sobre o terreno
     draped_road_curves_3d = []
     for p_info in road_polygons:
         r_crv = p_info['curve']
@@ -3522,12 +3752,45 @@ def run():
                         d_st = (pt_xy.X - c_aln.PointAtStart.X) * u_dir.X + (pt_xy.Y - c_aln.PointAtStart.Y) * u_dir.Y
                         d_st_clamp = max(0.0, min(sec_data_list[idx_s]['total_ext'], d_st))
                         best_z = sec_data_list[idx_s]['get_proj_z'](d_st_clamp)
-            pts_3d_r.append(rg.Point3d(pt_xy.X, pt_xy.Y, best_z + 0.05 * s))
+            pts_3d_r.append(rg.Point3d(pt_xy.X, pt_xy.Y, best_z + 0.08 * s))
         if len(pts_3d_r) >= 2:
             crv_3d_road = rg.PolylineCurve(pts_3d_r)
             if crv_3d_road and crv_3d_road.IsValid:
                 draped_road_curves_3d.append(crv_3d_road)
                 modelo_3d_completo.append(crv_3d_road)
+
+        if p_info.get('is_closed', False):
+            try:
+                crv_curb = r_crv.Offset(rg.Plane.WorldXY, -1.25, 0.05, rg.CurveOffsetCornerStyle.Sharp)
+                if not crv_curb:
+                    crv_curb = r_crv.Offset(rg.Plane.WorldXY, 1.25, 0.05, rg.CurveOffsetCornerStyle.Sharp)
+                if crv_curb:
+                    for c_cb in crv_curb:
+                        if c_cb and c_cb.IsValid:
+                            pts_cb = []
+                            n_cb = max(int(c_cb.GetLength() / 1.0), 20)
+                            for i_cb in range(n_cb + 1):
+                                t_cb = c_cb.Domain.Min + (i_cb / float(n_cb)) * (c_cb.Domain.Max - c_cb.Domain.Min)
+                                p_cb = c_cb.PointAt(t_cb)
+                                best_dist_cb = 1e9; best_z_cb = 0.0
+                                for idx_s, c_aln in enumerate(lista_alinhadas):
+                                    rc_cp, t_cp = c_aln.ClosestPoint(p_cb)
+                                    if rc_cp:
+                                        dist_s = p_cb.DistanceTo(c_aln.PointAt(t_cp))
+                                        if dist_s < best_dist_cb:
+                                            best_dist_cb = dist_s
+                                            u_dir = c_aln.PointAtEnd - c_aln.PointAtStart; u_dir.Unitize()
+                                            d_st = (p_cb.X - c_aln.PointAtStart.X) * u_dir.X + (p_cb.Y - c_aln.PointAtStart.Y) * u_dir.Y
+                                            d_st_clamp = max(0.0, min(sec_data_list[idx_s]['total_ext'], d_st))
+                                            best_z_cb = sec_data_list[idx_s]['get_proj_z'](d_st_clamp)
+                                pts_cb.append(rg.Point3d(p_cb.X, p_cb.Y, best_z_cb + 0.12 * s))
+                            if len(pts_cb) >= 2:
+                                crv_3d_curb = rg.PolylineCurve(pts_cb)
+                                if crv_3d_curb and crv_3d_curb.IsValid:
+                                    draped_road_curves_3d.append(crv_3d_curb)
+                                    modelo_3d_completo.append(crv_3d_curb)
+            except:
+                pass
 
     # 3D Draped Boundary Curves (if supplied)
     if raw_projeto is not None:
@@ -3563,11 +3826,14 @@ def run():
         if crv and getattr(crv, 'IsValid', False):
             modelo_3d_completo.append(crv)
 
-    # Dynamic outputs for optional Grasshopper connections (bilingual aliases)
+    # Saídas dinâmicas para conexões opcionais no Grasshopper (aliases bilíngues)
     globals()['Viario3D'] = [m for m in [m_3d_asfalto, m_3d_calcada] if m and getattr(m, 'IsValid', False)]
     globals()['Roadway3D'] = globals()['Viario3D']
     globals()['Asfalto3D'] = m_3d_asfalto
     globals()['Calcadas3D'] = m_3d_calcada
+    globals()['BordasViario3D'] = draped_road_curves_3d
+    globals()['MeioFio3D'] = draped_road_curves_3d
+    globals()['Guias3D'] = draped_road_curves_3d
     globals()['Viario2D'] = [p['curve'] for p in road_polygons]
     globals()['CrossSections'] = desenho_secoes_t_only
     globals()['SecoesTransversais'] = desenho_secoes_t_only
