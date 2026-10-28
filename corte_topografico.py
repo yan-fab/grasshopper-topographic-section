@@ -2111,6 +2111,12 @@ def run():
     poligonos_corte_all = []
     poligonos_aterro_all = []
     linhas_3d_all = []
+    greides_3d_all = []
+    poligonos_3d_corte_all = []
+    poligonos_3d_aterro_all = []
+
+    quads_3d_corte_secoes = []
+    quads_3d_aterro_secoes = []
 
     cor_corte  = System.Drawing.Color.FromArgb(245, 130, 32)
     cor_aterro = System.Drawing.Color.FromArgb(46, 204, 113)
@@ -2124,6 +2130,53 @@ def run():
         total_ext = s_data['total_ext']
         get_proj_z = s_data['get_proj_z']
         linhas_3d_all.append(s_data['crv_3d'])
+
+        # 3D: Posição espacial real da seção transversal no modelo 3D (UTM / World Coordinates)
+        crv_aln_3d = lista_alinhadas[idx_s]
+        p_s3d = crv_aln_3d.PointAtStart
+        p_e3d = crv_aln_3d.PointAtEnd
+        dx_3d = p_e3d.X - p_s3d.X
+        dy_3d = p_e3d.Y - p_s3d.Y
+        L_3d = math.hypot(dx_3d, dy_3d)
+        ux_3d = dx_3d / max(L_3d, 1e-4)
+        uy_3d = dy_3d / max(L_3d, 1e-4)
+
+        # 3D: Curva 3D do Greide de Projeto sobre o eixo
+        pts_gr_3d = []
+        for d in s_data['estacas_finais']:
+            pts_gr_3d.append(rg.Point3d(p_s3d.X + ux_3d * d, p_s3d.Y + uy_3d * d, get_proj_z(d)))
+        if len(pts_gr_3d) >= 2:
+            crv_gr_3d = rg.PolylineCurve(pts_gr_3d)
+            greides_3d_all.append(crv_gr_3d)
+
+        # 3D: Fatias verticais 3D de Corte e Aterro em cada seção transversal
+        for r_type, d_list in s_data['regioes']:
+            for j in range(len(d_list) - 1):
+                d1, d2 = d_list[j], d_list[j+1]
+                if d2 - d1 <= 1e-6: continue
+                p_tn1_3d = rg.Point3d(p_s3d.X + ux_3d * d1, p_s3d.Y + uy_3d * d1, interpolate_terrain_z(d1, clean_pts))
+                p_tn2_3d = rg.Point3d(p_s3d.X + ux_3d * d2, p_s3d.Y + uy_3d * d2, interpolate_terrain_z(d2, clean_pts))
+                p_pr1_3d = rg.Point3d(p_s3d.X + ux_3d * d1, p_s3d.Y + uy_3d * d1, get_proj_z(d1))
+                p_pr2_3d = rg.Point3d(p_s3d.X + ux_3d * d2, p_s3d.Y + uy_3d * d2, get_proj_z(d2))
+
+                if r_type == "CORTE":
+                    quads_3d_corte_secoes.append([p_tn1_3d, p_tn2_3d, p_pr2_3d, p_pr1_3d])
+                else:
+                    quads_3d_aterro_secoes.append([p_pr1_3d, p_pr2_3d, p_tn2_3d, p_tn1_3d])
+
+            pts_3d_poly = []
+            if r_type == "CORTE":
+                for d in d_list: pts_3d_poly.append(rg.Point3d(p_s3d.X + ux_3d * d, p_s3d.Y + uy_3d * d, interpolate_terrain_z(d, clean_pts)))
+                for d in reversed(d_list): pts_3d_poly.append(rg.Point3d(p_s3d.X + ux_3d * d, p_s3d.Y + uy_3d * d, get_proj_z(d)))
+                pts_3d_poly.append(pts_3d_poly[0])
+                poly_3d_c = rg.Polyline(pts_3d_poly).ToPolylineCurve()
+                poligonos_3d_corte_all.append(poly_3d_c)
+            else:
+                for d in d_list: pts_3d_poly.append(rg.Point3d(p_s3d.X + ux_3d * d, p_s3d.Y + uy_3d * d, get_proj_z(d)))
+                for d in reversed(d_list): pts_3d_poly.append(rg.Point3d(p_s3d.X + ux_3d * d, p_s3d.Y + uy_3d * d, interpolate_terrain_z(d, clean_pts)))
+                pts_3d_poly.append(pts_3d_poly[0])
+                poly_3d_a = rg.Polyline(pts_3d_poly).ToPolylineCurve()
+                poligonos_3d_aterro_all.append(poly_3d_a)
 
         # Datum Local da Seção (Padrão Topografia / NBR 6492 / AGPTEA)
         sec_datum_z = math.floor(s_data['z_min'] - 2.0)
@@ -2598,12 +2651,135 @@ def run():
         "========================================================================================="
     ])
 
-    return linhas_3d_all, planta_baixa_geoms, desenho_completo_secoes_2d, poligonos_corte_all, poligonos_aterro_all, relatorio
+    # =========================================================================
+    # CONSTRUÇÃO DA SUPERFÍCIE E VOLUMES 3D DE TERRAPLENAGEM (TERRENO PROJETADO)
+    # =========================================================================
+    quads_sup_3d_corte = []
+    quads_sup_3d_aterro = []
+    quads_sup_3d_neutro = []
+    quads_vol_3d_corte = []
+    quads_vol_3d_aterro = []
+
+    cor_neutro = System.Drawing.Color.FromArgb(205, 210, 205)
+
+    if num_secoes >= 2:
+        for i in range(num_secoes - 1):
+            s_data_a = sec_data_list[i]
+            s_data_b = sec_data_list[i+1]
+            c_aln_a = lista_alinhadas[i]
+            c_aln_b = lista_alinhadas[i+1]
+
+            p_sa = c_aln_a.PointAtStart; p_ea = c_aln_a.PointAtEnd
+            p_sb = c_aln_b.PointAtStart; p_eb = c_aln_b.PointAtEnd
+
+            La = s_data_a['total_ext']
+            Lb = s_data_b['total_ext']
+            dx_a = p_ea.X - p_sa.X; dy_a = p_ea.Y - p_sa.Y
+            dx_b = p_eb.X - p_sb.X; dy_b = p_eb.Y - p_sb.Y
+            ux_a = dx_a / max(La, 1e-4); uy_a = dy_a / max(La, 1e-4)
+            ux_b = dx_b / max(Lb, 1e-4); uy_b = dy_b / max(Lb, 1e-4)
+
+            # Discretização fina ao longo da extensão das seções
+            n_divs = max(int(max(La, Lb) / 1.5), 35)
+
+            for k in range(n_divs):
+                ta = k / float(n_divs)
+                tb = (k + 1) / float(n_divs)
+
+                da0 = ta * La; da1 = tb * La
+                db0 = ta * Lb; db1 = tb * Lb
+
+                # Pontos da Superfície Projetada (Greide 3D)
+                p00 = rg.Point3d(p_sa.X + ux_a * da0, p_sa.Y + uy_a * da0, s_data_a['get_proj_z'](da0))
+                p10 = rg.Point3d(p_sa.X + ux_a * da1, p_sa.Y + uy_a * da1, s_data_a['get_proj_z'](da1))
+                p11 = rg.Point3d(p_sb.X + ux_b * db1, p_sb.Y + uy_b * db1, s_data_b['get_proj_z'](db1))
+                p01 = rg.Point3d(p_sb.X + ux_b * db0, p_sb.Y + uy_b * db0, s_data_b['get_proj_z'](db0))
+
+                # Pontos correspondentes no Terreno Natural 3D
+                t00 = rg.Point3d(p00.X, p00.Y, interpolate_terrain_z(da0, s_data_a['clean_pts']))
+                t10 = rg.Point3d(p10.X, p10.Y, interpolate_terrain_z(da1, s_data_a['clean_pts']))
+                t11 = rg.Point3d(p11.X, p11.Y, interpolate_terrain_z(db1, s_data_b['clean_pts']))
+                t01 = rg.Point3d(p01.X, p01.Y, interpolate_terrain_z(db0, s_data_b['clean_pts']))
+
+                z_pr_m = (p00.Z + p10.Z + p11.Z + p01.Z) / 4.0
+                z_tn_m = (t00.Z + t10.Z + t11.Z + t01.Z) / 4.0
+                diff_z = z_tn_m - z_pr_m
+
+                if diff_z > 0.03:
+                    # CORTE: o terreno está acima do greide projetado
+                    quads_sup_3d_corte.append([p00, p10, p11, p01])
+                    # Prisma volumétrico 3D de corte (fechado)
+                    quads_vol_3d_corte.append([t00, t10, t11, t01])
+                    quads_vol_3d_corte.append([p00, p01, p11, p10])
+                    quads_vol_3d_corte.append([t00, t10, p10, p00])
+                    quads_vol_3d_corte.append([t10, t11, p11, p10])
+                    quads_vol_3d_corte.append([t11, t01, p01, p11])
+                    quads_vol_3d_corte.append([t01, t00, p00, p01])
+                elif diff_z < -0.03:
+                    # ATERRO: o greide projetado está acima do terreno natural
+                    quads_sup_3d_aterro.append([p00, p10, p11, p01])
+                    # Prisma volumétrico 3D de aterro (fechado)
+                    quads_vol_3d_aterro.append([p00, p10, p11, p01])
+                    quads_vol_3d_aterro.append([t00, t01, t11, t10])
+                    quads_vol_3d_aterro.append([p00, p10, t10, t00])
+                    quads_vol_3d_aterro.append([p10, p11, t11, t10])
+                    quads_vol_3d_aterro.append([p11, p01, t01, t11])
+                    quads_vol_3d_aterro.append([p01, p00, t00, t01])
+                else:
+                    quads_sup_3d_neutro.append([p00, p10, p11, p01])
+
+    # Construção das malhas 3D
+    m_3d_corte_sec  = create_colored_mesh(quads_3d_corte_secoes, cor_corte)
+    m_3d_aterro_sec = create_colored_mesh(quads_3d_aterro_secoes, cor_aterro)
+    m_3d_sup_corte  = create_colored_mesh(quads_sup_3d_corte, cor_corte)
+    m_3d_sup_aterro = create_colored_mesh(quads_sup_3d_aterro, cor_aterro)
+    m_3d_sup_neutro = create_colored_mesh(quads_sup_3d_neutro, cor_neutro)
+    m_3d_vol_corte  = create_colored_mesh(quads_vol_3d_corte, cor_corte)
+    m_3d_vol_aterro = create_colored_mesh(quads_vol_3d_aterro, cor_aterro)
+
+    # Malha contínua do terreno modificado/projetado
+    mesh_terreno_projetado = rg.Mesh()
+    for m_part in [m_3d_sup_corte, m_3d_sup_aterro, m_3d_sup_neutro]:
+        if m_part: mesh_terreno_projetado.Append(m_part)
+    if mesh_terreno_projetado.Faces.Count > 0:
+        mesh_terreno_projetado.Normals.ComputeNormals()
+    else:
+        mesh_terreno_projetado = None
+
+    # Compilação do Modelo 3D Completo (Visualização em Perspectiva 3D)
+    modelo_3d_completo = []
+    # 1. Superfície de Terraplenagem colorida no espaço 3D (Corte Laranja / Aterro Verde)
+    if m_3d_sup_corte: modelo_3d_completo.append(m_3d_sup_corte)
+    if m_3d_sup_aterro: modelo_3d_completo.append(m_3d_sup_aterro)
+    if m_3d_sup_neutro: modelo_3d_completo.append(m_3d_sup_neutro)
+
+    # 2. Cortinas/Fatias verticais 3D em cada seção
+    if m_3d_corte_sec: modelo_3d_completo.append(m_3d_corte_sec)
+    if m_3d_aterro_sec: modelo_3d_completo.append(m_3d_aterro_sec)
+
+    # 3. Curvas 3D de Projeto (Greides 3D)
+    modelo_3d_completo.extend(greides_3d_all)
+
+    # 4. Curvas 3D do Terreno Natural
+    modelo_3d_completo.extend(linhas_3d_all)
+
+    # Atribuição de saídas dinâmicas para conexões opcionais no Grasshopper
+    globals()['TerrenoModificado'] = mesh_terreno_projetado
+    globals()['SuperficieProjeto'] = mesh_terreno_projetado
+    globals()['Corte3D'] = m_3d_sup_corte or m_3d_corte_sec
+    globals()['Aterro3D'] = m_3d_sup_aterro or m_3d_aterro_sec
+    globals()['Greide3D'] = greides_3d_all
+    globals()['Volumes3D'] = [m for m in [m_3d_vol_corte, m_3d_vol_aterro] if m is not None]
+    globals()['g'] = mesh_terreno_projetado
+    globals()['h'] = m_3d_vol_corte
+    globals()['i'] = m_3d_vol_aterro
+
+    return modelo_3d_completo, planta_baixa_geoms, desenho_completo_secoes_2d, poligonos_corte_all, poligonos_aterro_all, relatorio
 
 res_3d, res_planta, res_secoes, res_corte, res_aterro, rel = run()
 
 # SAÍDAS CONECTADAS NO GRASSHOPPER:
-a = res_3d         # Linhas 3D dos cortes sobre o terreno natural
+a = res_3d         # MODELO 3D COMPLETO DE TERRAPLENAGEM (Superfície Projetada + Fatias 3D Laranja/Verde + Greides 3D)
 b = res_planta     # PLANTA BAIXA TÉCNICA (Eixos cotados A, B, C... e 1, 2, 3... com balões NBR, setas e quadrantes)
 c = res_secoes     # DESENHO COMPLETO DAS SEÇÕES 2D ALINHADAS (com títulos, malhas Laranja/Verde, cotas NBR e fluxo de massa)
 d = res_corte      # Polígonos de CORTE de todas as seções (Curves para Area / Hatch / Bake)
