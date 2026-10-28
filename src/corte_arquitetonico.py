@@ -1,9 +1,43 @@
 # -*- coding: utf-8 -*-
 """
-CORTE TOPOGRÁFICO COM SELETOR DE COTAS:
-0 - Todas as Cotas (Terreno Natural + Projeto)
-1 - Apenas Cotas do Terreno Projetado (+ Perfil Natural)
-2 - Apenas Cotas do Terreno Natural
+===============================================================================
+ARCHITECTURAL TOPOGRAPHIC SECTION WITH DIMENSION SELECTOR
+===============================================================================
+Parametric algorithm for Grasshopper (Rhinoceros 8 / GhPython).
+Generates architectural terrain sections intersecting buildings, roofs/canopies,
+graded pads, embankments and access ramps, with NBR 6492 level markers and
+integrated dimension selector.
+
+SELECTORS (Mode):
+  0 - All Dimensions & Levels (Natural Terrain + Proposed Project)
+  1 - Proposed Project Dimensions Only (+ Natural Ground Profile) [Default]
+  2 - Natural Terrain Dimensions Only
+
+INPUTS (Bilingual - English / Português):
+  Terrain / Terreno               [List, Curve/Mesh] : 3D contour lines or terrain mesh.
+  CutLine / LinhaCorte            [Item/List, Curve] : Section cut line in plan view.
+  Point / Ponto                   [Item, Point3d]    : Base insertion point for 2D section [Optional].
+  Building / Edificacao / Casa    [Item, Curve]      : Building footprint boundary curve [Optional].
+  Roof / Cobertura / Telhado      [Item, Curve]      : Roof/canopy boundary curve [Optional].
+  Pad / Plato / PlatoEntrada      [Item, Curve]      : Graded pad boundary curve [Optional].
+  Fill / Embankment / Aterro      [Item, Curve]      : Earth embankment / fill curve [Optional].
+  Ramp / Entrance / Descida       [Item, Curve]      : Access ramp or entrance curve [Optional].
+  Selector / Mode / Seletor       [Item, int]        : Dimension display mode (0, 1, or 2, default: 1).
+  FloorLevel / NivelPiso          [Item, float]      : Finished floor elevation (Z) [Optional].
+  PadLevel / NivelPlato           [Item, float]      : Graded pad elevation (Z) [Optional].
+  FillLevel / NivelAterro         [Item, float]      : Top of fill elevation (Z) [Optional].
+  Height / Altura                 [Item, float]      : Floor-to-ceiling height (default: 3.0 m).
+  Thickness / Espessura           [Item, float]      : Slab thickness (default: 0.20 m).
+  Scale / Escala                  [Item, float]      : Scale factor for NBR symbols and annotations (default: 1.0).
+
+OUTPUTS:
+  a : 3D section profile on natural terrain (World Coordinates).
+  b : 2D terrain profile curve.
+  c : FINAL COMPLETE 2D DRAWING (Filtered per Selector mode).
+  d : Proposed project NBR level markers (Floor, Roof, Pad, Ramp).
+  e : Natural terrain NBR level markers.
+  f : Technical descriptive report (Panel).
+===============================================================================
 """
 
 import math
@@ -80,13 +114,13 @@ def to_list(val):
 
 def parse_seletor(val):
     """
-    Interpreta a entrada do seletor:
-    0: Todas as cotas (Completo)
-    1: Apenas cotas do terreno projetado (+ perfil natural)
-    2: Apenas cotas do terreno natural
+    Parses selector input:
+    0: All dimensions & levels (Complete)
+    1: Proposed project dimensions only (+ natural profile) [Default]
+    2: Natural terrain dimensions only
     """
     if val is None:
-        return 1 # Padrão solicitado: cotas do projetado + perfil natural
+        return 1 # Default: proposed project dimensions + natural profile
     if isinstance(val, bool):
         return 1 if val else 2
     try:
@@ -138,7 +172,7 @@ def interpolate_terrain_z(d_val, clean_pts):
     return clean_pts[-1][1].Z
 
 def draw_nbr_level_marker(x, y, text_str, s=1.0):
-    """Gera o símbolo de cota de nível padrão NBR 6492."""
+    """Generates NBR 6492 standard level elevation marker symbol."""
     h_tri = 0.7 * s
     w_tri = 0.9 * s
     h_stem = 0.5 * s
@@ -173,29 +207,34 @@ def run():
     doc = Rhino.RhinoDoc.ActiveDoc
     tol = doc.ModelAbsoluteTolerance if doc else 0.001
 
-    raw_terreno    = globals().get('Terreno', globals().get('x', None))
-    raw_linha      = globals().get('LinhaCorte', globals().get('y', None))
-    raw_ponto      = globals().get('Ponto', globals().get('Point', globals().get('Origem', globals().get('Localizacao', None))))
-    raw_retangulo  = globals().get('Retangulo', globals().get('Edificacao', globals().get('Casa', None)))
-    raw_cobertura  = globals().get('Cobertura', globals().get('Circulo', globals().get('Telhado', None)))
-    raw_plato      = globals().get('Plato', globals().get('CirculoAmarelo', globals().get('CirculoPlato', globals().get('PlatoEntrada', None))))
-    raw_aterro     = globals().get('Aterro', globals().get('Aterramento', None))
-    raw_descida    = globals().get('Descida', globals().get('Entrada', globals().get('Rampa', None)))
-    
-    raw_seletor    = globals().get('Seletor', globals().get('Modo', globals().get('ModoCotas', globals().get('OpcaoCotas', 1))))
-    
-    raw_nivel_piso = globals().get('NivelPiso', globals().get('CotaPiso', None))
-    raw_nivel_plat = globals().get('NivelPlato', globals().get('CotaPlato', None))
-    raw_nivel_ater = globals().get('NivelAterro', globals().get('CotaAterro', None))
-    
-    raw_altura     = globals().get('Altura', 3.0)
-    raw_espessura  = globals().get('Espessura', 0.20)
-    raw_escala     = globals().get('Escala', 1.0)
+    def get_input(keys, default=None):
+        g = globals()
+        for k in keys:
+            val = g.get(k)
+            if val is not None:
+                return val
+        return default
+
+    raw_terreno    = get_input(['Terrain', 'Terreno', 'x'])
+    raw_linha      = get_input(['CutLine', 'SectionLine', 'LinhaCorte', 'y'])
+    raw_ponto      = get_input(['Point', 'Origin', 'Ponto', 'Origem', 'Localizacao'])
+    raw_retangulo  = get_input(['Building', 'House', 'Retangulo', 'Edificacao', 'Casa'])
+    raw_cobertura  = get_input(['Roof', 'Canopy', 'Cobertura', 'Circulo', 'Telhado'])
+    raw_plato      = get_input(['Pad', 'GradedPad', 'Plato', 'CirculoAmarelo', 'CirculoPlato', 'PlatoEntrada'])
+    raw_aterro     = get_input(['Fill', 'Embankment', 'Aterro', 'Aterramento'])
+    raw_descida    = get_input(['Ramp', 'Entrance', 'Descida', 'Entrada', 'Rampa'])
+    raw_seletor    = get_input(['Selector', 'Mode', 'Seletor', 'Modo', 'ModoCotas', 'OpcaoCotas'], 1)
+    raw_nivel_piso = get_input(['FloorLevel', 'FloorElevation', 'NivelPiso', 'CotaPiso'])
+    raw_nivel_plat = get_input(['PadLevel', 'PadElevation', 'NivelPlato', 'CotaPlato'])
+    raw_nivel_ater = get_input(['FillLevel', 'EmbankmentLevel', 'NivelAterro', 'CotaAterro'])
+    raw_altura     = get_input(['Height', 'FloorHeight', 'Altura'], 3.0)
+    raw_espessura  = get_input(['Thickness', 'SlabThickness', 'Espessura'], 0.20)
+    raw_escala     = get_input(['Scale', 'Escala'], 1.0)
 
     modo_cotas = parse_seletor(raw_seletor)
 
     if raw_terreno is None or raw_linha is None:
-        msg = "⚠️ Conecte 'Terreno' e 'LinhaCorte'."
+        msg = "⚠️ Please connect 'Terrain' and 'CutLine'."
         return None, None, None, [], [], [], [msg]
 
     cut_crv = to_rhino_curve(raw_linha)
@@ -204,7 +243,7 @@ def run():
         if l_list: cut_crv = to_rhino_curve(l_list[0])
 
     if cut_crv is None:
-        return None, None, None, [], [], [], ["ERRO: Linha de Corte inválida."]
+        return None, None, None, [], [], [], ["ERROR: Invalid CutLine / Section Line."]
 
     terrain_geoms = []
     for item in to_list(raw_terreno):
@@ -212,7 +251,7 @@ def run():
         if g is not None: terrain_geoms.append(g)
 
     if not terrain_geoms:
-        return None, None, None, [], [], [], ["ERRO: Nenhuma curva/malha válida de terreno."]
+        return None, None, None, [], [], [], ["ERROR: No valid terrain curve/mesh found."]
 
     p_start = cut_crv.PointAtStart
     p_end = cut_crv.PointAtEnd
@@ -221,13 +260,13 @@ def run():
     L_horiz = math.hypot(dx, dy)
 
     if L_horiz < 1e-4:
-        return None, None, None, [], [], [], ["ERRO: Linha de corte com comprimento zero."]
+        return None, None, None, [], [], [], ["ERROR: Cut line has zero length."]
 
     ux = dx / L_horiz
     uy = dy / L_horiz
     cut_plane = rg.Plane(rg.Point3d(p_start.X, p_start.Y, 0), rg.Vector3d(ux, uy, 0), rg.Vector3d.ZAxis)
 
-    # 1. Interseção com as curvas de nível do terreno natural
+    # 1. Intersection with natural terrain contour lines
     pts_with_d = []
     for g in terrain_geoms:
         if isinstance(g, rg.Curve):
@@ -248,7 +287,7 @@ def run():
                             pts_with_d.append((d, pt))
 
     if not pts_with_d:
-        return None, None, None, [], [], [], ["⚠️ Nenhuma interseção encontrada entre a linha de corte e o terreno."]
+        return None, None, None, [], [], [], ["⚠️ No intersection found between cut line and terrain."]
 
     pts_with_d.sort(key=lambda x: x[0])
     clean_pts = []
@@ -260,7 +299,7 @@ def run():
                 clean_pts.append((d, pt))
 
     if len(clean_pts) < 2:
-        return None, None, None, [], [], [], ["AVISO: Linha cruza menos de 2 curvas de nível."]
+        return None, None, None, [], [], [], ["WARNING: Cut line intersects fewer than 2 contour curves."]
 
     # 2. Perfil 3D
     pts_3d = [pt for d, pt in clean_pts]
@@ -345,10 +384,10 @@ def run():
     elif crv_plato is not None and abs(crv_plato.PointAtStart.Z) > 1.0:
         z_ref = crv_plato.PointAtStart.Z
 
-    # A. INTERSEÇÃO COM A CASA (RETÂNGULO)
+    # A. INTERSECTION WITH BUILDING FOOTPRINT (RECTANGLE)
     d_casa_in = None
     d_casa_out = None
-    info_edificacao = "Corte fora da casa."
+    info_edificacao = "Section outside building footprint."
     if rect_raw is not None and isinstance(rect_raw, rg.Curve):
         rect_xy = rg.Curve.ProjectToPlane(rect_raw, rg.Plane.WorldXY)
         cc_events = rg.Intersect.Intersection.CurveCurve(cut_xy, rect_xy, tol, tol)
@@ -401,16 +440,16 @@ def run():
 
             # Cota NBR Piso
             x_mid_casa = (x_casa_1 + x_casa_2) / 2.0
-            txt_piso = "PISO +{:.2f}".format(z_piso).replace('.', ',')
+            txt_piso = "FLOOR +{:.2f}".format(z_piso).replace('.', ',')
             m_piso, te_p = draw_nbr_level_marker(x_mid_casa, y_piso, txt_piso, s)
             cotas_projeto_geoms.extend(m_piso)
 
-            info_edificacao = "Casa: d={:.2f}m a {:.2f}m | Piso: +{:.2f}m".format(d_casa_in, d_casa_out, z_piso)
+            info_edificacao = "Building: station={:.2f}m to {:.2f}m | Finished Floor: +{:.2f}m".format(d_casa_in, d_casa_out, z_piso)
 
-    # B. INTERSEÇÃO COM A COBERTURA
+    # B. INTERSECTION WITH ROOF / CANOPY
     d_roof_in = None
     d_roof_out = None
-    info_cobertura = "Corte fora da cobertura."
+    info_cobertura = "Section outside roof/canopy."
     if circ_raw is not None and isinstance(circ_raw, rg.Curve):
         circ_xy = rg.Curve.ProjectToPlane(circ_raw, rg.Plane.WorldXY)
         circ_events = rg.Intersect.Intersection.CurveCurve(cut_xy, circ_xy, tol, tol)
@@ -446,18 +485,18 @@ def run():
 
             # Cota NBR Cobertura
             x_pos_cob = x_roof_2 - 2.5 * s
-            txt_cob = "COB. +{:.2f}".format(z_cob_sup).replace('.', ',')
+            txt_cob = "ROOF +{:.2f}".format(z_cob_sup).replace('.', ',')
             m_cob, te_c = draw_nbr_level_marker(x_pos_cob, y_cob_sup, txt_cob, s)
             cotas_projeto_geoms.extend(m_cob)
 
-            info_cobertura = "Cobertura: d={:.2f}m a {:.2f}m | Cota: +{:.2f}m".format(d_roof_in, d_roof_out, z_cob_sup)
+            info_cobertura = "Roof/Canopy: station={:.2f}m to {:.2f}m | Elevation: +{:.2f}m".format(d_roof_in, d_roof_out, z_cob_sup)
 
     # =========================================================================
     # C. PROCESSAMENTO DO PLATÔ E ATERRO
     # =========================================================================
-    info_plato = "Nenhum platô interceptado."
+    info_plato = "No pad or embankment intercepted."
 
-    # Detectar interseção com o Platô (Círculo Amarelo)
+    # Detect intersection with Graded Pad (Circle / Boundary Curve)
     d_pl_1 = None
     d_pl_2 = None
     if crv_plato is not None and isinstance(crv_plato, rg.Curve):
@@ -501,7 +540,7 @@ def run():
             muro_esq = rg.LineCurve(rg.Point3d(x_pesq_1, y_plato, 0.0), rg.Point3d(x_pesq_1, y_tn_pesq, 0.0))
             geometria_projeto_fisica.append(muro_esq)
 
-            txt_pesq = "PLATÔ +{:.2f}".format(z_plato).replace('.', ',')
+            txt_pesq = "PAD +{:.2f}".format(z_plato).replace('.', ',')
             m_pe, te_pe = draw_nbr_level_marker((x_pesq_1 + x_pesq_2) / 2.0, y_plato, txt_pesq, s)
             cotas_projeto_geoms.extend(m_pe)
 
@@ -514,7 +553,7 @@ def run():
             linha_plat_dir = rg.LineCurve(rg.Point3d(x_pdir_1, y_plato, 0.0), rg.Point3d(x_pdir_2, y_plato, 0.0))
             geometria_projeto_fisica.append(linha_plat_dir)
 
-            m_pd, te_pd = draw_nbr_level_marker(x_pdir_2, y_plato, "PLATÔ +{:.2f}".format(z_plato).replace('.', ','), s)
+            m_pd, te_pd = draw_nbr_level_marker(x_pdir_2, y_plato, "PAD +{:.2f}".format(z_plato).replace('.', ','), s)
             cotas_projeto_geoms.extend(m_pd)
 
         # 3. Rampa de aterro subindo até o terreno natural alto
@@ -558,10 +597,10 @@ def run():
                         m_c, te_c = draw_nbr_level_marker(xc, yc, "+{:.2f}".format(float(z_c)).replace('.', ','), s)
                         cotas_projeto_geoms.extend(m_c)
 
-            m_top, te_top = draw_nbr_level_marker(x_at_2, y_at_2, "ATERRO +{:.2f}".format(z_at_fim).replace('.', ','), s)
+            m_top, te_top = draw_nbr_level_marker(x_at_2, y_at_2, "FILL +{:.2f}".format(z_at_fim).replace('.', ','), s)
             cotas_projeto_geoms.extend(m_top)
 
-        info_plato = "Corte Longitudinal: Platô +{:.2f}m com Casa e Rampa".format(z_plato)
+        info_plato = "Longitudinal Section: Pad +{:.2f}m with Building and Access Ramp".format(z_plato)
 
     # -------------------------------------------------------------------------
     # CASO 2: A LINHA DE CORTE NÃO CRUZA A CASA (Corte Transversal)
@@ -603,11 +642,11 @@ def run():
 
         # Cota NBR no centro do Platô
         x_mid_plat = (x_p1 + x_p2) / 2.0
-        txt_pl = "PLATÔ +{:.2f}".format(z_plato).replace('.', ',')
+        txt_pl = "PAD +{:.2f}".format(z_plato).replace('.', ',')
         m_pl, te_pl = draw_nbr_level_marker(x_mid_plat, y_plato, txt_pl, s)
         cotas_projeto_geoms.extend(m_pl)
 
-        info_plato = "Corte Transversal: Platô Contínuo +{:.2f}m (Extensão: {:.2f}m)".format(z_plato, d_pl_2 - d_pl_1)
+        info_plato = "Cross Section: Continuous Graded Pad +{:.2f}m (Length: {:.2f}m)".format(z_plato, d_pl_2 - d_pl_1)
 
     # =========================================================================
     # 5. APLICAÇÃO DO SELETOR DE COTAS NO DESENHO COMPLETO
@@ -618,50 +657,50 @@ def run():
         # Modo 1: Apenas as cotas do terreno projetado e o perfil natural
         desenho_completo_2d.extend(geometria_projeto_fisica)
         desenho_completo_2d.extend(cotas_projeto_geoms)
-        desc_modo = "Modo 1: Apenas Cotas do Terreno Projetado (+ Perfil Natural)"
+        desc_modo = "Mode 1: Proposed Project Elevations Only (+ Natural Ground Profile)"
     elif modo_cotas == 2:
         # Modo 2: Apenas as cotas do terreno natural
         desenho_completo_2d.extend(cotas_tn_geoms)
         # Mantém a geometria do projeto sem as cotas do projeto
         desenho_completo_2d.extend(geometria_projeto_fisica)
-        desc_modo = "Modo 2: Apenas Cotas do Terreno Natural"
+        desc_modo = "Mode 2: Natural Ground Elevations Only"
     else:
-        # Modo 0: Completo (Todas as cotas do TN e do Projeto)
+        # Mode 0: Complete (All dimensions of natural terrain and project)
         desenho_completo_2d.extend(cotas_tn_geoms)
         desenho_completo_2d.extend(geometria_projeto_fisica)
         desenho_completo_2d.extend(cotas_projeto_geoms)
-        desc_modo = "Modo 0: Todas as Cotas (Terreno Natural + Projeto)"
+        desc_modo = "Mode 0: All Elevations (Natural Ground + Proposed Project)"
 
     # 6. Relatório Técnico
     decliv_pct = (delta_z / total_ext * 100.0) if total_ext > 0 else 0.0
     decliv_deg = math.degrees(math.atan2(delta_z, total_ext)) if total_ext > 0 else 0.0
     cota_ini = pts_3d[0].Z
     cota_fim = pts_3d[-1].Z
-    sentido = "Aclive" if cota_fim > cota_ini else "Declive" if cota_fim < cota_ini else "Plano"
+    sentido = "Uphill" if cota_fim > cota_ini else "Downhill" if cota_fim < cota_ini else "Flat"
 
     relatorio = [
-        "=== CORTE TOPOGRÁFICO - PROJETO COMPLETO ===",
-        "Localização do Corte: X={:.2f}, Y={:.2f}".format(orig_x, orig_y),
-        "Extensão do Terreno : {:.2f} m".format(total_ext),
-        "Cota Inicial / Final: {:.2f} m / {:.2f} m ({})".format(cota_ini, cota_fim, sentido),
-        "Cota Mín / Máx (TN) : {:.2f} m / {:.2f} m (ΔZ = {:.2f} m)".format(z_min, z_max, delta_z),
-        "Declividade Média   : {:.2f}% ({:.2f}°)".format(decliv_pct, decliv_deg),
+        "=== ARCHITECTURAL TOPOGRAPHIC SECTION - COMPLETE REPORT ===",
+        "Section Insertion Point: X={:.2f}, Y={:.2f}".format(orig_x, orig_y),
+        "Section Length        : {:.2f} m".format(total_ext),
+        "Start / End Elevation : {:.2f} m / {:.2f} m ({})".format(cota_ini, cota_fim, sentido),
+        "Min / Max Elev (Ground): {:.2f} m / {:.2f} m (ΔZ = {:.2f} m)".format(z_min, z_max, delta_z),
+        "Average Slope         : {:.2f}% ({:.2f}°)".format(decliv_pct, decliv_deg),
         "----------------------------------------",
-        "SELETOR DE COTAS ATIVO:",
+        "ACTIVE DIMENSION SELECTOR:",
         desc_modo,
         "----------------------------------------",
-        "PLATÔ / ATERRO:",
+        "GRADED PAD / EMBANKMENT:",
         info_plato,
         "----------------------------------------",
-        "CASA (RETÂNGULO):",
+        "BUILDING (RECTANGLE):",
         info_edificacao,
         "----------------------------------------",
-        "COBERTURA CIRCULAR (CÍRCULO):",
+        "ROOF / CANOPY (CIRCLE):",
         info_cobertura,
         "========================================"
     ]
 
-    # Geometrias isoladas para saídas específicas
+    # Isolated geometries for specific Grasshopper outputs
     geometria_plato_output = list(geometria_projeto_fisica)
     geometria_casa_output = [g for g in geometria_projeto_fisica if g not in base_terreno_2d]
 
@@ -669,10 +708,10 @@ def run():
 
 res_3d, res_2d, res_desenho, res_cotas_proj, res_cotas_tn, rel = run()
 
-# SAÍDAS CONECTADAS:
-a = res_3d           # Linha 3D sobre o relevo
-b = res_2d           # Linha 2D do terreno
-c = res_desenho      # DESENHO FINAL (Filtrado de acordo com o Seletor)
-d = res_cotas_proj   # Apenas as Cotas do Projeto (Platô, Rampa, Piso, Cobertura)
-e = res_cotas_tn     # Apenas as Cotas do Terreno Natural
-f = rel              # Relatório no Panel
+# OUTPUTS CONNECTED IN GRASSHOPPER:
+a = res_3d           # 3D Section Profile curve on terrain (World Coordinates)
+b = res_2d           # 2D Terrain profile curve
+c = res_desenho      # FINAL COMPLETE 2D DRAWING (Filtered per Selector mode)
+d = res_cotas_proj   # Proposed Project Elevations Only (Pad, Ramp, Floor, Roof)
+e = res_cotas_tn     # Natural Ground Elevations Only
+f = rel              # Technical Calculation & Descriptive Report (Panel)

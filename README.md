@@ -1,186 +1,186 @@
 # Grasshopper Topographic & Earthwork Suite (NBR 6492 / AGPTEA) 📐🏔️🚜
 
-[![Release](https://img.shields.io/badge/release-v3.0.0-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.0.0)
+[![Release](https://img.shields.io/badge/release-v3.1.0-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.1.0)
 [![Rhino 8](https://img.shields.io/badge/Rhino-8%20%7C%20Grasshopper-0080FF.svg)](https://www.rhino3d.com/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B%20%7C%20GhPython-yellow.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Suíte paramétrica profissional para **Rhinoceros 8 / Grasshopper (GhPython e Python 3 Script)** destinada ao desenvolvimento de cortes topográficos, projetos executivos de terraplenagem multi-eixos, cálculo analítico de volumes de corte/aterro e geração de superfícies 3D em conformidade rigorosa com a **ABNT NBR 6492** (Representação de Projetos de Arquitetura) e o método clássico de cubação **AGPTEA / UFPR**.
+Professional parametric suite for **Rhinoceros 8 / Grasshopper (GhPython and Python 3 Script)** designed for topographic section generation, multi-axis executive earthwork grading, analytical cut & fill volume calculations, progressive mass haul balancing, and 3D terrain surface modeling in strict compliance with **ABNT NBR 6492** (Architectural Project Representation) and the classical **AGPTEA / UFPR Average End Area method**.
 
 ---
 
-## 📑 Sumário
+## 📑 Table of Contents
 
-- [Visão Geral dos Módulos](#-visão-geral-dos-módulos)
-- [Novidades da Versão 3.0.0](#-novidades-da-versão-300-v300)
-- [Módulo de Terraplenagem & Volumes (`corte_terraplenagem.py`)](#-módulo-de-terraplenagem--volumes-corteterraplenagempy)
-  - [Entradas (Inputs)](#entradas-inputs---terraplenagem)
-  - [Saídas (Outputs)](#saídas-outputs---terraplenagem)
-  - [Regra dos 15% para a Linha Delimitadora](#-regra-dos-15-para-a-linha-delimitadora)
-  - [Balanço de Massas e Diagrama de Transporte (*Mass Haul*)](#-balanço-de-massas-e-diagrama-de-transporte-mass-haul)
-  - [Modelo 3D de Terraplenagem](#-modelo-3d-de-terraplenagem)
-- [Módulo Arquitetônico (`corte_arquitetonico.py`)](#-módulo-arquitetônico-cortearquitetonicopy)
-- [Como Utilizar no Grasshopper](#-como-utilizar-no-grasshopper)
-- [Metodologia Técnica de Cálculo](#-metodologia-técnica-de-cálculo)
-- [Licença](#-licença)
+- [Module Overview](#-module-overview)
+- [What's New in v3.1.0 & v3.0.0](#-whats-new-in-v310--v300)
+- [Earthwork & Volumes Module (`corte_terraplenagem.py`)](#-earthwork--volumes-module-corteterraplenagempy)
+  - [Bilingual Inputs](#inputs---earthwork-module)
+  - [Outputs](#outputs---earthwork-module)
+  - [The 15% Maximum Slope Rule](#-the-15-maximum-slope-rule)
+  - [Mass Haul & Longitudinal Compensation](#-mass-haul--longitudinal-compensation)
+  - [Complete 3D Earthwork Model](#-complete-3d-earthwork-model)
+- [Architectural Section Module (`corte_arquitetonico.py`)](#-architectural-section-module-cortearquitetonicopy)
+- [How to Use in Grasshopper](#-how-to-use-in-grasshopper)
+- [Calculation Methodology & Standards](#-calculation-methodology--standards)
+- [License](#-license)
 
 ---
 
-## 🧭 Visão Geral dos Módulos
+## 🧭 Module Overview
 
-O repositório fornece duas ferramentas especializadas independentes:
+The suite provides two specialized, production-ready modules:
 
-| Módulo | Arquivo Principal | Finalidade | Principais Destaques |
+| Module | Primary Script | Domain | Key Features |
 | :---: | :--- | :--- | :--- |
-| **Terraplenagem Multi-Eixos & Modelo 3D** | [`corte_terraplenagem.py`](corte_terraplenagem.py) | **Engenharia & Topografia** | Multi-eixos transversais (A, B, C...) e longitudinais (1, 2, 3...), greides interativos com regra de 15% máx, cálculo de áreas e cubação prismoidal (AGPTEA), compensação interna, banners de transporte, planta técnica cotada e modelo 3D colorido. |
-| **Implantação Arquitetônica** | [`corte_arquitetonico.py`](corte_arquitetonico.py) | **Arquitetura & Urbanismo** | Inserção de residência no relevo, lajes de piso e cobertura em balanço, fundações adaptadas, platô nivelado, rampa de acesso, cotas de nível NBR e linha do perfil natural. |
+| **Multi-Axis Earthwork & 3D Model** | [`corte_terraplenagem.py`](corte_terraplenagem.py) | **Civil Engineering & Surveying** | Multi-axis transverse (A, B, C...) and longitudinal (1, 2, 3...) sections, interactive grading curves with 15% slope ceiling, AGPTEA Average End Area volume calculation, internal mass haul compensation, dimensioned technical plan view, and full 3D color-coded earthwork mesh. |
+| **Architectural Building Section** | [`corte_arquitetonico.py`](corte_arquitetonico.py) | **Architecture & Urban Design** | Natural terrain intersection, building footprint clipping, cantilever roof/canopies, structural foundations, graded pad, access ramp, NBR 6492 elevation markers, and dimension selector modes. |
 
 ---
 
-## 🌟 Novidades da Versão 3.0.0 (v3.0.0)
+## 🌟 What's New in v3.1.0 & v3.0.0
 
-A versão **3.0.0** consolida um avanço estrutural e operacional na suíte, transformando o script em uma solução completa de terraplenagem para loteamentos, platôs e obras de contenção:
+### Version 3.1.0
+- **Full Internationalization (English)**: All source code, docstrings, technical drawing callouts, banners, and calculation reports translated into English.
+- **Dual-Language Parameter Aliasing**: All Grasshopper inputs accept both **English** (`Terrain`, `SectionLines`, `GradingLine`, `BulkingFactor`, `MaxSlope`) and **Português** (`Terreno`, `LinhasCorte`, `CurvaProjeto`, `Empolamento`, `InclinacaoMaxima`), guaranteeing 100% backwards compatibility with existing `.gh` definitions.
+- **Crash-Proof Stroke Vector Font Engine**: Completely autonomous Python vector typography engine replacing native Rhino text explosion routines, ensuring rock-solid stability in Rhino 8 on .NET Core without any external dependencies.
 
-1. **Sistema Multi-Eixos Transversais e Longitudinais Alinhados (NBR 6492)**:
-   - Ordenação dos eixos normativos: **de cima para baixo** (A, B, C... Z, AA...) e **da esquerda para a direita** (1, 2, 3... N).
-   - Desenho 2D organizado em **duas colunas paralelas**:
-     - **Coluna 1**: Seções Transversais ($A - A$, $B - B$, $C - C$...).
-     - **Coluna 2**: Seções Longitudinais ($1 - 1$, $2 - 2$, $3 - 3$...).
-   - Intersecções espaciais automatizadas: identificação de eixos transversais cruzando seções longitudinais (e vice-versa), com balões de chamada NBR, cotas Z do terreno e greide e nós de cruzamento.
-
-2. **Delimitação Estrita pelo Relevo**:
-   - Os perfis são limitados rigorosamente até o término das curvas de nível/relevo, eliminando pontas artificiais ou extensões planas fictícias fora do terreno.
-
-3. **Planta Baixa Técnica com Grade de Quadrantes**:
-   - Identificação automática dos eixos ordenados em planta com balões NBR 6492 e setas indicativas do sentido de visada.
-   - Cálculo automático dos centroides dos quadrantes ($A1, A2, B1, B2...$) com insígnias técnicas.
-   - Cadeia de cotas acumuladas e parciais ao longo de linha de alinhamento perpendicular aos eixos.
-
-4. **Greide Interativo e Regra dos 15% de Inclinação Máxima**:
-   - Reconhecimento automático de linhas delimitadoras desenhadas no Rhino (`CurvaProjeto` / `LinhaDelimitadora`), tanto sobre as seções 2D na vista Top quanto no relevo 3D.
-   - *Snapping* inteligente por proximidade para curvas desenhadas soltas sobre a área da seção.
-   - **Regra dos 15%**: Verificação automática da rampa máxima. Se a inclinação da linha delimitadora exceder 15%, o greide é automaticamente limitado a 15,0% e destacado visualmente no desenho técnico e no memorial.
-
-5. **Compensação Interna e Balanço Progressivo (*Mass Haul*)**:
-   - Seta vermelha indicativa de compensação interna entre trecho de corte e trecho de aterro adjacente na mesma seção.
-   - Banners técnicos automáticos entre seções consecutivas informando: distância entre eixos ($D$), volume de corte ($V_c$), volume de aterro ($V_a$), saldo do trecho e destino das massas (sobra para bota-fora vs déficit para empréstimo).
-
-6. **Modelo 3D Completo de Terraplenagem**:
-   - Superfície 3D do terreno modificado com coloração técnica:
-     - **Laranja** (`RGB 245, 130, 32`): Zonas de **Corte**.
-     - **Verde** (`RGB 46, 204, 113`): Zonas de **Aterro**.
-     - **Cinza Claro** (`RGB 205, 210, 205`): Zonas Neutras / Passagem.
-   - Fatias verticais 3D dos perfis diretamente na posição UTM/mundo do relevo.
-   - Linhas e greides 3D sobre o terreno.
-
-7. **Estabilidade Absoluta no Rhino 8 (.NET Core 8)**:
-   - Sanitização de topologia de malhas (`rg.Mesh`), eliminando faces degeneradas de espessura nula nos pontos de passagem ($Z_{\text{TN}} = Z_{\text{PR}}$).
-   - Decomposição triangular limpa, filtragem de vértices duplicados e validação estrita de polilinhas (`IsValid`), prevenindo falhas de acesso de memória nativa (`coreclr.dll`).
+### Version 3.0.0
+1. **Aligned Multi-Axis Transverse & Longitudinal System (NBR 6492)**:
+   - Normative axis ordering: **top-to-bottom** (A, B, C... Z, AA...) and **left-to-right** (1, 2, 3... N).
+   - 2D section drawings organized in **two parallel columns**:
+     - **Column 1**: Cross Sections ($A - A$, $B - B$, $C - C$...).
+     - **Column 2**: Longitudinal Profiles ($1 - 1$, $2 - 2$, $3 - 3$...).
+   - Automatic cross-axis intersections with NBR bubble tags, elevation nodes, and alignment dimensions.
+2. **Strict Terrain Boundary Truncation**:
+   - Profiles strictly terminate at the true boundaries of contour lines / terrain mesh, eliminating artificial flat extensions.
+3. **Technical Plan View with Quadrant Grid**:
+   - Automatic dimensioned axes in plan view with NBR 6492 circular bubbles and sight arrows.
+   - Quadrant centroid badges ($A1, A2, B1, B2...$) and exterior cumulative/partial dimension lines.
+4. **Interactive Grade & 15% Maximum Slope Rule**:
+   - Automatic recognition of project boundary curves drawn in Rhino (2D Top view or 3D).
+   - Intelligent proximity snapping to corresponding section profiles.
+   - Enforces a 15% maximum slope limit ($i \le 0.15$), clamping excessive slopes while preserving grade elevation.
+5. **Internal Compensation & Progressive Mass Haul Balancing**:
+   - Red arrows visualising intra-section mass compensation (cut supplying adjacent fill).
+   - Inter-section mass haul transfer banners detailing station distance ($D$), cut volume ($V_c$), fill volume ($V_a$), net balance, and hauling destination (spoil disposal vs borrow pit import).
+6. **Complete 3D Earthwork Model**:
+   - Color-coded proposed terrain mesh:
+     - **Orange** (`RGB 245, 130, 32`): Cut zones (Excavation).
+     - **Green** (`RGB 46, 204, 113`): Fill zones (Embankment).
+     - **Light Gray** (`RGB 205, 210, 205`): Neutral transition areas.
+   - Real-world 3D vertical section slices positioned directly at world/UTM coordinates.
 
 ---
 
-## 🚜 Módulo de Terraplenagem & Volumes (`corte_terraplenagem.py`)
+## 🚜 Earthwork & Volumes Module (`corte_terraplenagem.py`)
 
-Projetado para estudos de viabilidade, projetos executivos de terraplenagem e quantificação de terra.
+Designed for feasibility studies, executive subdivision earthwork grading, and precise contractor cubic volume accounting.
 
-### Entradas (Inputs) - Terraplenagem:
+### Inputs - Earthwork Module:
 
-| Parâmetro | Type Hint | Acesso | Padrão | Descrição |
+| Parameter (Bilingual) | Type Hint | Access | Default | Description |
 | :--- | :--- | :---: | :---: | :--- |
-| `Terreno` | `Curve` / `Mesh` | **List** | *Obrigatório* | Curvas de nível 3D ou malha topográfica do relevo. |
-| `LinhasCorte` *(ou `LinhaCorte`)* | `Curve` | **List / Item** | *Obrigatório* | Linhas de corte principais transversais (A, B, C...). |
-| `LinhasLongitudinais` *(ou `EixosV`)* | `Curve` | **List / Item** | `None` | Eixos longitudinais de corte (1, 2, 3...) para análise tridimensional. |
-| `CurvaProjeto` *(ou `LinhaDelimitadora`)* | `Curve` | **List / Item** | `None` | Linha(s) do greide desenhada(s) no Rhino (2D na seção ou 3D no terreno). |
-| `Ponto` | `Point3d` | **Item** | `(0, 0, 0)` | Origem de inserção das seções 2D no plano Top. |
-| `FatorEmpolamento` *(ou `Empolamento`)* | `float` | **Item** | `1.20` | Fator de expansão volumétrica do solo para transporte (1,20 = 20%). |
-| `LarguraFaixa` *(ou `Largura`)* | `float` | **Item** | `1.0` | Largura de influência para cubação de seção única isolada ($m$). |
-| `InclinacaoMaxima` | `float` | **Item** | `0.15` | Inclinação máxima permitida para o greide (padrão: 15% = 0,15). |
-| `ModoVisualizacao` *(ou `Seletor`)* | `int` | **Item** | `1` | `1`: Terraplenagem completa, `2`: Apenas TN, `0`: Ambos com cotas. |
-| `Escala` | `float` | **Item** | `1.0` | Escala técnica para símbolos, balões e textos NBR. |
+| `Terrain` / `Terreno` | `Curve` / `Mesh` | **List** | *Required* | 3D contour curves or topographic terrain mesh. |
+| `SectionLines` / `LinhasCorte` | `Curve` | **List / Item** | *Required* | Primary cross-sectional cut lines (Sections A, B, C...). |
+| `LongitudinalLines` / `EixosVerticais` | `Curve` | **List / Item** | `None` | Longitudinal cut axes (1, 2, 3...) for multi-axis 3D analysis. |
+| `GradingLine` / `CurvaProjeto` / `BoundaryLine` | `Curve` | **List / Item** | `None` | Proposed grade curve(s) drawn directly in Rhino (2D or 3D). |
+| `MaxSlope` / `InclinacaoMaxima` | `float` | **Item** | `15.0` | Maximum allowable slope for grading lines (default: 15% = 0.15). |
+| `ProjectElevation` / `NivelProjeto` | `float` / `list` | **Item / List** | `None` | Finished grade elevation per section or quadrant. |
+| `Point` / `Ponto` | `Point3d` | **Item** | `(0, 0, 0)` | Base insertion point for 2D section drawings in Top View. |
+| `Spacing` / `Espacamento` | `float` | **Item** | `Auto` | Uniform vertical spacing between 2D section drawings. |
+| `Width` / `Largura` | `float` | **Item** | `1.0` | Influence width for single isolated section volume calculation ($m$). |
+| `BulkingFactor` / `Empolamento` | `float` | **Item** | `1.20` | Soil bulking/swell factor for hauling volume (1.20 = 20% expansion). |
+| `Selector` / `Seletor` | `int` | **Item** | `1` | `1`: Proposed Earthwork, `2`: Natural Terrain Only, `0`: Full with all dimensions. |
+| `Scale` / `Escala` | `float` | **Item** | `1.0` | Scale multiplier for NBR symbols, text annotations, and bubbles. |
 
-### Saídas (Outputs) - Terraplenagem:
+### Outputs - Earthwork Module:
 
-| Saída | Nome Técnico | Tipo | Descrição |
+| Output | Technical Name | Type | Description |
 | :---: | :--- | :---: | :--- |
-| **`a`** | `Modelo3D` | `List[Geometry]` | **Modelo 3D Completo**: Superfície projetada com malhas coloridas (Laranja/Verde/Neutro), fatias 3D das seções e curvas 3D de greide/terreno. |
-| **`b`** | `PlantaBaixa` | `List[Geometry]` | **Planta Baixa Técnica**: Eixos cotados A, B, C... e 1, 2, 3... com balões circulares NBR, setas de visada, linha de cota exterior e quadrantes A1, A2... |
-| **`c`** | `DesenhoSecoes` | `List[Geometry]` | **Desenho Completo das Seções 2D**: Coluna 1 (Seções Transversais) e Coluna 2 (Seções Longitudinais) com hachuras Laranja/Verde, greide, cotas NBR, eixos cruzados e banners de fluxo de massa. |
-| **`d`** | `PoligonosCorte` | `List[Curve]` | **Polígonos 2D de CORTE**: Curvas fechadas e limpas para cálculo de `Area`, aplicação de `Hatch` ou envio para layers CAD. |
-| **`e`** | `PoligonosAterro` | `List[Curve]` | **Polígonos 2D de ATERRO**: Curvas fechadas e limpas para cálculo de `Area`, aplicação de `Hatch` ou envio para layers CAD. |
-| **`f`** | `MemorialTecnico` | `str` | **Memorial Técnico AGPTEA**: Quadro analítico em texto para conexão em `Panel`, contendo volumes parciais e totais, balanço global e diagnóstico operacional (Bota-fora / Empréstimo). |
+| **`a`** | `Complete3DModel` | `List[Geometry]` | **Complete 3D Earthwork Model**: Proposed terrain surface with color-coded meshes (Orange/Green/Neutral), 3D vertical section slices, and 3D grade/ground curves. |
+| **`b`** | `PlanView` | `List[Geometry]` | **Technical Plan View**: Dimensioned axes A, B, C... and 1, 2, 3... with NBR circular bubbles, sight arrows, outer cumulative dimension chains, and quadrant labels (A1, A2...). |
+| **`c`** | `SectionDrawings` | `List[Geometry]` | **Complete 2D Section Drawings**: Column 1 (Cross Sections) and Column 2 (Longitudinal Profiles) with Orange/Green hatch meshes, proposed grade, NBR level markers, cross-axis extension lines, and mass haul banners. |
+| **`d`** | `CutPolygons` | `List[Curve]` | **2D Cut Polygons**: Clean closed curves for each cut area (for Grasshopper `Area`, `Hatch`, or baking into CAD layers). |
+| **`e`** | `FillPolygons` | `List[Curve]` | **2D Fill Polygons**: Clean closed curves for each fill area (for Grasshopper `Area`, `Hatch`, or baking into CAD layers). |
+| **`f`** | `Report` | `str` | **AGPTEA Earthwork Calculation Report**: Formatted analytical text report for `Panel` connection, summarizing station areas, partial and total volumes, global mass balance, and hauling diagnostics. |
 
 ---
 
-### 📐 Regra dos 15% para a Linha Delimitadora
+### 📐 The 15% Maximum Slope Rule
 
-Em projetos de terraplenagem e arruamento, inclinações superiores a 15% inviabilizam o tráfego regular de máquinas e veículos pesados:
+In civil earthwork, road design, and lot grading, slopes exceeding 15% hinder heavy equipment operation and standard vehicular circulation:
 
-- O algoritmo analisa a declividade efetiva $i = \frac{\Delta Z}{L}$ de cada segmento da linha delimitadora.
-- Se a linha desenhada pelo projetista apresentar inclinação $|i| > 15\%$, ela é suavemente ajustada ao teto de **15,0%**, mantendo o ponto inicial e recalculando a altura máxima.
-- A restrição é explicitada diretamente no desenho da seção:
-  - `GREIDE: i = +12.3% (REGRA <= 15% OK)`
-  - `GREIDE: i = +15.0% [LIMITADO A 15,0% MÁX]`
-
----
-
-### ⚖️ Balanço de Massas e Diagrama de Transporte (*Mass Haul*)
-
-Entre duas seções sucessivas (ex: $A - A$ e $B - B$), o algoritmo calcula o volume prismoidal:
-
-$$V_{trecho} = \left(\frac{A_1 + A_2}{2}\right) \cdot D$$
-
-- O saldo progressivo indica se o material escavado é suficiente para suprir os aterros das estacas seguintes.
-- Quando o saldo acumulado for positivo, o banner técnico indica a sobra a ser transferida ou destinada a **bota-fora**.
-- Quando o saldo for negativo, o banner aponta o déficit a ser suprido por **área de empréstimo (jazida)**.
+- The algorithm calculates the effective slope of each grading segment:
+  $$i = \frac{\Delta Z}{L}$$
+- If the proposed boundary line exceeds $|i| > 15\%$, the grade curve is clamped to the **15.0%** threshold while retaining the base elevation point.
+- The constraint status is explicitly labeled on the technical drawing:
+  - `GRADE: i = +12.3% (RULE <= 15% OK)`
+  - `GRADE: i = +15.0% [CLAMPED TO 15.0% MAX]`
 
 ---
 
-### 🧊 Modelo 3D de Terraplenagem
+### ⚖️ Mass Haul & Longitudinal Compensation
 
-Ao visualizar o modelo na perspectiva 3D do Rhino:
-- A saída **`a`** projeta a nova topografia resultante diretamente sobre o relevo original.
-- Permite analisar o impacto visual dos cortes e aterros antes de enviar para execução no canteiro de obras.
-- As fatias verticais 3D cortam o relevo ao longo de cada eixo, proporcionando uma leitura intuitiva do desnível.
+Between consecutive cross sections ($A - A$ and $B - B$), volumes are calculated using AGPTEA's Average End Area formulation:
 
----
+$$V = \left(\frac{A_1 + A_2}{2}\right) \cdot D$$
 
-## 🏗️ Módulo Arquitetônico (`corte_arquitetonico.py`)
-
-Projetado para apresentar a inserção da edificação no terreno com desenho arquitetônico completo:
-
-- **Corte Longitudinal**: Paredes em corte, fundações contínuas, laje de piso, beiral curvo e rampa de acesso em aterro.
-- **Corte Transversal**: Platô contínuo, nivelado e protegido por muros de contenção nas extremidades.
-- **Simbologia NBR 6492**: Símbolos triangulares de nível preenchidos, linhas de chamada e textos vetoriais com indicação de sinal (+ / -).
+- **Progressive Mass Haul**: Evaluates whether excavated soil from station $i$ satisfies the embankment requirement of station $i+1$.
+- **Surplus**: When cumulative balance is positive, transfer banners indicate excess material hauled to the next section or to a **licensed spoil disposal site**.
+- **Deficit**: When cumulative balance is negative, transfer banners specify the volume required from a **borrow pit**.
 
 ---
 
-## 🚀 Como Utilizar no Grasshopper
+### 🧊 Complete 3D Earthwork Model
 
-1. Abra o **Rhinoceros 8** e inicie o **Grasshopper**.
-2. Adicione na tela um componente **Python 3 Script** (ou **GhPython Script**).
-3. Abra o editor de código (duplo clique) e cole o código de [`corte_terraplenagem.py`](corte_terraplenagem.py) (ou [`corte_arquitetonico.py`](corte_arquitetonico.py)).
-4. Configure as entradas no componente do Grasshopper:
-   - `Terreno`: clique com o botão direito -> **List Access** -> **Type Hint: GeometryBase** (ou Curve).
-   - `LinhasCorte`: clique com o botão direito -> **List Access** -> **Type Hint: Curve**.
-   - Demais entradas em **Item Access**.
-5. Conecte as curvas do Rhino nas entradas.
-6. Conecte um componente **Panel** na saída **`f`** para visualizar o relatório de volumes.
-7. Para desenhar o greide livremente:
-   - Desenhe uma `Line` ou `Polyline` diretamente sobre a seção 2D desenhada na vista Top (ou no relevo 3D).
-   - Conecte essa curva na entrada `CurvaProjeto` (ou `LinhaDelimitadora`). A terraplenagem e os volumes serão recalculados em tempo real.
+Viewing output **`a`** in Rhino's 3D Perspective viewport:
+- The color-coded terrain surface dynamically reflects cut (orange), fill (green), and grade transitions.
+- Evaluates visual and environmental impacts before ground-breaking.
+- 3D vertical section slices provide direct spatial verification of elevation offsets.
 
 ---
 
-## 📚 Metodologia Técnica de Cálculo
+## 🏗️ Architectural Section Module (`corte_arquitetonico.py`)
 
-As formulações de cálculo de áreas e cubação de terraplenagem implementadas seguem as referências consagradas da literatura técnica de engenharia:
+Designed for architectural presentation of residential or commercial buildings integrated with site topography:
 
-- **ABNT NBR 6492**: Representação de projetos de arquitetura (linhas, convenções, eixos e níveis).
+- **Longitudinal Section**: Building walls, continuous foundation trenches, ground floor slab, cantilever roof/canopy, and access ramp embankment.
+- **Cross Section**: Continuous graded pad, retaining slope/walls, and terrain profile.
+- **NBR 6492 Level Notation**: Standard triangular level markers with sign prefixes (`+` / `-`).
+- **Selector Modes**:
+  - `Mode 0`: All dimensions & elevations (Natural Terrain + Proposed Project).
+  - `Mode 1`: Proposed project elevations only (+ Natural Ground Profile) [Default].
+  - `Mode 2`: Natural terrain elevations only.
+
+---
+
+## 🚀 How to Use in Grasshopper
+
+1. Open **Rhinoceros 8** and launch **Grasshopper**.
+2. Add a **Python 3 Script** (or **GhPython Script**) component to the canvas.
+3. Double-click the component and paste the contents of [`corte_terraplenagem.py`](corte_terraplenagem.py) (or [`corte_arquitetonico.py`](corte_arquitetonico.py)).
+4. Configure component inputs:
+   - `Terrain` (or `Terreno`): Right-click -> **List Access** -> **Type Hint: GeometryBase** (or `Curve`).
+   - `SectionLines` (or `LinhasCorte`): Right-click -> **List Access** -> **Type Hint: Curve**.
+   - Other inputs set to **Item Access**.
+5. Connect your Rhino geometry to the inputs.
+6. Connect a **Panel** component to output **`f`** to inspect the calculation report.
+7. **Interactive Grade Drawing**:
+   - Draw a `Line` or `Polyline` directly over the 2D section in the Top viewport (or in 3D).
+   - Connect it to `GradingLine` (or `CurvaProjeto`). Earthwork volumes and 3D meshes update in real time.
+
+---
+
+## 📚 Calculation Methodology & Standards
+
+Earthwork formulas and architectural graphic representations follow recognized civil engineering and surveying standards:
+
+- **ABNT NBR 6492**: Architectural Project Documentation (lines, conventions, coordinate axes, and elevation levels).
 - **AGPTEA / UFPR**: *Topografia: Cálculo de Volumes (Notas de Aula)* — Prof. Luís Augusto Koenig Veiga.
-  - [Download da Apostila Técnica da AGPTEA](https://www.bibliotecaagptea.org.br/agricultura/topografia/livros/TOPOGRAFIA%20CALCULO%20DE%20VOLUMES%20NOTAS%20DE%20AULA.pdf)
+  - [Download AGPTEA Technical Handout (PDF)](https://www.bibliotecaagptea.org.br/agricultura/topografia/livros/TOPOGRAFIA%20CALCULO%20DE%20VOLUMES%20NOTAS%20DE%20AULA.pdf)
 
 ---
 
-## 📜 Licença
+## 📜 License
 
-Distribuído sob a licença [MIT](LICENSE). Desenvolvido por **Yan Fabio**.
+Distributed under the [MIT](LICENSE) License. Developed by **Yan Fabio**.
