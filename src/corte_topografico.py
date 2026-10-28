@@ -2121,6 +2121,7 @@ def evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, 
             })
 
     return {
+        'label': label_sec,
         'clean_pts': clean_pts,
         'total_ext': total_ext,
         'crv_3d': crv_3d,
@@ -2864,6 +2865,7 @@ def run():
         s_data = evaluate_section_grade_and_volumes(
             t_info, crv_p, sec_levels, lbl, s, base_x, base_y, curve_base_y, max_slope=max_slope, road_polygons=road_polygons
         )
+        s_data['label'] = lbl
         sec_data_list.append(s_data)
 
     # =========================================================================
@@ -2977,6 +2979,7 @@ def run():
             s_data_v['max_h_corte'] = max_hc_v
             s_data_v['max_h_aterro'] = max_ha_v
 
+        s_data_v['label'] = lbl_v
         sec_v_data_list.append(s_data_v)
 
     # =========================================================================
@@ -3297,9 +3300,10 @@ def run():
         "-----------------------------------------------------------------------------------------"
     ]
 
-    for sd in sec_data_list:
+    for idx_sd, sd in enumerate(sec_data_list):
+        lbl_sd = sd.get('label') or (labels_t[idx_sd] if idx_sd < len(labels_t) else "SEC {}".format(idx_sd + 1))
         relatorio.append("{:<10} | {:<10.2f} m | {:<12.2f} m² | {:<12.2f} m² | {:<10.2f} m | {:<10.2f} m".format(
-            sd['label'], sd['total_ext'], sd['area_total_corte'], sd['area_total_aterro'], sd['max_h_corte'], sd['max_h_aterro']
+            lbl_sd, sd.get('total_ext', 0.0), sd.get('area_total_corte', 0.0), sd.get('area_total_aterro', 0.0), sd.get('max_h_corte', 0.0), sd.get('max_h_aterro', 0.0)
         ))
 
     sec_num_bal = 2
@@ -3311,9 +3315,11 @@ def run():
             "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("AXIS", "LENGTH", "CUT AREA", "FILL AREA", "MAX H. CUT", "MAX H. FILL"),
             "-----------------------------------------------------------------------------------------"
         ])
-        for sdv in sec_v_data_list:
+        for idx_sdv, sdv in enumerate(sec_v_data_list):
+            lbl_v_sdv = sdv.get('label') or (labels_v[idx_sdv] if idx_sdv < len(labels_v) else str(idx_sdv + 1))
+            lbl_display = str(lbl_v_sdv) if str(lbl_v_sdv).upper().startswith("AXIS") else "AXIS " + str(lbl_v_sdv)
             relatorio.append("{:<10} | {:<10.2f} m | {:<12.2f} m² | {:<12.2f} m² | {:<10.2f} m | {:<10.2f} m".format(
-                "AXIS " + sdv['label'], sdv['total_ext'], sdv['area_total_corte'], sdv['area_total_aterro'], sdv['max_h_corte'], sdv['max_h_aterro']
+                lbl_display, sdv.get('total_ext', 0.0), sdv.get('area_total_corte', 0.0), sdv.get('area_total_aterro', 0.0), sdv.get('max_h_corte', 0.0), sdv.get('max_h_aterro', 0.0)
             ))
         sec_num_bal = 3
 
