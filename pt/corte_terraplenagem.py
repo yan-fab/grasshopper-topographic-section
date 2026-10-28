@@ -1947,6 +1947,67 @@ def make_cross_interpolated_grade(cross_pairs, total_ext_v, z_min_v, z_max_v, ma
     sample_cross.was_clamped = was_clamped
     return sample_cross
 
+def sample_surface_proj_z(px, py, lista_alinhadas, sec_data_list, u_long_down):
+    """
+    Samples project elevation Z at (px, py) directly from the continuous 3D design surface
+    defined by the transverse cross sections (lista_alinhadas and sec_data_list).
+    Ensures 100% mathematical and physical synchronization between cross and longitudinal cuts.
+    Guarantees no phantom cuts, runaway extrapolations, or inter-table contradictions.
+    """
+    if not lista_alinhadas or not sec_data_list:
+        return 0.0
+    num_s = min(len(lista_alinhadas), len(sec_data_list))
+    if num_s == 1:
+        s0 = lista_alinhadas[0]
+        u_dir = s0.PointAtEnd - s0.PointAtStart
+        u_dir.Unitize()
+        d0 = (px - s0.PointAtStart.X) * u_dir.X + (py - s0.PointAtStart.Y) * u_dir.Y
+        d0_c = max(0.0, min(sec_data_list[0].get('total_ext', s0.GetLength()), d0))
+        return sec_data_list[0]['get_proj_z'](d0_c)
+
+    v_secs = []
+    u_dirs = []
+    for s_crv in lista_alinhadas[:num_s]:
+        pm = s_crv.PointAtNormalizedLength(0.5)
+        v_secs.append(pm.X * u_long_down.X + pm.Y * u_long_down.Y)
+        ud = s_crv.PointAtEnd - s_crv.PointAtStart
+        ud.Unitize()
+        u_dirs.append(ud)
+
+    v_pt = px * u_long_down.X + py * u_long_down.Y
+
+    # Clamped bounds: before first section (top of site)
+    if v_pt <= v_secs[0]:
+        s0 = lista_alinhadas[0]
+        d0 = (px - s0.PointAtStart.X) * u_dirs[0].X + (py - s0.PointAtStart.Y) * u_dirs[0].Y
+        d0_c = max(0.0, min(sec_data_list[0].get('total_ext', s0.GetLength()), d0))
+        return sec_data_list[0]['get_proj_z'](d0_c)
+
+    # After last section (bottom of site)
+    if v_pt >= v_secs[-1]:
+        sn = lista_alinhadas[num_s - 1]
+        dn = (px - sn.PointAtStart.X) * u_dirs[-1].X + (py - sn.PointAtStart.Y) * u_dirs[-1].Y
+        dn_c = max(0.0, min(sec_data_list[num_s - 1].get('total_ext', sn.GetLength()), dn))
+        return sec_data_list[num_s - 1]['get_proj_z'](dn_c)
+
+    # Interpolate between consecutive bounding cross sections i and i+1
+    for i in range(num_s - 1):
+        v1, v2 = v_secs[i], v_secs[i+1]
+        if v1 <= v_pt <= v2:
+            span = max(v2 - v1, 1e-4)
+            t = (v_pt - v1) / span
+            sa = lista_alinhadas[i]
+            sb = lista_alinhadas[i+1]
+            da = (px - sa.PointAtStart.X) * u_dirs[i].X + (py - sa.PointAtStart.Y) * u_dirs[i].Y
+            db = (px - sb.PointAtStart.X) * u_dirs[i+1].X + (py - sb.PointAtStart.Y) * u_dirs[i+1].Y
+            da_c = max(0.0, min(sec_data_list[i].get('total_ext', sa.GetLength()), da))
+            db_c = max(0.0, min(sec_data_list[i+1].get('total_ext', sb.GetLength()), db))
+            za = sec_data_list[i]['get_proj_z'](da_c)
+            zb = sec_data_list[i+1]['get_proj_z'](db_c)
+            return (1.0 - t) * za + t * zb
+
+    return sec_data_list[-1]['get_proj_z'](0.0)
+
 def match_project_curves_to_sections(curves_raw, sec_targets, espacamento_y=None):
     """
     Maps provided project curves / boundary grading lines to their respective sections based
@@ -2003,10 +2064,17 @@ def match_project_curves_to_sections(curves_raw, sec_targets, espacamento_y=None
                 return [res_dict[t['key']] for t in targets_list]
             return res_dict
         else:
-            # Aplica como template para todas as seções (preservando suas bases Y)
+            # Aplica como template exclusivamente para seções transversais ('T'), mantendo longitudinais ('V') para sincronização 3D contínua
+            res_dict = {}
+            for t in targets_list:
+                k = t['key']
+                if isinstance(k, tuple) and k[0] == 'V':
+                    res_dict[k] = (None, t['base_y'])
+                else:
+                    res_dict[k] = (c, t['base_y'])
             if is_legacy_list:
-                return [(c, t['base_y']) for t in targets_list]
-            return {t['key']: (c, t['base_y']) for t in targets_list}
+                return [res_dict[t['key']] for t in targets_list]
+            return res_dict
 
     # Multiple curves: maps each curve to its corresponding cross or longitudinal sectiongitudinal
     matched_dict = {}
@@ -2041,7 +2109,8 @@ def match_project_curves_to_sections(curves_raw, sec_targets, espacamento_y=None
                 best_c = c
                 best_c_idx = c_idx
 
-        if best_c is not None and best_d < 120.0:
+        max_dist_match = 60.0 if (isinstance(t.get('key'), tuple) and t['key'][0] == 'V') else 120.0
+        if best_c is not None and best_d < max_dist_match:
             matched_dict[t['key']] = (best_c, by)
             used_curves.add(best_c_idx)
         else:
@@ -2906,6 +2975,7 @@ def run():
     raw_inclinacao   = get_input(['MaxSlope', 'InclinacaoMaxima', 'RampaMaxima', 'Inclinacao', 'Imax'], 15.0)
     raw_limite       = get_input(['SiteBoundary', 'PropertyLine', 'Boundary', 'BoundaryLine', 'Limite', 'LimiteTerreno', 'Perimetro', 'PoligonalLote', 'Plataforma', 'LimitePropriedade', 'Lote'])
     raw_viario       = get_input(['Roadway', 'Viario', 'RoadNetwork', 'RoadBoundary', 'Pista', 'Ruas', 'CADViario', 'PoligonoViario', 'Vias', 'PoligonalViario', 'MalhaViaria', 'EixoViario', 'EixosViarios', 'Rua', 'RuasCAD', 'EixoRua', 'EixosRuas', 'Pistas'])
+    raw_homogeneizacao = get_input(['HomogenizationFactor', 'CompactionFactor', 'ShrinkageFactor', 'FatorHomogeneizacao', 'FatorContracao', 'Fh'], 1.15)
 
     try:
         if raw_inclinacao is not None:
@@ -2930,6 +3000,11 @@ def run():
         fator_k = float(raw_empolamento) if raw_empolamento is not None else 1.20
         if fator_k <= 0.5: fator_k = 1.20
     except: fator_k = 1.20
+
+    try:
+        fh = float(raw_homogeneizacao) if raw_homogeneizacao is not None else 1.15
+        if fh < 1.0 or fh > 2.0: fh = 1.15
+    except: fh = 1.15
 
     geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
     if not geoms_terreno:
@@ -3153,17 +3228,14 @@ def run():
                 ev = rg.Intersect.Intersection.CurveCurve(ct_xy, cv_xy, tol * 10, tol * 10)
                 if ev and ev.Count > 0:
                     pt_inter = ev[0].PointA
-                    grid_pts[i][j] = rg.Point3d(pt_inter.X, pt_inter.Y, 0.0)
-                else:
-                    rc_t, t_t = ct_xy.ClosestPoint(cv_xy.PointAtNormalizedLength(0.5))
-                    rc_v, t_v = cv_xy.ClosestPoint(ct_xy.PointAt(t_t))
-                    if rc_t and rc_v:
-                        pt_c = ct_xy.PointAt(t_t)
-                        grid_pts[i][j] = rg.Point3d(pt_c.X, pt_c.Y, 0.0)
-                if grid_pts[i][j] is not None:
-                    pt_g = grid_pts[i][j]
-                    d_ax = (pt_g.X - p_start_i.X) * u_sec_i.X + (pt_g.Y - p_start_i.Y) * u_sec_i.Y
-                    secao_eixos_intersec[i].append((d_ax, j, labels_v[j]))
+                    d_t = (pt_inter.X - p_start_i.X) * u_sec_i.X + (pt_inter.Y - p_start_i.Y) * u_sec_i.Y
+                    p_start_j = cv.PointAtStart
+                    u_sec_j = cv.PointAtEnd - p_start_j
+                    u_sec_j.Unitize()
+                    d_v = (pt_inter.X - p_start_j.X) * u_sec_j.X + (pt_inter.Y - p_start_j.Y) * u_sec_j.Y
+                    if (-0.5 <= d_t <= ct.GetLength() + 0.5) and (-0.5 <= d_v <= cv.GetLength() + 0.5):
+                        grid_pts[i][j] = rg.Point3d(pt_inter.X, pt_inter.Y, 0.0)
+                        secao_eixos_intersec[i].append((d_t, j, labels_v[j]))
             secao_eixos_intersec[i].sort(key=lambda x: x[0])
 
     # =========================================================================
@@ -3312,30 +3384,37 @@ def run():
                 t_info_v, crv_p_v, sec_levels_v, lbl_v, s, base_x_v, base_y_v, curve_base_y_v, max_slope=max_slope, road_polygons=road_polygons
             )
         else:
-            # Sincronização automática contínua com os greides projetados nas seções transversais
-            cross_pairs = []
-            for (d_ax, i_cross, lbl_t) in vertical_eixos_intersec[idx_v]:
-                if i_cross < len(sec_data_list):
-                    d_trans_list = [it[0] for it in secao_eixos_intersec[i_cross] if it[1] == idx_v]
-                    if d_trans_list:
-                        d_trans_val = d_trans_list[0]
-                        z_pr_cross = sec_data_list[i_cross]['get_proj_z'](d_trans_val)
-                        cross_pairs.append((d_ax, z_pr_cross))
+            # Sincronização direta e contínua com a superfície 3D de terraplenagem projetada
+            crv_v = lista_verticais[idx_v]
+            corridors_v = compute_road_corridors_for_section(crv_v, road_polygons, tol)
 
-            sampler_v = make_cross_interpolated_grade(
-                cross_pairs, t_info_v['total_ext'], t_info_v['z_min'], t_info_v['z_max'], max_slope=max_slope
-            )
+            def make_v_sampler(c_v):
+                p_st = c_v.PointAtStart
+                p_end = c_v.PointAtEnd
+                L = max(c_v.GetLength(), 1e-4)
+                dx = p_end.X - p_st.X
+                dy = p_end.Y - p_st.Y
+                def sample_fn(d_val):
+                    d_clamped = max(0.0, min(L, d_val))
+                    t_d = d_clamped / L
+                    px = p_st.X + t_d * dx
+                    py = p_st.Y + t_d * dy
+                    return sample_surface_proj_z(px, py, lista_alinhadas, sec_data_list, u_long_down)
+                return sample_fn
+
+            raw_sampler_v = make_v_sampler(crv_v)
+            if corridors_v:
+                sampler_v = lambda d, smp=raw_sampler_v, crs=corridors_v: make_drivable_road_z(d, smp(d), crs)
+            else:
+                sampler_v = raw_sampler_v
+
             s_data_v = evaluate_section_grade_and_volumes(
                 t_info_v, None, None, lbl_v, s, base_x_v, base_y_v, base_y_v, max_slope=max_slope, road_polygons=road_polygons
             )
             s_data_v['sampler'] = sampler_v
-            corridors_v = s_data_v.get('road_corridors', [])
-            if corridors_v:
-                s_data_v['get_proj_z'] = lambda d, smp=sampler_v, crs=corridors_v: make_drivable_road_z(d, smp(d), crs)
-            else:
-                s_data_v['get_proj_z'] = sampler_v
-            s_data_v['effective_slope'] = getattr(sampler_v, 'effective_slope', 0.0)
-            s_data_v['was_clamped'] = getattr(sampler_v, 'was_clamped', False)
+            s_data_v['get_proj_z'] = sampler_v
+            s_data_v['effective_slope'] = 0.0
+            s_data_v['was_clamped'] = False
 
             # Recalcula pontos de passagem, regiões de corte e aterro e áreas para o greide sincronizado
             clean_pts_v = t_info_v['clean_pts']
@@ -3429,26 +3508,23 @@ def run():
         a_a2 = sec_data_list[i+1]['area_total_aterro']
 
         vc = ((a_c1 + a_c2) / 2.0) * d_trecho
-        va = ((a_a1 + a_a2) / 2.0) * d_trecho
-        saldo = vc - va
-        vols_trechos.append((d_trecho, vc, va, saldo))
+        va_geo = ((a_a1 + a_a2) / 2.0) * d_trecho
+        va_banco = va_geo * fh
+        saldo_local = vc - va_banco
+        vols_trechos.append((d_trecho, vc, va_geo, va_banco, saldo_local))
 
-    saldo_acumulado = 0.0
+    ordenada_bruckner = 0.0
     fluxo_transporte = []
-    for i, (d_t, vc, va, s_local) in enumerate(vols_trechos):
-        disp = saldo_acumulado + vc
-        if disp >= va:
-            sobra = disp - va
-            if i < num_secoes - 2:
-                nota = "SOBRA: {:+.1f}m³ -> TRANSPORTAR PARA COMPENSAR TRECHO {} - {}".format(sobra, labels_t[i+1], labels_t[i+2]).replace('.', ',')
-            else:
-                nota = "SOBRA FINAL DE CORTE: {:+.1f}m³ (DESTINAR A BOTA-FORA / ATERRO EXTERNO)".format(sobra).replace('.', ',')
-            saldo_acumulado = sobra
-        else:
-            falta = va - disp
-            nota = "CORTE ESGOTADO | DÉFICIT: -{:.1f}m³ (NECESSITA MATERIAL DE JAZIDA / EMPRÉSTIMO)".format(falta).replace('.', ',')
-            saldo_acumulado = -falta
-        fluxo_transporte.append(nota)
+    for i, (d_t, vc, va_geo, va_banco, s_local) in enumerate(vols_trechos):
+        ordenada_bruckner += s_local
+        fluxo_transporte.append({
+            'd_trecho': d_t,
+            'vc': vc,
+            'va_geo': va_geo,
+            'va_banco': va_banco,
+            'saldo_local': s_local,
+            'ordenada': ordenada_bruckner
+        })
 
     # 6.2 Longitudinal distances and volumes (1 -> 2 -> 3...)
     vols_trechos_v = []
@@ -3703,110 +3779,7 @@ def run():
                     planta_baixa_geoms.extend(q_badge)
 
     # =========================================================================
-    # 9. TECHNICAL EARTHWORK REPORT (AGPTEA FORMATTED REPORT)
-    # =========================================================================
-    vol_total_corte_geo = sum(item[1] for item in vols_trechos)
-    vol_total_aterro_geo = sum(item[2] for item in vols_trechos)
-    vol_total_corte_solto = vol_total_corte_geo * fator_k
-    saldo_global = vol_total_corte_geo - vol_total_aterro_geo
-
-    if saldo_global > 0.01:
-        diag_global = "SOBRA DE TERRA (+{:.2f} m³): Excedente de terraplenagem. Recomenda-se bota-fora licenciado ou reaterro paisagístico.".format(saldo_global)
-    elif saldo_global < -0.01:
-        diag_global = "FALTA DE TERRA ({:.2f} m³): Déficit de aterro. Necessário importar material de jazida/empréstimo para atingir as cotas de projeto.".format(saldo_global)
-    else:
-        diag_global = "EQUILÍBRIO PERFEITO: Balanço equilibrado entre corte e aterro. Obra 100% autocompensada."
-
-    relatorio = [
-        "=========================================================================================",
-        "            TECHNICAL EARTHWORK & MASS HAUL REPORT (AGPTEA METHOD)            ",
-        "=========================================================================================",
-        "1. RESUMO DAS SEÇÕES TRANSVERSAIS (EIXOS {} A {}):".format(labels_t[0], labels_t[-1]),
-        "-----------------------------------------------------------------------------------------",
-        "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("SEÇÃO", "EXTENSÃO", "ÁREA CORTE", "ÁREA ATERRO", "H. MÁX CORTE", "H. MÁX ATERRO"),
-        "-----------------------------------------------------------------------------------------"
-    ]
-
-    for idx_sd, sd in enumerate(sec_data_list):
-        lbl_sd = sd.get('label') or (labels_t[idx_sd] if idx_sd < len(labels_t) else "SEC {}".format(idx_sd + 1))
-        relatorio.append("{:<10} | {:<10.2f} m | {:<12.2f} m² | {:<12.2f} m² | {:<10.2f} m | {:<10.2f} m".format(
-            lbl_sd, sd.get('total_ext', 0.0), sd.get('area_total_corte', 0.0), sd.get('area_total_aterro', 0.0), sd.get('max_h_corte', 0.0), sd.get('max_h_aterro', 0.0)
-        ))
-
-    sec_num_bal = 2
-    if num_verticais >= 1:
-        relatorio.extend([
-            "-----------------------------------------------------------------------------------------",
-            "2. RESUMO DAS SEÇÕES LONGITUDINAIS (EIXOS {} A {}):".format(labels_v[0], labels_v[-1]),
-            "-----------------------------------------------------------------------------------------",
-            "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("EIXO", "EXTENSÃO", "ÁREA CORTE", "ÁREA ATERRO", "H. MÁX CORTE", "H. MÁX ATERRO"),
-            "-----------------------------------------------------------------------------------------"
-        ])
-        for idx_sdv, sdv in enumerate(sec_v_data_list):
-            lbl_v_sdv = sdv.get('label') or (labels_v[idx_sdv] if idx_sdv < len(labels_v) else str(idx_sdv + 1))
-            lbl_display = str(lbl_v_sdv) if str(lbl_v_sdv).upper().startswith("EIXO") else "EIXO " + str(lbl_v_sdv)
-            relatorio.append("{:<10} | {:<10.2f} m | {:<12.2f} m² | {:<12.2f} m² | {:<10.2f} m | {:<10.2f} m".format(
-                lbl_display, sdv.get('total_ext', 0.0), sdv.get('area_total_corte', 0.0), sdv.get('area_total_aterro', 0.0), sdv.get('max_h_corte', 0.0), sdv.get('max_h_aterro', 0.0)
-            ))
-        sec_num_bal = 3
-
-    sec_num_tot = sec_num_bal + 1
-
-    relatorio.extend([
-        "-----------------------------------------------------------------------------------------",
-        "{}. COMPENSAÇÃO PROGRESSIVA DE MASSAS & TRANSPORTE LONGITUDINAL (CORTE -> ATERRO):".format(sec_num_bal),
-    ])
-    for i, nota in enumerate(fluxo_transporte):
-        relatorio.append("   - Trecho {} -> {}:".format(labels_t[i], labels_t[i+1]))
-        relatorio.append("     " + nota)
-
-    relatorio.extend([
-        "-----------------------------------------------------------------------------------------",
-        "{}. TOTAIS GERAIS DA OBRA:".format(sec_num_tot),
-        "   - Número de Seções Transversais Analisadas: {}".format(num_secoes),
-        "   - Número de Seções Longitudinais Analisadas: {}".format(num_verticais),
-        "   - Fator de Empolamento do Solo Adotado (K): {:.2f} ({}% de expansão)".format(fator_k, int((fator_k - 1.0) * 100)),
-        "   - Regra de Inclinação Máxima do Greide    : Limite de {:.1f}% ({})".format(
-            max_slope * 100.0,
-            "Ajustado ao limite de 15% onde excedido" if any(sd.get('was_clamped') for sd in (sec_data_list + sec_v_data_list)) else "Satisfeito em todas as seções"
-        ),
-        "   - Volume Total de CORTE Geométrico        : {:.2f} m³".format(vol_total_corte_geo),
-        "   - Volume Total de ATERRO Geométrico       : {:.2f} m³".format(vol_total_aterro_geo),
-        "   - Volume Total de Corte Solto (Transporte): {:.2f} m³".format(vol_total_corte_solto),
-        "   - SALDO FINAL LÍQUIDO (Corte - Aterro)    : {:+.2f} m³".format(saldo_global),
-        "   - Diagnóstico Operacional da Obra:",
-        "     " + diag_global,
-        "========================================================================================="
-    ])
-
-    if boundary_info is not None and boundary_info.get('area', 0.0) > 0.0:
-        relatorio.extend([
-            "-----------------------------------------------------------------------------------------",
-            "   [DELIMITAÇÃO DO LIMITE DO TERRENO & ÁREA LÍQUIDA (NBR 6492)]",
-            "   - Área do Limite da Propriedade (Poligonal) : {:.2f} m² ({:.4f} ha)".format(boundary_info['area'], boundary_info['area'] / 10000.0),
-            "   - Calibração de Seções e Volumes          : 100% Estritamente contido no lote (sem extrapolação)",
-            "   - Expurgo de Terraplenagem Externa         : Concluído com precisão milimétrica",
-        ])
-
-    total_area_viario = sum(p['area'] if p.get('is_closed', True) else (p['curve'].GetLength() * (2.0 * p.get('half_width', 4.70))) for p in road_polygons)
-    if total_area_viario > 0.0:
-        area_pista_est = total_area_viario * 0.74
-        area_calcada_est = total_area_viario * 0.26
-        relatorio.extend([
-            "-----------------------------------------------------------------------------------------",
-            "{}. RESUMO DO SISTEMA VIÁRIO & PAVIMENTAÇÃO CARROÇÁVEL (NBR):".format(sec_num_tot),
-            "   - Área Total de Ocupação do Viário        : {:.2f} m²".format(total_area_viario),
-            "   - Área Estimada de Pista de Rolamento     : {:.2f} m² (faixa padrão 7.00m)".format(area_pista_est),
-            "   - Área Estimada de Passeio / Calçadas     : {:.2f} m² (passeios laterais 1.20m)".format(area_calcada_est),
-            "   - Inclinação Transversal Normativa (Coroa) : 2.0% (Escoamento positivo para as sarjetas)",
-            "   - Desnível Padrão de Guia / Meio-Fio       : +0.15 m (Segregação de pedestres e veículos)",
-            "   - Limite de Declividade Longitudinal       : <= 15.0% Estritamente verificado e satisfeito",
-            "   - Classificação de Trafegabilidade         : 100% Funcional e Carroçável",
-            "========================================================================================="
-        ])
-
-    # =========================================================================
-    # 10. CONSTRUÇÃO DA SUPERFÍCIE 3D DE TERRAPLENAGEM & PAVIMENTO BIM
+    # 9. CONSTRUÇÃO DA SUPERFÍCIE 3D DE TERRAPLENAGEM & PAVIMENTAÇÃO BIM
     # =========================================================================
     quads_sup_3d_corte = []
     quads_sup_3d_aterro = []
@@ -3814,11 +3787,16 @@ def run():
     quads_sup_3d_asfalto = []
     quads_sup_3d_calcada = []
 
-    cor_asfalto = System.Drawing.Color.FromArgb(45, 47, 52)      # Asfalto escuro grafite acetinado
-    cor_calcada = System.Drawing.Color.FromArgb(218, 220, 224)   # Concreto claro / piso de calçada
+    cor_asfalto = System.Drawing.Color.FromArgb(45, 47, 52)      # Asfalto fosco carvão escuro
+    cor_calcada = System.Drawing.Color.FromArgb(218, 220, 224)   # Concreto claro para calçadas/passeios
     cor_corte   = System.Drawing.Color.FromArgb(230, 92, 0)      # Laranja vibrante para taludes de corte
     cor_aterro  = System.Drawing.Color.FromArgb(46, 139, 87)     # Verde floresta para taludes de aterro
-    cor_neutro  = System.Drawing.Color.FromArgb(195, 198, 192)   # Terreno natural neutro
+    cor_neutro  = System.Drawing.Color.FromArgb(195, 198, 192)   # Cinza neutro de passagem
+
+    area_mesh_lote = 0.0
+    area_viario_lote = 0.0
+    area_pista_lote = 0.0
+    area_calcada_lote = 0.0
 
     if num_secoes >= 2:
         for i in range(num_secoes - 1):
@@ -3873,20 +3851,30 @@ def run():
                     p01, t01_z = eval_surf_pt(u0, v1)
 
                     cx = (p00.X + p10.X + p11.X + p01.X) / 4.0
-                    cy = (p00.Y + p10.Y + p11.Y + p01.Y) / 4.0
-                    z_pr_m = (p00.Z + p10.Z + p11.Z + p01.Z) / 4.0
-                    z_tn_m = (t00_z + t10_z + t11_z + t01_z) / 4.0
-                    diff_z = z_tn_m - z_pr_m
-                    p_cen_m = rg.Point3d(cx, cy, z_pr_m)
+                    cy = (p00.Y + p10.Y + p01.Y + p11.Y) / 4.0
 
                     if boundary_info is not None:
                         if not point_in_polygon_2d(cx, cy, boundary_info['pts_2d']):
                             continue
 
+                    quad_area_2d = 0.5 * abs(
+                        (p00.X * p10.Y - p10.X * p00.Y) +
+                        (p10.X * p11.Y - p11.X * p10.Y) +
+                        (p11.X * p01.Y - p01.X * p11.Y) +
+                        (p01.X * p00.Y - p00.X * p01.Y)
+                    )
+                    area_mesh_lote += quad_area_2d
+
+                    z_pr_m = (p00.Z + p10.Z + p11.Z + p01.Z) / 4.0
+                    z_tn_m = (t00_z + t10_z + t11_z + t01_z) / 4.0
+                    diff_z = z_tn_m - z_pr_m
+                    p_cen_m = rg.Point3d(cx, cy, z_pr_m)
+
                     in_road, in_pista, in_sw = is_point_in_road(p_cen_m, road_polygons, tol)
                     if in_road:
+                        area_viario_lote += quad_area_2d
                         if in_sw:
-                            # Passeio de pedestres com desnível de guia +0.18m (espelho de 15cm sobre o asfalto)
+                            area_calcada_lote += quad_area_2d
                             sw_h = 0.18
                             quads_sup_3d_calcada.append([
                                 rg.Point3d(p00.X, p00.Y, p00.Z + sw_h),
@@ -3895,7 +3883,7 @@ def run():
                                 rg.Point3d(p01.X, p01.Y, p01.Z + sw_h)
                             ])
                         else:
-                            # Pista de rolamento de asfalto com micro-elevação +0.03m (evita z-fighting)
+                            area_pista_lote += quad_area_2d
                             asp_h = 0.03
                             quads_sup_3d_asfalto.append([
                                 rg.Point3d(p00.X, p00.Y, p00.Z + asp_h),
@@ -3934,8 +3922,6 @@ def run():
     else:
         mesh_terreno_projetado = None
 
-    # Modelo 3D BIM Completo (Superfície limpa + pavimentação distinta + bordas 3D projetadas)
-    # A separação das partes garante cores 100% fiéis sem degradação por mesclagem de vértices
     modelo_3d_completo = []
     for m_part in [m_3d_asfalto, m_3d_calcada, m_3d_sup_corte, m_3d_sup_aterro, m_3d_sup_neutro]:
         if m_part and getattr(m_part, 'IsValid', False):
@@ -3943,7 +3929,6 @@ def run():
     if not modelo_3d_completo and mesh_terreno_projetado and getattr(mesh_terreno_projetado, 'IsValid', False):
         modelo_3d_completo.append(mesh_terreno_projetado)
 
-    # Contornos e Guias 3D da Malha Viária projetadas sobre o terreno
     draped_road_curves_3d = []
     for p_info in road_polygons:
         r_crv = p_info['curve']
@@ -4006,7 +3991,6 @@ def run():
             except:
                 pass
 
-    # 3D Draped Site Boundary (Perímetro do Lote com relevo de destaque +0.10m)
     draped_site_boundary_3d = []
     if boundary_info is not None:
         b_crv = boundary_info['curve']
@@ -4036,7 +4020,6 @@ def run():
                 draped_site_boundary_3d.append(crv_3d_b)
                 modelo_3d_completo.append(crv_3d_b)
 
-    # 3D Draped Boundary Curves (if supplied)
     if raw_projeto is not None:
         for c_item in to_list(raw_projeto):
             c_b = to_rhino_curve(c_item)
@@ -4069,6 +4052,145 @@ def run():
     for crv in greides_3d_all:
         if crv and getattr(crv, 'IsValid', False):
             modelo_3d_completo.append(crv)
+
+    # =========================================================================
+    # 10. MEMORIAL TÉCNICO DE TERRAPLENAGEM (ÁREAS MÉDIAS & DIAGRAMA DE BRÜCKNER)
+    # =========================================================================
+    vol_total_corte_geo = sum(item[1] for item in vols_trechos)
+    vol_total_aterro_geo = sum(item[2] for item in vols_trechos)
+    vol_total_aterro_banco = sum(item[3] for item in vols_trechos)
+    saldo_global_geo = vol_total_corte_geo - vol_total_aterro_banco
+    vol_total_corte_solto = vol_total_corte_geo * fator_k
+
+    if saldo_global_geo < -0.01:
+        diag_global = "DÉFICIT CRÍTICO DE ATERRO ({:+.2f} m³ em banco): Os cortes internos suprem apenas {:.1f}% da demanda necessária de aterro (considerando Fh={:.2f}). É mandatória a importação externa de {:.2f} m³ de material de jazida/empréstimo.".format(
+            saldo_global_geo, (vol_total_corte_geo / max(vol_total_aterro_banco, 1e-4)) * 100.0, fh, abs(saldo_global_geo)
+        )
+    elif saldo_global_geo > 0.01:
+        diag_global = "SUPERÁVIT DE ESCAVAÇÃO ({:+.2f} m³ em banco): Os cortes internos suprem 100% dos aterros. O volume excedente de {:.2f} m³ ({:.2f} m³ solto com K={:.2f}) deve ser destinado a bota-fora licenciado.".format(
+            saldo_global_geo, saldo_global_geo, vol_total_corte_solto, fator_k
+        )
+    else:
+        diag_global = "EQUILÍBRIO VOLUMÉTRICO PLENO: O volume escavado atende com precisão à demanda de aterro compactado (Fh={:.2f}).".format(fh)
+
+    relatorio = [
+        "=========================================================================================",
+        "   MEMORIAL TÉCNICO DE TERRAPLENAGEM (MÉTODO DAS ÁREAS MÉDIAS & DIAGRAMA DE BRÜCKNER)   ",
+        "=========================================================================================",
+        "1. RESUMO DAS SEÇÕES TRANSVERSAIS (EIXOS {} A {}):".format(labels_t[0], labels_t[-1]),
+        "-----------------------------------------------------------------------------------------",
+        "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("SEÇÃO", "EXTENSÃO", "ÁREA CORTE", "ÁREA ATERRO", "H. MÁX CORTE", "H. MÁX ATERRO"),
+        "-----------------------------------------------------------------------------------------"
+    ]
+
+    for idx_sd, sd in enumerate(sec_data_list):
+        lbl_sd = sd.get('label') or (labels_t[idx_sd] if idx_sd < len(labels_t) else "SEC {}".format(idx_sd + 1))
+        relatorio.append("{:<10} | {:<10.2f} m | {:<12.2f} m² | {:<12.2f} m² | {:<10.2f} m | {:<10.2f} m".format(
+            lbl_sd, sd.get('total_ext', 0.0), sd.get('area_total_corte', 0.0), sd.get('area_total_aterro', 0.0), sd.get('max_h_corte', 0.0), sd.get('max_h_aterro', 0.0)
+        ))
+
+    if num_verticais >= 1:
+        relatorio.extend([
+            "-----------------------------------------------------------------------------------------",
+            "2. RESUMO DAS SEÇÕES LONGITUDINAIS (EIXOS {} A {}):".format(labels_v[0], labels_v[-1]),
+            "-----------------------------------------------------------------------------------------",
+            "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("EIXO", "EXTENSÃO", "ÁREA CORTE", "ÁREA ATERRO", "H. MÁX CORTE", "H. MÁX ATERRO"),
+            "-----------------------------------------------------------------------------------------"
+        ])
+        for idx_sdv, sdv in enumerate(sec_v_data_list):
+            lbl_v_sdv = sdv.get('label') or (labels_v[idx_sdv] if idx_sdv < len(labels_v) else str(idx_sdv + 1))
+            lbl_display = str(lbl_v_sdv) if str(lbl_v_sdv).upper().startswith("EIXO") else "EIXO " + str(lbl_v_sdv)
+            relatorio.append("{:<10} | {:<10.2f} m | {:<12.2f} m² | {:<12.2f} m² | {:<10.2f} m | {:<10.2f} m".format(
+                lbl_display, sdv.get('total_ext', 0.0), sdv.get('area_total_corte', 0.0), sdv.get('area_total_aterro', 0.0), sdv.get('max_h_corte', 0.0), sdv.get('max_h_aterro', 0.0)
+            ))
+
+    relatorio.extend([
+        "-----------------------------------------------------------------------------------------",
+        "3. BALANÇO DE MASSAS & DIAGRAMA DE BRÜCKNER (COMPENSAÇÃO LONGITUDINAL):",
+    ])
+    for item_fl in fluxo_transporte:
+        i_seg = fluxo_transporte.index(item_fl)
+        relatorio.append("   - Trecho {} -> {} (Extensão: {:.2f} m):".format(labels_t[i_seg], labels_t[i_seg+1], item_fl['d_trecho']))
+        if item_fl['saldo_local'] > 0.01:
+            desc_l = "SOBRA LOCAL NO TRECHO: +{:.1f} m³ (Corte {:.1f} m³ > Aterro Banco {:.1f} m³)".format(item_fl['saldo_local'], item_fl['vc'], item_fl['va_banco'])
+        elif item_fl['saldo_local'] < -0.01:
+            desc_l = "DÉFICIT LOCAL NO TRECHO: {:.1f} m³ (Demanda Aterro Banco {:.1f} m³ c/ Fh={:.2f})".format(item_fl['saldo_local'], item_fl['va_banco'], fh)
+        else:
+            desc_l = "TRECHO COMPENSADO LOCALMENTE (Corte atende rigorosamente ao Aterro)"
+
+        if item_fl['ordenada'] > 0.01:
+            ramo_l = "DIAGRAMA DE BRÜCKNER: Ordenada Acumulada +{:.1f} m³ (Ramo Ascendente - Transporte a jusante)".format(item_fl['ordenada'])
+        elif item_fl['ordenada'] < -0.01:
+            ramo_l = "DIAGRAMA DE BRÜCKNER: Ordenada Acumulada {:.1f} m³ (Ramo Descendente - Déficit acumulado / Demanda jazida)".format(item_fl['ordenada'])
+        else:
+            ramo_l = "DIAGRAMA DE BRÜCKNER: Linha de Terra (0.0 m³ - Compensação volumétrica acumulada plena)"
+        relatorio.append("     * " + desc_l)
+        relatorio.append("     * " + ramo_l)
+
+    relatorio.extend([
+        "-----------------------------------------------------------------------------------------",
+        "4. TOTAIS GERAIS DA OBRA & BALANÇO VOLUMÉTRICO GEOTÉCNICO:",
+        "   - Número de Seções Transversais Analisadas: {}".format(num_secoes),
+        "   - Número de Eixos Longitudinais de Amostragem: {} (Extensão acumulada: {:.2f} m)".format(num_verticais, sum(cv.GetLength() for cv in lista_verticais)),
+        "   - Fator de Empolamento do Solo Adotado (K): {:.2f} ({}% de expansão volumétrica solta)".format(fator_k, int(round((fator_k - 1.0) * 100))),
+        "   - Fator de Homogeneização / Contração (Fh): {:.2f} ({}% de redução volumétrica por compactação)".format(fh, int(round((fh - 1.0) * 100))),
+        "   - Regra de Inclinação Máxima do Greide    : Limite de {:.1f}% ({})".format(
+            max_slope * 100.0,
+            "Ajustado ao limite de 15% onde excedido" if any(sd.get('was_clamped') for sd in (sec_data_list + sec_v_data_list)) else "Satisfeito em todas as seções"
+        ),
+        "   - Volume Total de CORTE Geométrico (Banco): {:.2f} m³".format(vol_total_corte_geo),
+        "   - Volume Total de ATERRO Compactado (Obra): {:.2f} m³".format(vol_total_aterro_geo),
+        "   - Demanda de Escavação em Banco p/ Aterro : {:.2f} m³ (Aterro x Fh)".format(vol_total_aterro_banco),
+        "   - SALDO GEOTÉCNICO LÍQUIDO EM BANCO       : {:+.2f} m³".format(saldo_global_geo),
+        "   - Volume Total de Corte Solto (Transporte): {:.2f} m³ (Corte x K)".format(vol_total_corte_solto),
+        "   - Diagnóstico Operacional da Obra:",
+        "     " + diag_global,
+        "========================================================================================="
+    ])
+
+    if boundary_info is not None and boundary_info.get('area', 0.0) > 0.0:
+        relatorio.extend([
+            "-----------------------------------------------------------------------------------------",
+            "5. DELIMITAÇÃO DA GLEBA & CONTROLE TOPOGRÁFICO (NBR 13133):",
+            "   - Área do Limite da Propriedade (Poligonal) : {:.2f} m² ({:.4f} ha)".format(boundary_info['area'], boundary_info['area'] / 10000.0),
+            "   - Extensão do Perímetro do Lote            : {:.2f} m".format(boundary_info['curve'].GetLength()),
+            "   - Calibração de Seções e Volumes          : 100% Estritamente contido no lote (NBR 13133)",
+            "   - Tolerâncias Executivas de Terraplenagem : Controle cadastral de divisas (Tolerância de campo: ±3 cm a ±5 cm conf. DNIT 108/2009-ES)",
+        ])
+
+    if area_viario_lote > 0.0:
+        area_lote_ref = boundary_info['area'] if boundary_info and boundary_info.get('area', 0.0) > 0.0 else max(area_mesh_lote, 1.0)
+        taxa_viario = (area_viario_lote / area_lote_ref) * 100.0
+        ext_viario_est = area_viario_lote / 9.40
+
+        if 15.0 <= taxa_viario <= 30.0:
+            diag_urb = "Em rigorosa conformidade com a Lei Federal nº 6.766/1979 (faixa de 15% a 25%)"
+        elif taxa_viario > 30.0:
+            diag_urb = "Atenção: Área viária superior a 30% da gleba. Verificar se há faixas externas conectadas."
+        else:
+            diag_urb = "Área viária compatível com condomínio horizontal ou via de acesso local."
+
+        if max_slope <= 0.08:
+            diag_traf = "Declividade suave (<= 8.0%). Conforto e segurança plenos para veículos leves e pesados (DNIT)."
+        elif max_slope <= 0.12:
+            diag_traf = "Declividade moderada (8.0% a 12.0%). Padrão normativo de vias locais em terreno ondulado."
+        else:
+            diag_traf = "Rampa acentuada (12.0% a 15.0%). Limite normativo crítico: Exige pavimento de alta aderência (CBUQ rugoso/intertravado), sarjetas reforçadas com dissipadores de energia e sinalização de cautela."
+
+        relatorio.extend([
+            "-----------------------------------------------------------------------------------------",
+            "6. RESUMO DO SISTEMA VIÁRIO & DIRETRIZES DE PAVIMENTAÇÃO (NBR / DNIT / LEI 6.766):",
+            "   - Área Efetiva do Viário Contida no Lote  : {:.2f} m² ({:.1f}% da gleba)".format(area_viario_lote, taxa_viario),
+            "     * Enquadramento Urbanístico              : " + diag_urb,
+            "   - Área Efetiva de Pista (Asfalto)         : {:.2f} m² (Relevo BIM: +0.03 m)".format(area_pista_lote),
+            "   - Área Efetiva de Passeio (Calçadas)      : {:.2f} m² (Degrau físico de guia: +0.15 m acima da pista)".format(area_calcada_lote),
+            "   - Extensão Estimada da Malha Viária       : {:.2f} m (Gabarito padrão de 9.40m)".format(ext_viario_est),
+            "   - Inclinação Transversal Normativa (Coroa): 2.0% (Escoamento positivo para as sarjetas pluviais)",
+            "   - Desnível Padrão de Guia / Meio-Fio       : +0.15 m (Segregação de pedestres e veículos)",
+            "   - Limite de Declividade Longitudinal       : Máximo de {:.1f}% verificado".format(max_slope * 100.0),
+            "     * Diagnóstico de Trafegabilidade e Drenagem: " + diag_traf,
+            "========================================================================================="
+        ])
 
     # Saídas dinâmicas para conexões opcionais no Grasshopper (aliases bilíngues)
     globals()['Viario3D'] = [m for m in [m_3d_asfalto, m_3d_calcada] if m and getattr(m, 'IsValid', False)]

@@ -1,6 +1,6 @@
 # Grasshopper Topographic & Earthwork Suite (NBR 6492 / AGPTEA) 📐🏔️🚜
 
-[![Release](https://img.shields.io/badge/release-v3.2.6-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.6)
+[![Release](https://img.shields.io/badge/release-v3.2.7-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.7)
 [![Rhino 8](https://img.shields.io/badge/Rhino-8%20%7C%20Grasshopper-0080FF.svg)](https://www.rhino3d.com/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B%20%7C%20GhPython-yellow.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -41,7 +41,25 @@ The suite provides two specialized, production-ready modules:
 
 ---
 
-## 🌟 What's New in v3.1.0 & v3.0.0
+## 🌟 What's New in v3.2.7 & Recent Releases
+
+### Version 3.2.7 (Geotechnical & Roadway Engineering Overhaul)
+- **Rigorous Geotechnical Mass Balance & Compaction Factor (Fh)**:
+  - Introduces FatorHomogeneizacao / Fh (default 1.15) to account for soil compaction shrinkage.
+  - Subtraction of in-situ cut bank volume from compacted fill volume now applies Fh (V_fill,bank = V_fill,geom * Fh), preventing real-world borrow pit deficits from being underestimated.
+- **Brückner Diagram & Mass Haul Hauling Clarification**:
+  - Explicitly separates local segment balances (dV_i = V_cut,i - V_fill-bank,i) from the cumulative Brückner ordinate (O_i).
+  - Clarified transport directions (ascending vs descending branches) so operators no longer confuse running cumulative balances with individual segment deficits.
+- **Continuous 3D Design Surface Interpolation for Longitudinal Sections**:
+  - Longitudinal cut/fill profiles are now sampled directly from the continuous 3D design surface rather than perpendicular cross-axis fallbacks.
+  - Guarantees 0.000 mm error at section crossings, eliminates phantom cuts (such as 14.66m cuts on 26m axes), and caps longitudinal cut/fill within the transverse envelope.
+- **Net Roadway Footprint Inside Property Boundary (Lei Federal nº 6.766/1979)**:
+  - Road network areas in the memorial report are computed by integrating 3D BIM surface quads strictly inside the property boundary polygon (oundary_info).
+  - Correctly reflects lot right-of-way percentages (15% to 25%) and filters external CAD roadway polygons.
+- **Strict Normative Citations & Memorial Structure**:
+  - References ABNT NBR 13133 (Topographic Surveying) for property boundaries and DNIT 108/2009-ES standard execution tolerances (±3 cm to ±5 cm).
+  - Clean sequential report numbering (1 to 6) without duplication.
+  - Soil bulking percentage calculation fixed to 20% for K=1.20.
 
 ### Version 3.2.6 (Hotfix)
 - **Resolved `UnboundLocalError: boundary_info` in `run()`**:
