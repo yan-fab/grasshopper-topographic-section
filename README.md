@@ -1,6 +1,6 @@
 # Grasshopper Topographic & Earthwork Suite (NBR 6492 / AGPTEA) 📐🏔️🚜
 
-[![Release](https://img.shields.io/badge/release-v3.2.0-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.0)
+[![Release](https://img.shields.io/badge/release-v3.2.1-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.1)
 [![Rhino 8](https://img.shields.io/badge/Rhino-8%20%7C%20Grasshopper-0080FF.svg)](https://www.rhino3d.com/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B%20%7C%20GhPython-yellow.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -38,6 +38,11 @@ The suite provides two specialized, production-ready modules:
 ---
 
 ## 🌟 What's New in v3.1.0 & v3.0.0
+
+### Version 3.2.1 (Hotfix)
+- **Resolved Runtime `NameError: name 'cut_xy' is not defined`**:
+  - Properly unrolls projected 2D curve variable `cut_xy` in `evaluate_section_grade_and_volumes`.
+  - Ensures robust fallback to 3D cut curve (`crv_3d`) across all section evaluations.
 
 ### Version 3.2.0
 - **CAD Road Network & Drivable Street Engine (`Roadway` / `Viario`)**:

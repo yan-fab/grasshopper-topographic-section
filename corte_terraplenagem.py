@@ -1889,6 +1889,9 @@ def evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, 
     clean_pts = t_info['clean_pts']
     total_ext = t_info['total_ext']
     crv_3d = t_info['crv_3d']
+    cut_xy = t_info.get('cut_xy')
+    if cut_xy is None:
+        cut_xy = crv_3d
     z_min = t_info['z_min']
     z_max = t_info['z_max']
     sec_datum_z = t_info['sec_datum_z']
