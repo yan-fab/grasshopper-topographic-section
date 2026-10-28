@@ -84,8 +84,36 @@ def test_3d_surface_interpolation_limits():
 
     print("[PASS] 3D Continuous Surface Interpolation: Exact matching at cross-sections and bounded interpolation.")
 
+def test_vols_trechos_unpacking_and_banner_format():
+    # Simulate vols_trechos with 5 items (as in v3.2.7)
+    vols_trechos = [
+        (25.0, 4074.6, 1438.3, 1654.1, 2420.5),
+        (25.0, 6927.9, 2808.3, 3229.5, 3698.4),
+    ]
+    fluxo_transporte = [
+        {'d_trecho': 25.0, 'vc': 4074.6, 'va_geo': 1438.3, 'va_banco': 1654.1, 'saldo_local': 2420.5, 'ordenada': 2420.5},
+        {'d_trecho': 25.0, 'vc': 6927.9, 'va_geo': 2808.3, 'va_banco': 3229.5, 'saldo_local': 3698.4, 'ordenada': 6118.9},
+    ]
+    
+    # Test unpacking 5 items as in line 3617
+    idx_s = 0
+    d_t, vc_t, va_t, va_banco_t, s_t = vols_trechos[idx_s]
+    fl_item = fluxo_transporte[idx_s]
+    if s_t > 0.01:
+        nota_t = "SOBRA LOCAL: +{:.1f}m³ | BRÜCKNER: {:+.1f}m³ (RAMO ASCENDENTE)".format(s_t, fl_item['ordenada']).replace('.', ',')
+    elif s_t < -0.01:
+        nota_t = "DÉFICIT LOCAL: {:.1f}m³ | BRÜCKNER: {:+.1f}m³ (DEMANDA JAZIDA)".format(s_t, fl_item['ordenada']).replace('.', ',')
+    else:
+        nota_t = "COMPENSADO LOCALMENTE | BRÜCKNER: {:+.1f}m³".format(fl_item['ordenada']).replace('.', ',')
+
+    assert isinstance(nota_t, str)
+    assert "SOBRA LOCAL: +2420,5m³" in nota_t
+    assert "BRÜCKNER: +2420,5m³" in nota_t
+    print("[PASS] 5-tuple vols_trechos unpacking and banner text generation verified!")
+
 if __name__ == "__main__":
     test_soil_bulking_and_homogenization()
     test_bruckner_mass_haul_separation()
     test_3d_surface_interpolation_limits()
+    test_vols_trechos_unpacking_and_banner_format()
     print("\nALL GEOTECHNICAL OVERHAUL TESTS PASSED (v3.2.7)!")

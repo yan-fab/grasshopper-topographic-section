@@ -3614,8 +3614,14 @@ def run():
         # Mass Haul Transfer Banner between Consecutive Cross Sections
         if idx_s < num_secoes - 1:
             lbl_prox = labels_t[idx_s + 1]
-            d_t, vc_t, va_t, s_t = vols_trechos[idx_s]
-            nota_t = fluxo_transporte[idx_s]
+            d_t, vc_t, va_t, va_banco_t, s_t = vols_trechos[idx_s]
+            fl_item = fluxo_transporte[idx_s]
+            if s_t > 0.01:
+                nota_t = "SOBRA LOCAL: +{:.1f}m³ | BRÜCKNER: {:+.1f}m³ (RAMO ASCENDENTE)".format(s_t, fl_item['ordenada']).replace('.', ',')
+            elif s_t < -0.01:
+                nota_t = "DÉFICIT LOCAL: {:.1f}m³ | BRÜCKNER: {:+.1f}m³ (DEMANDA JAZIDA)".format(s_t, fl_item['ordenada']).replace('.', ',')
+            else:
+                nota_t = "COMPENSADO LOCALMENTE | BRÜCKNER: {:+.1f}m³".format(fl_item['ordenada']).replace('.', ',')
 
             next_sec = sec_data_list[idx_s + 1]
             next_datum = math.floor(next_sec['z_min'] - 2.0)
