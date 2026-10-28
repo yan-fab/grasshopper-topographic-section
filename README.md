@@ -1,6 +1,6 @@
 # Grasshopper Topographic & Earthwork Suite (NBR 6492 / AGPTEA) 📐🏔️🚜
 
-[![Release](https://img.shields.io/badge/release-v3.2.5-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.5)
+[![Release](https://img.shields.io/badge/release-v3.2.6-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.6)
 [![Rhino 8](https://img.shields.io/badge/Rhino-8%20%7C%20Grasshopper-0080FF.svg)](https://www.rhino3d.com/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B%20%7C%20GhPython-yellow.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -42,6 +42,11 @@ The suite provides two specialized, production-ready modules:
 ---
 
 ## 🌟 What's New in v3.1.0 & v3.0.0
+
+### Version 3.2.6 (Hotfix)
+- **Resolved `UnboundLocalError: boundary_info` in `run()`**:
+  - Reordered initialization of `boundary_info` and `road_polygons` to execute immediately after terrain ingestion and before cross-section axis generation (`lista_alinhadas`).
+  - Guarantees `boundary_info` is fully populated when ray-clipping algorithms evaluate section boundaries.
 
 ### Version 3.2.5
 - **Complete Site Boundary & Property Clipping Engine (NBR 6492)**:

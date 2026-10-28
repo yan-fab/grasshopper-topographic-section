@@ -2930,6 +2930,9 @@ def run():
         msg = "⚠️ No valid geometry found in 'Terrain' / 'Terreno' input. Connect contour curves (Curves), mesh (Mesh), or terrain surface."
         return [], [], [], [], [], [msg]
 
+    boundary_info = sanitize_site_boundary(raw_limite, raw_projeto, tol)
+    road_polygons = sanitize_road_polygons(raw_viario, tol)
+
     # Processing cross-sectional cut lines
     lista_linhas_raw = [to_rhino_curve(c) for c in to_list(raw_linhas) if to_rhino_curve(c) is not None]
     if not lista_linhas_raw:
@@ -3123,8 +3126,6 @@ def run():
     orig_y = ponto_base.Y if ponto_base else 0.0
 
     modo_cotas = parse_seletor(raw_seletor)
-    boundary_info = sanitize_site_boundary(raw_limite, raw_projeto, tol)
-    road_polygons = sanitize_road_polygons(raw_viario, tol)
 
     # 1. Mapeamento prévio das interseções entre as seções e os eixos verticais
     num_secoes = len(lista_alinhadas)
