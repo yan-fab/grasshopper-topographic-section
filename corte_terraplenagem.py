@@ -1102,18 +1102,31 @@ def make_project_grade_sampler(curva_greide_in, base_x, base_y, sec_datum_z, z_m
         if abs(min_x - base_x) < total_ext * 0.8 or            abs(max_x - (base_x + total_ext)) < total_ext * 0.8 or            (min_x >= base_x - 10.0 and max_x <= base_x + total_ext + 10.0):
             use_drawing_x = True
 
-        is_abs_y = (z_min - 50.0 <= avg_y <= z_max + 100.0)
+        sec_h = max(z_max - sec_datum_z, 1.0)
         ref_by = curve_base_y if curve_base_y is not None else base_y
 
-        # Detecção de linha solta no vão livre entre seções (Smart Snapping)
+        # Detecção de posição em relação ao desenho 2D da seção
         z_terrain_med = (z_min + z_max) / 2.0
         y_terrain_section_2d = ref_by + (z_terrain_med - sec_datum_z)
         dist_to_section = abs(avg_y - y_terrain_section_2d)
-        is_floating_in_void = (not is_abs_y) and (dist_to_section > max(sec_h * 2.0, 15.0))
+
+        # Se o usuário desenhou a curva diretamente sobre o perfil 2D da seção:
+        # dist_to_section é pequena (a menos de 2x sec_h ou 15m do terreno)
+        is_drawn_on_section = (dist_to_section <= max(sec_h * 2.0, 15.0))
+
+        # Se não foi desenhada sobre a seção, checa se é cota absoluta Y (ex: Y ~ 900)
+        is_abs_y = (not is_drawn_on_section) and (z_min - 50.0 <= avg_y <= z_max + 100.0)
+
+        # Se estiver no vão livre (nem sobre a seção nem em cota absoluta)
+        is_floating_in_void = (not is_drawn_on_section) and (not is_abs_y)
 
         for p in pts:
             d_p = (p.X - base_x) if use_drawing_x else p.X
-            if is_abs_y:
+            if is_drawn_on_section:
+                # Caso prioritário: desenhada sobre a seção 2D com precisão milimétrica
+                z_p = sec_datum_z + (p.Y - ref_by)
+            elif is_abs_y:
+                # Coordenada Y representa a cota absoluta real
                 z_p = p.Y
             elif is_floating_in_void:
                 # Ancoragem inteligente na cota média do relevo, preservando inclinação e forma da linha
