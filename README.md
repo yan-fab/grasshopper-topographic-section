@@ -30,6 +30,10 @@ Professional parametric suite for **Rhinoceros 8 / Grasshopper (GhPython and Pyt
 
 The suite provides two specialized, production-ready modules:
 
+> [!NOTE]
+> **Versão em Português Brasileiro (pt-BR)**:
+> Para projetos no Brasil com pranchas, anotações técnicas e memoriais em português, utilize os arquivos [`corte_terraplenagem_pt.py`](corte_terraplenagem_pt.py) e [`corte_arquitetonico_pt.py`](corte_arquitetonico_pt.py) (também disponíveis na pasta [`pt/`](pt/)).
+
 | Module | Primary Script | Domain | Key Features |
 | :---: | :--- | :--- | :--- |
 | **Multi-Axis Earthwork & 3D Model** | [`corte_terraplenagem.py`](corte_terraplenagem.py) | **Civil Engineering & Surveying** | Multi-axis transverse (A, B, C...) and longitudinal (1, 2, 3...) sections, interactive grading curves with 15% slope ceiling, AGPTEA Average End Area volume calculation, internal mass haul compensation, dimensioned technical plan view, and full 3D color-coded earthwork mesh. |
