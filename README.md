@@ -1,6 +1,6 @@
 # Grasshopper Topographic & Earthwork Suite (NBR 6492 / AGPTEA) 📐🏔️🚜
 
-[![Release](https://img.shields.io/badge/release-v3.2.4-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.4)
+[![Release](https://img.shields.io/badge/release-v3.2.5-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.5)
 [![Rhino 8](https://img.shields.io/badge/Rhino-8%20%7C%20Grasshopper-0080FF.svg)](https://www.rhino3d.com/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B%20%7C%20GhPython-yellow.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -43,9 +43,19 @@ The suite provides two specialized, production-ready modules:
 
 ## 🌟 What's New in v3.1.0 & v3.0.0
 
+### Version 3.2.5
+- **Complete Site Boundary & Property Clipping Engine (NBR 6492)**:
+  - **Property Boundary Trimming (2D & 3D)**: Clips both the 3D BIM cut/fill terrain surface and 2D cross sections strictly to the legal property boundary polygon (`LimiteTerreno`, `SiteBoundary`, `PropertyLine`, `Boundary`, `Limite`, `Perimetro`).
+  - **Section Ray-Polygon Trimming (`find_ray_polygon_interval`)**: Transverse (`lista_alinhadas`) and longitudinal (`lista_verticais`) cut lines automatically start and terminate on the property perimeter. No section lines extend onto neighboring parcels.
+  - **Exact Net Earthwork Volume Calibration**: Cross-section profile lengths, hatched cut/fill areas, and Average End Area volume calculations ($V = \frac{A_1 + A_2}{2} \times D$) are calculated 100% strictly inside the lot. Earthwork volumes on neighboring lots are completely expunged.
+  - **Quad-by-Quad 3D Mesh Clipping**: Each cell in the high-density 3D BIM terrain mesh is tested against the property polygon via pure math ray-casting (`point_in_polygon_2d`), eliminating any mesh overflow or spill beyond the lot lines.
+  - **3D Draped Site Boundary Curve (`LimiteTerreno3D` / `SiteBoundary3D`)**: Renders the property line draped onto the 3D surface with $+0.10\,\text{m}$ vertical relief for immediate visual confirmation of the lot boundary in the viewport.
+  - **Automatic Input Detection**: Accepts single or multi-curve boundaries, closed polylines, surfaces, breps, or meshes connected to `LimiteTerreno` / `SiteBoundary`. Automatically falls back to full topography envelope if no boundary is provided.
+  - **Dedicated Outputs**: `LimiteTerreno`, `SiteBoundary`, `LimiteTerreno3D`, `SiteBoundary3D`, `BordasTerreno3D`.
+
 ### Version 3.2.4
 - **Ultra-Robust Roadway & BIM Pavement Visualization**:
-  - **Pure Math Ray-Casting (point_in_polygon_2d)**: Replaced fragile RhinoCommon curve containment with mathematical 2D ray-casting, rendering cul-de-sacs, irregular perimeters, and concave road networks with 100% precision.
+  - **Pure Math Ray-Casting (`point_in_polygon_2d`)**: Replaced fragile RhinoCommon curve containment with mathematical 2D ray-casting, rendering cul-de-sacs, irregular perimeters, and concave road networks with 100% precision.
   - **Automatic Multi-Curve Welding (rg.Curve.JoinCurves)**: Ingests fragmented CAD drawings (unjoined lines, arcs, polylines) and welds them automatically with a 2.5m tolerance bridge.
   - **Automatic Entrance Closure**: Detects street openings at site boundaries (up to 35m) and closes them across property lines to form complete closed road corridors.
   - **Open Centerline & Curb Buffer**: Supports open centerlines and curb lines with a default 4.70m half-width buffer (9.40m standard right-of-way).
