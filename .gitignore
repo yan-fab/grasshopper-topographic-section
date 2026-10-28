@@ -23,3 +23,9 @@ $RECYCLE.BIN/
 .idea/
 *.swp
 *.swo
+
+# Internal test & scratch scripts
+test_*.py
+test/
+tests/
+scratch/
