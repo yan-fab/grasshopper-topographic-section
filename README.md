@@ -1,6 +1,6 @@
 # Grasshopper Topographic & Earthwork Suite (NBR 6492 / AGPTEA) 📐🏔️🚜
 
-[![Release](https://img.shields.io/badge/release-v3.1.1-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.1.1)
+[![Release](https://img.shields.io/badge/release-v3.2.0-brightgreen.svg)](https://github.com/yan-fab/grasshopper-topographic-section/releases/tag/v3.2.0)
 [![Rhino 8](https://img.shields.io/badge/Rhino-8%20%7C%20Grasshopper-0080FF.svg)](https://www.rhino3d.com/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B%20%7C%20GhPython-yellow.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -38,6 +38,14 @@ The suite provides two specialized, production-ready modules:
 ---
 
 ## 🌟 What's New in v3.1.0 & v3.0.0
+
+### Version 3.2.0
+- **CAD Road Network & Drivable Street Engine (`Roadway` / `Viario`)**:
+  - Direct integration of closed 2D CAD road polygons (curbs, roadway, sidewalks, and cul-de-sacs).
+  - **Normative Drivability (DNIT / NBR)**: Enforces transversal leveling, 2.0% drainage crown cross-slope, 15cm curb step separation, and longitudinal grade limit ($i \le 15.0\%$).
+  - **BIM 3D Pavement Meshes**: Generates dark charcoal asphalt roadway (`RGB 55, 55, 60`) and light concrete sidewalk (`RGB 200, 200, 205`) meshes on the proposed 3D terrain surface with 3D curb relief.
+  - **2D Section Road Corridors**: Automatically identifies road crossings on cross/longitudinal sections, rendering road boundaries, crowned pavement, curb steps, callout badges, and NBR centerline level markers.
+  - **Road Earthwork Quantities**: Discriminates road network pavement/sidewalk footprint areas in the AGPTEA calculation report.
 
 ### Version 3.1.1 (Hotfix)
 - **Resolved TypeError in Stroke Vector Typography**: Fixed signature argument order in `draw_plan_axis_bubble` where direction vector and label arguments were inverted, preventing `TypeError: 'in <string>' requires string as left operand, not float`.
@@ -88,6 +96,7 @@ Designed for feasibility studies, executive subdivision earthwork grading, and p
 | `SectionLines` / `LinhasCorte` | `Curve` | **List / Item** | *Required* | Primary cross-sectional cut lines (Sections A, B, C...). |
 | `LongitudinalLines` / `EixosVerticais` | `Curve` | **List / Item** | `None` | Longitudinal cut axes (1, 2, 3...) for multi-axis 3D analysis. |
 | `GradingLine` / `CurvaProjeto` / `BoundaryLine` | `Curve` | **List / Item** | `None` | Proposed grade curve(s) drawn directly in Rhino (2D or 3D). |
+| `Roadway` / `Viario` | `Curve` | **List / Item** | `None` | Closed 2D CAD road network polygon(s) (calçada + pista + cul-de-sacs). |
 | `MaxSlope` / `InclinacaoMaxima` | `float` | **Item** | `15.0` | Maximum allowable slope for grading lines (default: 15% = 0.15). |
 | `ProjectElevation` / `NivelProjeto` | `float` / `list` | **Item / List** | `None` | Finished grade elevation per section or quadrant. |
 | `Point` / `Ponto` | `Point3d` | **Item** | `(0, 0, 0)` | Base insertion point for 2D section drawings in Top View. |
@@ -107,6 +116,20 @@ Designed for feasibility studies, executive subdivision earthwork grading, and p
 | **`d`** | `CutPolygons` | `List[Curve]` | **2D Cut Polygons**: Clean closed curves for each cut area (for Grasshopper `Area`, `Hatch`, or baking into CAD layers). |
 | **`e`** | `FillPolygons` | `List[Curve]` | **2D Fill Polygons**: Clean closed curves for each fill area (for Grasshopper `Area`, `Hatch`, or baking into CAD layers). |
 | **`f`** | `Report` | `str` | **AGPTEA Earthwork Calculation Report**: Formatted analytical text report for `Panel` connection, summarizing station areas, partial and total volumes, global mass balance, and hauling diagnostics. |
+
+---
+
+### 🛣️ CAD Road Network & Drivable Street Standards (Viário Carroçável)
+
+When integrating an executive 2D CAD road network (`Roadway` / `Viario`):
+
+- **Closed Polygon Domain**: The algorithm detects closed road polylines (pavement, sidewalks, cul-de-sacs, and turnarounds), dividing the terrain into road corridors and residential/commercial lot areas.
+- **Normative Drivability Standards (DNIT / NBR)**:
+  1. **Transversal Leveling**: Overcomes hillside cross-tilting by establishing a leveled road platform.
+  2. **2.0% Drainage Crown**: Pavement slopes down 2.0% from the centerline to gutters, preventing water ponding.
+  3. **15cm Curb Step**: Standard $+0.15\,\text{m}$ curb separates the asphalt roadway from pedestrian sidewalks.
+  4. **Longitudinal Slope ($\le 15\%$)**: Road grades strictly respect maximum slope limits with smooth vertical curvature.
+- **BIM 3D Pavement**: Renders asphalt (`RGB 55, 55, 60`) and sidewalk (`RGB 200, 200, 205`) meshes on the proposed 3D surface with 3D curb relief.
 
 ---
 
