@@ -190,6 +190,13 @@ def format_section_label(idx):
         return chr(65 + (idx // 26) - 1) + chr(65 + (idx % 26))
 
 def make_filled_mesh_tri(v0, v1, v2, color=None):
+    if v0 is None or v1 is None or v2 is None:
+        return None
+    if v0.DistanceTo(v1) < 1e-4 or v1.DistanceTo(v2) < 1e-4 or v2.DistanceTo(v0) < 1e-4:
+        return None
+    cross = rg.Vector3d.CrossProduct(v1 - v0, v2 - v0)
+    if cross.Length < 1e-6:
+        return None
     m = rg.Mesh()
     m.Vertices.Add(v0)
     m.Vertices.Add(v1)
@@ -199,40 +206,101 @@ def make_filled_mesh_tri(v0, v1, v2, color=None):
         m.VertexColors.Add(color)
         m.VertexColors.Add(color)
         m.VertexColors.Add(color)
-    m.Normals.ComputeNormals()
-    return m
+    m.Compact()
+    try:
+        m.Normals.ComputeNormals()
+    except:
+        pass
+    return m if m.IsValid else None
+
+def make_safe_closed_polyline(pts):
+    """Cria uma curva fechada válida de Polyline, verificando número mínimo de vértices e validade."""
+    if not pts or len(pts) < 3:
+        return None
+    clean = []
+    for p in pts:
+        if p is None: continue
+        if not clean or p.DistanceTo(clean[-1]) > 1e-4:
+            clean.append(p)
+    if len(clean) < 3:
+        return None
+    if clean[0].DistanceTo(clean[-1]) > 1e-4:
+        clean.append(clean[0])
+    if len(clean) < 4:
+        return None
+    poly = rg.Polyline(clean)
+    if not poly.IsValid:
+        return None
+    crv = poly.ToPolylineCurve()
+    if crv and crv.IsValid:
+        return crv
+    return None
 
 def create_colored_mesh(quads_pts, color):
-    """Cria uma malha 2D colorida (Shaded Mesh) a partir de quadriláteros formados pelos trapézios."""
-    if not quads_pts: return None
+    """Cria uma malha RhinoCommon 100% válida, sanitizada e livre de degenerações.
+    Elimina vértices duplicados, descarta faces de área nula e decompõe
+    quadriláteros em triângulos limpos para garantir estabilidade absoluta no Rhino 8 / .NET Core.
+    """
+    if not quads_pts:
+        return None
+
     m = rg.Mesh()
-    idx = 0
-    for quad in quads_pts:
-        if len(quad) == 4:
-            p0, p1, p2, p3 = quad
-            m.Vertices.Add(p0)
-            m.Vertices.Add(p1)
-            m.Vertices.Add(p2)
-            m.Vertices.Add(p3)
-            m.Faces.AddFace(idx, idx + 1, idx + 2, idx + 3)
-            if color:
-                m.VertexColors.Add(color)
-                m.VertexColors.Add(color)
-                m.VertexColors.Add(color)
-                m.VertexColors.Add(color)
-            idx += 4
-        elif len(quad) == 3:
-            p0, p1, p2 = quad
-            m.Vertices.Add(p0)
-            m.Vertices.Add(p1)
-            m.Vertices.Add(p2)
-            m.Faces.AddFace(idx, idx + 1, idx + 2)
-            if color:
-                m.VertexColors.Add(color)
-                m.VertexColors.Add(color)
-                m.VertexColors.Add(color)
-            idx += 3
-    m.Normals.ComputeNormals()
+
+    def add_safe_triangle(v0, v1, v2):
+        if v0 is None or v1 is None or v2 is None:
+            return False
+        if v0.DistanceTo(v1) < 1e-4 or v1.DistanceTo(v2) < 1e-4 or v2.DistanceTo(v0) < 1e-4:
+            return False
+        cross = rg.Vector3d.CrossProduct(v1 - v0, v2 - v0)
+        if cross.Length < 1e-6:
+            return False
+        idx = m.Vertices.Count
+        m.Vertices.Add(v0)
+        m.Vertices.Add(v1)
+        m.Vertices.Add(v2)
+        m.Faces.AddFace(idx, idx + 1, idx + 2)
+        if color:
+            m.VertexColors.Add(color)
+            m.VertexColors.Add(color)
+            m.VertexColors.Add(color)
+        return True
+
+    for pts in quads_pts:
+        if not pts or len(pts) < 3:
+            continue
+
+        clean = []
+        for p in pts:
+            if p is None: continue
+            if not clean or p.DistanceTo(clean[-1]) > 1e-4:
+                clean.append(p)
+        if len(clean) > 1 and clean[0].DistanceTo(clean[-1]) < 1e-4:
+            clean.pop()
+
+        n = len(clean)
+        if n < 3:
+            continue
+        elif n == 3:
+            add_safe_triangle(clean[0], clean[1], clean[2])
+        elif n == 4:
+            add_safe_triangle(clean[0], clean[1], clean[2])
+            add_safe_triangle(clean[0], clean[2], clean[3])
+        else:
+            for i in range(1, n - 1):
+                add_safe_triangle(clean[0], clean[i], clean[i + 1])
+
+    if m.Faces.Count == 0:
+        return None
+
+    m.Compact()
+    try:
+        m.Normals.ComputeNormals()
+    except:
+        pass
+
+    if not m.IsValid:
+        return None
+
     return m
 
 # =============================================================================
@@ -418,17 +486,25 @@ def generate_stroke_text(text_str, pt, height, justification=None, plane=None):
                 if len(stroke) >= 2:
                     pts = [p_origin + x_axis * (cur_x + sx * scale_x) + y_axis * (start_y + sy * height) for sx, sy in stroke]
                     if len(pts) == 2:
-                        curves.append(rg.LineCurve(pts[0], pts[1]))
+                        crv = rg.LineCurve(pts[0], pts[1])
+                        if crv and crv.IsValid: curves.append(crv)
                     else:
-                        curves.append(rg.Polyline(pts).ToPolylineCurve())
+                        poly = rg.Polyline(pts)
+                        if poly.IsValid:
+                            crv = poly.ToPolylineCurve()
+                            if crv and crv.IsValid: curves.append(crv)
 
         if accent_type and accent_type in ACCENT_STROKES:
             for a_stroke in ACCENT_STROKES[accent_type]:
                 pts = [p_origin + x_axis * (cur_x + sx * scale_x) + y_axis * (start_y + sy * height) for sx, sy in a_stroke]
                 if len(pts) == 2:
-                    curves.append(rg.LineCurve(pts[0], pts[1]))
+                    crv = rg.LineCurve(pts[0], pts[1])
+                    if crv and crv.IsValid: curves.append(crv)
                 else:
-                    curves.append(rg.Polyline(pts).ToPolylineCurve())
+                    poly = rg.Polyline(pts)
+                    if poly.IsValid:
+                        crv = poly.ToPolylineCurve()
+                        if crv and crv.IsValid: curves.append(crv)
 
         cur_x += cw + char_gap
 
@@ -513,6 +589,8 @@ def get_stroke_text_width(text_str, height):
 
 def make_box_background_mesh(p0, p1, p2, p3, color=None):
     """Gera uma malha 2D retangular que serve como fundo/máscara (wipeout) sob os textos."""
+    if p0 is None or p1 is None or p2 is None or p3 is None:
+        return None
     if color is None:
         color = System.Drawing.Color.FromArgb(252, 252, 252)
     m = rg.Mesh()
@@ -520,13 +598,18 @@ def make_box_background_mesh(p0, p1, p2, p3, color=None):
     m.Vertices.Add(p1)
     m.Vertices.Add(p2)
     m.Vertices.Add(p3)
-    m.Faces.AddFace(0, 1, 2, 3)
+    m.Faces.AddFace(0, 1, 2)
+    m.Faces.AddFace(0, 2, 3)
     m.VertexColors.Add(color)
     m.VertexColors.Add(color)
     m.VertexColors.Add(color)
     m.VertexColors.Add(color)
-    m.Normals.ComputeNormals()
-    return m
+    m.Compact()
+    try:
+        m.Normals.ComputeNormals()
+    except:
+        pass
+    return m if m.IsValid else None
 
 def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0, is_corte=True):
     """Cria uma caixa retangular técnica com textos perfeitamente enquadrados e margens amplas."""
@@ -617,10 +700,10 @@ def draw_nbr_level_marker(x, y, text_str, s=1.0):
     p_txt = rg.Point3d(x + 0.20 * s, y + h_tri + h_stem + 0.12 * s, 0.0)
     te_crvs = make_text_geometry(text_str, p_txt, txt_h, rg.TextJustification.BottomLeft, s)
 
-    geoms = [l1, l2, l_mid, mesh_dir, lr1, lr2, l_stem, l_shelf]
+    geoms = [g for g in [l1, l2, l_mid, mesh_dir, lr1, lr2, l_stem, l_shelf] if g is not None]
     if te_crvs:
         if isinstance(te_crvs, list):
-            geoms.extend(te_crvs)
+            geoms.extend([c for c in te_crvs if c is not None])
         else:
             geoms.append(te_crvs)
     return geoms, te_crvs
@@ -654,7 +737,7 @@ def draw_plan_axis_bubble(pt, dir_vec, label_str, s=1.0):
             l_seta1 = rg.LineCurve(p_tip, p_left)
             l_seta2 = rg.LineCurve(p_tip, p_right)
             l_seta3 = rg.LineCurve(p_left, p_right)
-            geoms.extend([seta_mesh, l_seta1, l_seta2, l_seta3])
+            geoms.extend([g for g in [seta_mesh, l_seta1, l_seta2, l_seta3] if g is not None])
 
     return geoms
 
@@ -751,8 +834,8 @@ def draw_quadrant_badge(p_cen, txt_str, s=1.0, plane_ref=None):
 
     bg_mesh = make_box_background_mesh(p0, p1, p2, p3, System.Drawing.Color.FromArgb(255, 255, 255))
     badge_crv = rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve()
-    geoms.append(bg_mesh)
-    geoms.append(badge_crv)
+    if bg_mesh: geoms.append(bg_mesh)
+    if badge_crv and badge_crv.IsValid: geoms.append(badge_crv)
 
     txt_crvs = make_text_geometry(txt_str, p_cen, txt_h, rg.TextJustification.MiddleCenter, s, plane_badge)
     if txt_crvs: geoms.extend(txt_crvs)
@@ -800,7 +883,8 @@ def draw_section_vertical_axis_marker(base_x, base_y, d_ax, sec_h, sec_datum_z, 
     sq_crv = rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve()
     cor_verde_eixo = System.Drawing.Color.FromArgb(46, 204, 113)
     sq_mesh = make_box_background_mesh(p0, p1, p2, p3, cor_verde_eixo)
-    geoms.extend([sq_mesh, sq_crv])
+    if sq_mesh: geoms.append(sq_mesh)
+    if sq_crv and sq_crv.IsValid: geoms.append(sq_crv)
 
     # 4. Nó circular na interseção com o greide se houver desnível com o terreno
     if abs(z_proj - z_terrain) > 0.05:
@@ -833,8 +917,13 @@ def draw_section_internal_transfer_arrow(p_start, p_end, vol_or_area_str="", s=1
         mesh_origin.Faces.AddFace(0, i + 1, i_next)
     for _ in range(mesh_origin.Vertices.Count):
         mesh_origin.VertexColors.Add(cor_vermelha)
-    mesh_origin.Normals.ComputeNormals()
-    geoms.append(mesh_origin)
+    mesh_origin.Compact()
+    try:
+        mesh_origin.Normals.ComputeNormals()
+    except:
+        pass
+    if mesh_origin.IsValid:
+        geoms.append(mesh_origin)
 
     # 2. Haste horizontal da seta
     vec = p_end - p_start
@@ -858,7 +947,7 @@ def draw_section_internal_transfer_arrow(p_start, p_end, vol_or_area_str="", s=1
     l_h1 = rg.LineCurve(p_tip, p_left)
     l_h2 = rg.LineCurve(p_tip, p_right)
     l_h3 = rg.LineCurve(p_left, p_right)
-    geoms.extend([arrow_mesh, l_h1, l_h2, l_h3])
+    geoms.extend([g for g in [arrow_mesh, l_h1, l_h2, l_h3] if g is not None])
 
     # 4. Texto explicativo sobre a seta
     if vol_or_area_str:
@@ -962,8 +1051,8 @@ def make_mass_haul_banner(center_x, center_y, label_prev, label_next, dist_val, 
     # Fundo preenchido suave (máscara / wipeout)
     cor_fundo = System.Drawing.Color.FromArgb(255, 255, 255)
     bg_mesh = make_box_background_mesh(p0, p1, p2, p3, cor_fundo)
-    geoms.append(bg_mesh)
-    geoms.append(box_crv)
+    if bg_mesh: geoms.append(bg_mesh)
+    if box_crv and box_crv.IsValid: geoms.append(box_crv)
 
     # Linha divisória horizontal interna técnica
     y_div = center_y
@@ -990,7 +1079,10 @@ def make_mass_haul_banner(center_x, center_y, label_prev, label_next, dist_val, 
     p_l = rg.Point3d(center_x - 0.55 * s, y_arr_bot + 0.90 * s, 0.0)
     p_r = rg.Point3d(center_x + 0.55 * s, y_arr_bot + 0.90 * s, 0.0)
     arrow_mesh = make_filled_mesh_tri(p_tip, p_l, p_r)
-    geoms.extend([arrow_mesh, rg.LineCurve(p_tip, p_l), rg.LineCurve(p_tip, p_r), rg.LineCurve(p_l, p_r)])
+    l_a1 = rg.LineCurve(p_tip, p_l)
+    l_a2 = rg.LineCurve(p_tip, p_r)
+    l_a3 = rg.LineCurve(p_l, p_r)
+    geoms.extend([g for g in [arrow_mesh, l_a1, l_a2, l_a3] if g is not None])
 
     return geoms, (w_box, h_box)
 
@@ -1562,7 +1654,10 @@ def extract_section_terrain(crv_corte, geoms_terreno, tol, intersec_axes=None, s
         total_ext = L_horiz
 
     total_ext = clean_pts[-1][0] if clean_pts else L_horiz
-    crv_3d = rg.PolylineCurve([p[1] for p in clean_pts])
+    pts_crv_3d = [p[1] for p in clean_pts]
+    crv_3d = rg.PolylineCurve(pts_crv_3d) if len(pts_crv_3d) >= 2 else None
+    if not (crv_3d and crv_3d.IsValid) and len(pts_crv_3d) >= 2:
+        crv_3d = rg.LineCurve(pts_crv_3d[0], pts_crv_3d[-1])
 
     z_min = min(p[1].Z for p in clean_pts)
     z_max = max(p[1].Z for p in clean_pts)
@@ -1906,7 +2001,9 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
         for d in s_data['estacas_finais']:
             pts_gr_3d.append(rg.Point3d(p_s3d.X + ux_3d * d, p_s3d.Y + uy_3d * d, get_proj_z(d)))
         if len(pts_gr_3d) >= 2:
-            crv_gr_3d = rg.PolylineCurve(pts_gr_3d)
+            crv_temp = rg.PolylineCurve(pts_gr_3d)
+            if crv_temp and crv_temp.IsValid:
+                crv_gr_3d = crv_temp
 
         # Fatias verticais 3D em cada seção
         for r_type, d_list in s_data['regioes']:
@@ -1927,13 +2024,13 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
             if r_type == "CORTE":
                 for d in d_list: pts_3d_poly.append(rg.Point3d(p_s3d.X + ux_3d * d, p_s3d.Y + uy_3d * d, interpolate_terrain_z(d, clean_pts)))
                 for d in reversed(d_list): pts_3d_poly.append(rg.Point3d(p_s3d.X + ux_3d * d, p_s3d.Y + uy_3d * d, get_proj_z(d)))
-                pts_3d_poly.append(pts_3d_poly[0])
-                poligonos_3d_corte_sec.append(rg.Polyline(pts_3d_poly).ToPolylineCurve())
+                poly_3d = make_safe_closed_polyline(pts_3d_poly)
+                if poly_3d: poligonos_3d_corte_sec.append(poly_3d)
             else:
                 for d in d_list: pts_3d_poly.append(rg.Point3d(p_s3d.X + ux_3d * d, p_s3d.Y + uy_3d * d, get_proj_z(d)))
                 for d in reversed(d_list): pts_3d_poly.append(rg.Point3d(p_s3d.X + ux_3d * d, p_s3d.Y + uy_3d * d, interpolate_terrain_z(d, clean_pts)))
-                pts_3d_poly.append(pts_3d_poly[0])
-                poligonos_3d_aterro_sec.append(rg.Polyline(pts_3d_poly).ToPolylineCurve())
+                poly_3d = make_safe_closed_polyline(pts_3d_poly)
+                if poly_3d: poligonos_3d_aterro_sec.append(poly_3d)
 
     # Datum Local da Seção
     sec_datum_z = math.floor(s_data['z_min'] - 2.0)
@@ -1961,17 +2058,18 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
 
     # Perfil Natural 2D
     pts_tn_2d = [rg.Point3d(base_x + d, base_y + (pt.Z - sec_datum_z), 0.0) for d, pt in clean_pts]
-    crv_tn_2d = rg.PolylineCurve(pts_tn_2d)
-    geoms_2d.append(crv_tn_2d)
+    crv_tn_2d = rg.PolylineCurve(pts_tn_2d) if len(pts_tn_2d) >= 2 else None
+    if crv_tn_2d and crv_tn_2d.IsValid: geoms_2d.append(crv_tn_2d)
 
     # Polígono de fechamento de solo sob TN
     p_solo = [p_d_ini, p_d_fim] + list(reversed(pts_tn_2d)) + [p_d_ini]
-    geoms_2d.append(rg.Polyline(p_solo).ToPolylineCurve())
+    crv_solo = make_safe_closed_polyline(p_solo)
+    if crv_solo: geoms_2d.append(crv_solo)
 
     # Greide 2D
     pts_gr_2d = [rg.Point3d(base_x + d, base_y + (get_proj_z(d) - sec_datum_z), 0.0) for d in s_data['estacas_finais']]
-    crv_gr_2d = rg.PolylineCurve(pts_gr_2d)
-    geoms_2d.append(crv_gr_2d)
+    crv_gr_2d = rg.PolylineCurve(pts_gr_2d) if len(pts_gr_2d) >= 2 else None
+    if crv_gr_2d and crv_gr_2d.IsValid: geoms_2d.append(crv_gr_2d)
 
     # Rótulo de inclinação do greide (com regra de 15%)
     if s_data.get('sampler') is not None or s_data.get('was_clamped') is not None:
@@ -2011,20 +2109,18 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
         if r_type == "CORTE":
             for d in d_list: pts_poly.append(rg.Point3d(base_x + d, base_y + (interpolate_terrain_z(d, clean_pts) - sec_datum_z), 0.0))
             for d in reversed(d_list): pts_poly.append(rg.Point3d(base_x + d, base_y + (get_proj_z(d) - sec_datum_z), 0.0))
-            pts_poly.append(pts_poly[0])
-            poly_c = rg.Polyline(pts_poly).ToPolylineCurve()
-            poligonos_corte_sec.append(poly_c)
+            poly_c = make_safe_closed_polyline(pts_poly)
+            if poly_c: poligonos_corte_sec.append(poly_c)
         else:
             for d in d_list: pts_poly.append(rg.Point3d(base_x + d, base_y + (get_proj_z(d) - sec_datum_z), 0.0))
             for d in reversed(d_list): pts_poly.append(rg.Point3d(base_x + d, base_y + (interpolate_terrain_z(d, clean_pts) - sec_datum_z), 0.0))
-            pts_poly.append(pts_poly[0])
-            poly_a = rg.Polyline(pts_poly).ToPolylineCurve()
-            poligonos_aterro_sec.append(poly_a)
+            poly_a = make_safe_closed_polyline(pts_poly)
+            if poly_a: poligonos_aterro_sec.append(poly_a)
 
     m_c = create_colored_mesh(quads_corte, cor_corte)
     m_a = create_colored_mesh(quads_aterro, cor_aterro)
-    if m_c: geoms_2d.append(m_c)
-    if m_a: geoms_2d.append(m_a)
+    if m_c and getattr(m_c, 'IsValid', False): geoms_2d.append(m_c)
+    if m_a and getattr(m_a, 'IsValid', False): geoms_2d.append(m_a)
 
     # Linhas e Balões dos Eixos que Cruzam a Seção
     for (d_ax, idx_cross, lbl_cross) in s_data.get('eixos_secao', []):
@@ -2767,8 +2863,10 @@ def run():
         poligonos_aterro_all.extend(res_sec['poligonos_aterro_2d'])
         quads_3d_corte_secoes.extend(res_sec['quads_3d_corte'])
         quads_3d_aterro_secoes.extend(res_sec['quads_3d_aterro'])
-        if res_sec['crv_gr_3d']: greides_3d_all.append(res_sec['crv_gr_3d'])
-        linhas_3d_all.append(res_sec['crv_tn_3d'])
+        if res_sec.get('crv_gr_3d') and getattr(res_sec['crv_gr_3d'], 'IsValid', False):
+            greides_3d_all.append(res_sec['crv_gr_3d'])
+        if res_sec.get('crv_tn_3d') and getattr(res_sec['crv_tn_3d'], 'IsValid', False):
+            linhas_3d_all.append(res_sec['crv_tn_3d'])
         poligonos_3d_corte_all.extend(res_sec['poligonos_3d_corte'])
         poligonos_3d_aterro_all.extend(res_sec['poligonos_3d_aterro'])
 
@@ -2818,8 +2916,10 @@ def run():
             poligonos_aterro_all.extend(res_sec_v['poligonos_aterro_2d'])
             quads_3d_corte_secoes.extend(res_sec_v['quads_3d_corte'])
             quads_3d_aterro_secoes.extend(res_sec_v['quads_3d_aterro'])
-            if res_sec_v['crv_gr_3d']: greides_3d_all.append(res_sec_v['crv_gr_3d'])
-            linhas_3d_all.append(res_sec_v['crv_tn_3d'])
+            if res_sec_v.get('crv_gr_3d') and getattr(res_sec_v['crv_gr_3d'], 'IsValid', False):
+                greides_3d_all.append(res_sec_v['crv_gr_3d'])
+            if res_sec_v.get('crv_tn_3d') and getattr(res_sec_v['crv_tn_3d'], 'IsValid', False):
+                linhas_3d_all.append(res_sec_v['crv_tn_3d'])
             poligonos_3d_corte_all.extend(res_sec_v['poligonos_3d_corte'])
             poligonos_3d_aterro_all.extend(res_sec_v['poligonos_3d_aterro'])
 
@@ -3006,13 +3106,11 @@ def run():
     ])
 
     # =========================================================================
-    # 10. CONSTRUÇÃO DA SUPERFÍCIE E VOLUMES 3D DE TERRAPLENAGEM (TERRENO PROJETADO)
+    # 10. CONSTRUÇÃO DA SUPERFÍCIE E FATIAS 3D DE TERRAPLENAGEM (TERRENO PROJETADO)
     # =========================================================================
     quads_sup_3d_corte = []
     quads_sup_3d_aterro = []
     quads_sup_3d_neutro = []
-    quads_vol_3d_corte = []
-    quads_vol_3d_aterro = []
 
     cor_neutro = System.Drawing.Color.FromArgb(205, 210, 205)
 
@@ -3033,7 +3131,7 @@ def run():
             ux_a = dx_a / max(La, 1e-4); uy_a = dy_a / max(La, 1e-4)
             ux_b = dx_b / max(Lb, 1e-4); uy_b = dy_b / max(Lb, 1e-4)
 
-            n_divs = max(int(max(La, Lb) / 1.5), 35)
+            n_divs = max(int(max(La, Lb) / 1.5), 25)
 
             for k in range(n_divs):
                 ta = k / float(n_divs)
@@ -3058,20 +3156,8 @@ def run():
 
                 if diff_z > 0.03:
                     quads_sup_3d_corte.append([p00, p10, p11, p01])
-                    quads_vol_3d_corte.append([t00, t10, t11, t01])
-                    quads_vol_3d_corte.append([p00, p01, p11, p10])
-                    quads_vol_3d_corte.append([t00, t10, p10, p00])
-                    quads_vol_3d_corte.append([t10, t11, p11, p10])
-                    quads_vol_3d_corte.append([t11, t01, p01, p11])
-                    quads_vol_3d_corte.append([t01, t00, p00, p01])
                 elif diff_z < -0.03:
                     quads_sup_3d_aterro.append([p00, p10, p11, p01])
-                    quads_vol_3d_aterro.append([p00, p10, p11, p01])
-                    quads_vol_3d_aterro.append([t00, t01, t11, t10])
-                    quads_vol_3d_aterro.append([p00, p10, t10, t00])
-                    quads_vol_3d_aterro.append([p10, p11, t11, t10])
-                    quads_vol_3d_aterro.append([p11, p01, t01, t11])
-                    quads_vol_3d_aterro.append([p01, p00, t00, t01])
                 else:
                     quads_sup_3d_neutro.append([p00, p10, p11, p01])
 
@@ -3080,28 +3166,35 @@ def run():
     m_3d_sup_corte  = create_colored_mesh(quads_sup_3d_corte, cor_corte)
     m_3d_sup_aterro = create_colored_mesh(quads_sup_3d_aterro, cor_aterro)
     m_3d_sup_neutro = create_colored_mesh(quads_sup_3d_neutro, cor_neutro)
-    m_3d_vol_corte  = create_colored_mesh(quads_vol_3d_corte, cor_corte)
-    m_3d_vol_aterro = create_colored_mesh(quads_vol_3d_aterro, cor_aterro)
 
     mesh_terreno_projetado = rg.Mesh()
     for m_part in [m_3d_sup_corte, m_3d_sup_aterro, m_3d_sup_neutro]:
-        if m_part: mesh_terreno_projetado.Append(m_part)
+        if m_part and getattr(m_part, 'IsValid', False):
+            mesh_terreno_projetado.Append(m_part)
     if mesh_terreno_projetado.Faces.Count > 0:
-        mesh_terreno_projetado.Normals.ComputeNormals()
+        mesh_terreno_projetado.Compact()
+        try:
+            mesh_terreno_projetado.Normals.ComputeNormals()
+        except:
+            pass
+        if not mesh_terreno_projetado.IsValid:
+            mesh_terreno_projetado = None
     else:
         mesh_terreno_projetado = None
 
     # Compilação do Modelo 3D Completo (Visualização em Perspectiva 3D)
     modelo_3d_completo = []
-    if m_3d_sup_corte: modelo_3d_completo.append(m_3d_sup_corte)
-    if m_3d_sup_aterro: modelo_3d_completo.append(m_3d_sup_aterro)
-    if m_3d_sup_neutro: modelo_3d_completo.append(m_3d_sup_neutro)
+    for m_part in [m_3d_sup_corte, m_3d_sup_aterro, m_3d_sup_neutro, m_3d_corte_sec, m_3d_aterro_sec]:
+        if m_part and getattr(m_part, 'IsValid', False):
+            modelo_3d_completo.append(m_part)
 
-    if m_3d_corte_sec: modelo_3d_completo.append(m_3d_corte_sec)
-    if m_3d_aterro_sec: modelo_3d_completo.append(m_3d_aterro_sec)
+    for crv in greides_3d_all:
+        if crv and getattr(crv, 'IsValid', False):
+            modelo_3d_completo.append(crv)
 
-    modelo_3d_completo.extend(greides_3d_all)
-    modelo_3d_completo.extend(linhas_3d_all)
+    for crv in linhas_3d_all:
+        if crv and getattr(crv, 'IsValid', False):
+            modelo_3d_completo.append(crv)
 
     # Atribuição de saídas dinâmicas para conexões opcionais no Grasshopper
     globals()['SecoesTransversais'] = desenho_secoes_t_only
@@ -3111,11 +3204,11 @@ def run():
     globals()['SuperficieProjeto'] = mesh_terreno_projetado
     globals()['Corte3D'] = m_3d_sup_corte or m_3d_corte_sec
     globals()['Aterro3D'] = m_3d_sup_aterro or m_3d_aterro_sec
-    globals()['Greide3D'] = greides_3d_all
-    globals()['Volumes3D'] = [m for m in [m_3d_vol_corte, m_3d_vol_aterro] if m is not None]
+    globals()['Greide3D'] = [c for c in greides_3d_all if c and getattr(c, 'IsValid', False)]
+    globals()['Volumes3D'] = [m for m in [m_3d_sup_corte, m_3d_sup_aterro, m_3d_corte_sec, m_3d_aterro_sec] if m and getattr(m, 'IsValid', False)]
     globals()['g'] = mesh_terreno_projetado
-    globals()['h'] = m_3d_vol_corte
-    globals()['i'] = m_3d_vol_aterro
+    globals()['h'] = m_3d_corte_sec
+    globals()['i'] = m_3d_aterro_sec
 
     return modelo_3d_completo, planta_baixa_geoms, desenho_completo_secoes_2d, poligonos_corte_all, poligonos_aterro_all, relatorio
 
