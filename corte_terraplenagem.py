@@ -511,50 +511,10 @@ def generate_stroke_text(text_str, pt, height, justification=None, plane=None):
     return curves
 
 def make_text_geometry(text_str, pt, height, justification=None, s=1.0, plane=None):
+    """Gera curvas vetoriais 2D limpas e leves para textos técnicos (Stroke Vector Font Engine).
+    Execução 100% autônoma em Python, imune a falhas de Viewport nulo ou DimStyle no Rhino 8 / .NET Core.
+    """
     if not text_str: return []
-    curves = []
-
-    # 1. Tenta Explode nativo do Rhino
-    try:
-        if plane is None:
-            text_plane = rg.Plane(pt, rg.Vector3d.ZAxis)
-        else:
-            text_plane = rg.Plane(plane)
-            text_plane.Origin = pt
-
-        te = rg.TextEntity()
-        te.PlainText = text_str
-        te.Plane = text_plane
-        te.TextHeight = height
-        if justification is not None:
-            te.Justification = justification
-        else:
-            te.Justification = rg.TextJustification.BottomLeft
-
-        doc = Rhino.RhinoDoc.ActiveDoc
-        if doc and hasattr(doc, 'DimStyles') and doc.DimStyles.Current:
-            te.DimensionStyleId = doc.DimStyles.Current.Id
-
-        exp = te.Explode()
-        if exp and len(exp) > 0:
-            for c in exp:
-                if c and c.IsValid: curves.append(c)
-            if len(curves) > 0: return curves
-    except: pass
-
-    # 2. Tenta CreateCurves
-    try:
-        doc = Rhino.RhinoDoc.ActiveDoc
-        dim_style = doc.DimStyles.Current if (doc and hasattr(doc, 'DimStyles')) else None
-        if dim_style:
-            exp2 = te.CreateCurves(dim_style, False, 1.0, 1.0)
-            if exp2 and len(exp2) > 0:
-                for c in exp2:
-                    if c and c.IsValid: curves.append(c)
-                if len(curves) > 0: return curves
-    except: pass
-
-    # 3. Fallback: Stroke Vector Font integrado
     return generate_stroke_text(text_str, pt, height, justification, plane)
 
 make_text_entity = make_text_geometry
