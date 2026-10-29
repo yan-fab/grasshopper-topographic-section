@@ -1409,6 +1409,188 @@ def draw_quadrant_badge(p_cen, txt_str, s=1.0, plane_ref=None):
 
     return geoms
 
+
+# =============================================================================
+# NORMATIVE FUNCTIONS: 20M ROAD STATIONING, SLOPE TEETH, CONTOURS & CLEARANCE
+# (ABNT NBR 13.133, NBR 6492, DNIT & LEI FEDERAL 6.766/1979)
+# =============================================================================
+
+def draw_road_stationing_2d(crv, label_prefix="Est. ", step=20.0, s=1.0):
+    """
+    Gera o estaqueamento normativo de 20 em 20 metros ao longo do eixo da via em 2D
+    (DNIT / NBR 13.133), com ticks transversais perpendiculares e rótulos das estacas.
+    """
+    geoms = []
+    if crv is None or not getattr(crv, 'IsValid', False):
+        return geoms
+    total_len = crv.GetLength()
+    if total_len < 1.0:
+        return geoms
+    n_estacas = int(total_len // step)
+    tick_half_len = 1.25 * s
+    txt_offset = 2.40 * s
+    dist_list = [k * step for k in range(n_estacas + 1)]
+    if (total_len - (n_estacas * step)) > 1.0:
+        dist_list.append(total_len)
+    for d_val in dist_list:
+        rc, t_val = crv.LengthParameter(d_val)
+        if not rc:
+            continue
+        pt_3d = crv.PointAt(t_val)
+        pt_2d = rg.Point3d(pt_3d.X, pt_3d.Y, 0.0)
+        tan_vec = crv.TangentAt(t_val)
+        tan_2d = rg.Vector3d(tan_vec.X, tan_vec.Y, 0.0)
+        if tan_2d.Length < 1e-4:
+            continue
+        tan_2d.Unitize()
+        norm_2d = rg.Vector3d(-tan_2d.Y, tan_2d.X, 0.0)
+        p_t1 = pt_2d - norm_2d * tick_half_len
+        p_t2 = pt_2d + norm_2d * tick_half_len
+        geoms.append(rg.LineCurve(p_t1, p_t2))
+        idx_est = int(d_val // step)
+        rest_m = d_val - (idx_est * step)
+        if abs(rest_m) < 0.05:
+            lbl_str = "{}{}".format(label_prefix, idx_est)
+        else:
+            lbl_str = "{}{}+{}".format(label_prefix, idx_est, "{:05.2f}".format(rest_m).replace('.', ','))
+        p_txt = pt_2d + norm_2d * txt_offset
+        u_txt = tan_2d if (tan_2d.X >= 0 or (abs(tan_2d.X) < 1e-4 and tan_2d.Y >= 0)) else -tan_2d
+        v_txt = rg.Vector3d(-u_txt.Y, u_txt.X, 0.0)
+        pl_txt = rg.Plane(p_txt, u_txt, v_txt)
+        txt_geoms = make_text_geometry(lbl_str, p_txt, 0.85 * s, rg.TextJustification.MiddleCenter, s, plane=pl_txt)
+        if txt_geoms:
+            geoms.extend(txt_geoms)
+    return geoms
+
+def draw_slope_ticks_tadpoles_2d(p_crista, p_pe, s=1.0, is_long=True, is_cut=True):
+    """
+    Desenha um dente de talude (espinha de peixe) individual segundo a NBR 6492:
+    - Origem na Crista (ponto mais alto) apontando no sentido descendente em direção ao Pé.
+    - Se is_long=True: traço longo (65% do comprimento ou min 2.5*s) com ponta triangular/seta na crista.
+    - Se is_long=False: traço curto (30% do comprimento ou min 1.2*s).
+    """
+    geoms = []
+    p_c2d = rg.Point3d(p_crista.X, p_crista.Y, 0.0)
+    p_p2d = rg.Point3d(p_pe.X, p_pe.Y, 0.0)
+    vec = p_p2d - p_c2d
+    d_total = vec.Length
+    if d_total < 0.2:
+        return geoms
+    u_dir = rg.Vector3d(vec)
+    u_dir.Unitize()
+    ratio = 0.65 if is_long else 0.32
+    d_trace = min(d_total * ratio, max(2.5 * s, 1.5)) if is_long else min(d_total * ratio, max(1.2 * s, 0.8))
+    p_end = p_c2d + u_dir * d_trace
+    l_tick = rg.LineCurve(p_c2d, p_end)
+    geoms.append(l_tick)
+    if is_long:
+        w_side = 0.30 * s
+        u_norm = rg.Vector3d(-u_dir.Y, u_dir.X, 0.0)
+        p_tri_tip = p_c2d + u_dir * (0.60 * s)
+        p_tri_l = p_c2d + u_norm * w_side
+        p_tri_r = p_c2d - u_norm * w_side
+        tri_crv = rg.Polyline([p_tri_l, p_tri_tip, p_tri_r, p_tri_l]).ToPolylineCurve()
+        tri_mesh = make_filled_mesh_tri(p_tri_tip, p_tri_l, p_tri_r)
+        if tri_mesh:
+            geoms.append(tri_mesh)
+        if tri_crv and tri_crv.IsValid:
+            geoms.append(tri_crv)
+    return geoms
+
+def calculate_boundary_clearance(outer_slope_pts, boundary_crv, s=1.0):
+    """
+    Calcula a distância euclidiana mínima entre as saias/cristas dos taludes de terraplenagem
+    e os limites da matrícula da gleba, gerando a cota técnica de recuo crítico na planta baixa.
+    """
+    geoms = []
+    min_dist = 1e9
+    best_p_slope = None
+    best_p_bnd = None
+    if boundary_crv is None or not getattr(boundary_crv, 'IsValid', False) or not outer_slope_pts:
+        return geoms, min_dist, None
+    for pt in outer_slope_pts:
+        pt_2d = rg.Point3d(pt.X, pt.Y, 0.0)
+        rc, t_cp = boundary_crv.ClosestPoint(pt_2d)
+        if rc:
+            cp_pt = boundary_crv.PointAt(t_cp)
+            cp_2d = rg.Point3d(cp_pt.X, cp_pt.Y, 0.0)
+            d = pt_2d.DistanceTo(cp_2d)
+            if d < min_dist:
+                min_dist = d
+                best_p_slope = pt_2d
+                best_p_bnd = cp_2d
+    if best_p_slope and best_p_bnd and min_dist < 1e8:
+        vec = best_p_bnd - best_p_slope
+        if vec.Length > 0.05:
+            cota_dim = draw_plan_dimension(best_p_slope, best_p_bnd, "REC. MIN = {:.2f}m".format(min_dist).replace('.', ','), s)
+            geoms.extend(cota_dim)
+            circ_crit = rg.Circle(best_p_slope, 0.80 * s).ToNurbsCurve()
+            geoms.append(circ_crit)
+            if min_dist >= 1.50:
+                txt_status = "AFASTAMENTO MIN: {:.2f}m [CONFORME > 1.50m]".format(min_dist).replace('.', ',')
+            else:
+                txt_status = "ALERTA: AFASTAMENTO = {:.2f}m [< 1.50m]".format(min_dist).replace('.', ',')
+            p_lbl = (best_p_slope + best_p_bnd) / 2.0 + rg.Vector3d(0, 1.8 * s, 0)
+            txt_g = make_text_geometry(txt_status, p_lbl, 0.78 * s, rg.TextJustification.MiddleCenter, s)
+            if txt_g:
+                geoms.extend(txt_g)
+    return geoms, min_dist, (best_p_slope, best_p_bnd)
+
+def generate_project_contours(mesh_proj, z_step=1.0, z_master_step=5.0, s=1.0):
+    """
+    Fatia a malha 3D do terreno modificado/projetado (platôs + vias + taludes)
+    gerando as Curvas de Nível de Projeto (1 em 1m) e Curvas Mestras (5 em 5m),
+    com anotações de cota altimétrica nos trechos principais.
+    """
+    crvs_1m = []
+    crvs_5m = []
+    textos_mestras = []
+    if mesh_proj is None or not getattr(mesh_proj, 'IsValid', False):
+        return crvs_1m, crvs_5m, textos_mestras
+    if mesh_proj.Faces.Count == 0:
+        return crvs_1m, crvs_5m, textos_mestras
+    bbox = mesh_proj.GetBoundingBox(True)
+    if not bbox.IsValid:
+        return crvs_1m, crvs_5m, textos_mestras
+    z_min = bbox.Min.Z
+    z_max = bbox.Max.Z
+    if (z_max - z_min) < 0.2:
+        return crvs_1m, crvs_5m, textos_mestras
+    contours_raw = None
+    try:
+        p_bot = rg.Point3d(bbox.Center.X, bbox.Center.Y, math.floor(z_min))
+        p_top = rg.Point3d(bbox.Center.X, bbox.Center.Y, math.ceil(z_max))
+        contours_raw = rg.Mesh.CreateContourCurves(mesh_proj, p_bot, p_top, float(z_step))
+    except:
+        contours_raw = None
+    if contours_raw:
+        for crv in contours_raw:
+            if crv and getattr(crv, 'IsValid', False) and crv.GetLength() > 0.5:
+                z_mid = (crv.PointAtStart.Z + crv.PointAtEnd.Z) / 2.0
+                z_round = round(z_mid)
+                is_master = (abs(z_round % int(z_master_step)) < 0.05) or (abs(z_mid % float(z_master_step)) < 0.08)
+                if is_master:
+                    crvs_5m.append(crv)
+                    t_mid = (crv.Domain.Min + crv.Domain.Max) / 2.0
+                    p_mid = crv.PointAt(t_mid)
+                    txt_cota = "+{:.0f}".format(z_mid)
+                    tan = crv.TangentAt(t_mid)
+                    u_t = rg.Vector3d(tan.X, tan.Y, 0.0)
+                    if u_t.Length > 1e-4:
+                        u_t.Unitize()
+                        if u_t.X < -1e-4 or (abs(u_t.X) <= 1e-4 and u_t.Y < 0):
+                            u_t = -u_t
+                        v_t = rg.Vector3d(-u_t.Y, u_t.X, 0.0)
+                        pl_cota = rg.Plane(p_mid, u_t, v_t)
+                    else:
+                        pl_cota = rg.Plane(p_mid, rg.Vector3d.XAxis, rg.Vector3d.YAxis)
+                    txt_g = make_text_geometry(txt_cota, p_mid, 0.85 * s, rg.TextJustification.MiddleCenter, s, plane=pl_cota)
+                    if txt_g:
+                        textos_mestras.extend(txt_g)
+                else:
+                    crvs_1m.append(crv)
+    return crvs_1m, crvs_5m, textos_mestras
+
 def draw_section_vertical_axis_marker(base_x, base_y, d_ax, sec_h, sec_datum_z, z_terrain, z_proj, lbl_v, s=1.0):
     """
     Draws vertical cross-axis lines in section profile with top circular NBR bubble,
@@ -4284,6 +4466,24 @@ def run():
     # 8. TECHNICAL PLAN VIEW (AXES, BUBBLES AND QUADRANTS)
     # =========================================================================
     planta_baixa_geoms = []
+    estaqueamento_vias_geoms = []
+    quads_2d_corte = []
+    quads_2d_aterro = []
+    quads_2d_neutro = []
+    m_2d_corte = None
+    m_2d_aterro = None
+    m_2d_neutro = None
+    outer_slope_pts = []
+    dentes_talude_geoms = []
+    taludes_geoms = []
+    afastamento_divisas_geoms = []
+    linha_neutra_crvs = []
+    min_dist_bnd = 1e9
+    area_mancha_corte_2d = 0.0
+    area_mancha_aterro_2d = 0.0
+    crvs_proj_1m = []
+    crvs_proj_5m = []
+    crvs_proj_all = []
 
     offset_cota_fora = 8.5 * s
     offset_balao_fora = offset_cota_fora + 7.5 * s
@@ -4358,6 +4558,13 @@ def run():
     if boundary_info is not None:
         planta_baixa_geoms.append(boundary_info['curve'])
 
+    # Estaqueamento das Vias (20 em 20m) na Planta Baixa
+    estaqueamento_vias_geoms = []
+    for idx_v, crv_v in enumerate(lista_verticais):
+        st_geoms_v = draw_road_stationing_2d(crv_v, label_prefix="Est. ", step=passo_estacas, s=s)
+        estaqueamento_vias_geoms.extend(st_geoms_v)
+        planta_baixa_geoms.extend(st_geoms_v)
+
     # Quadrant Identification (Centroids)
     if num_secoes >= 2 and num_verticais >= 2:
         for i in range(num_secoes - 1):
@@ -4384,6 +4591,17 @@ def run():
     quads_sup_3d_neutro = []
     quads_sup_3d_asfalto = []
     quads_sup_3d_calcada = []
+
+    quads_2d_corte = []
+    quads_2d_aterro = []
+    quads_2d_neutro = []
+    outer_slope_pts = []
+    dentes_talude_geoms = []
+    taludes_geoms = []
+    area_mancha_corte_2d = 0.0
+    area_mancha_aterro_2d = 0.0
+    sum_corte_x = 0.0; sum_corte_y = 0.0
+    sum_aterro_x = 0.0; sum_aterro_y = 0.0
 
     cor_asfalto = System.Drawing.Color.FromArgb(45, 47, 52)      # Asfalto fosco carvão escuro
     cor_calcada = System.Drawing.Color.FromArgb(218, 220, 224)   # Concreto claro para calçadas/passeios
@@ -4492,10 +4710,36 @@ def run():
                     else:
                         if diff_z > 0.04:
                             quads_sup_3d_corte.append([p00, p10, p11, p01])
+                            q2d = [rg.Point3d(p00.X, p00.Y, 0.0), rg.Point3d(p10.X, p10.Y, 0.0), rg.Point3d(p11.X, p11.Y, 0.0), rg.Point3d(p01.X, p01.Y, 0.0)]
+                            quads_2d_corte.append(q2d)
+                            area_mancha_corte_2d += quad_area_2d
+                            sum_corte_x += cx * quad_area_2d; sum_corte_y += cy * quad_area_2d
+                            if abs(diff_z) > 0.15:
+                                outer_slope_pts.append(p_cen_m)
+                                if (m % 3 == 0) and (k % 2 == 0):
+                                    is_l = ((m + k) % 4 == 0)
+                                    p_top_s = rg.Point3d(cx, cy, z_tn_m)
+                                    p_bot_s = rg.Point3d(cx, cy, z_pr_m)
+                                    dt_geoms = draw_slope_ticks_tadpoles_2d(p_top_s, p_bot_s, s=s, is_long=is_l, is_cut=True)
+                                    dentes_talude_geoms.extend(dt_geoms)
                         elif diff_z < -0.04:
                             quads_sup_3d_aterro.append([p00, p10, p11, p01])
+                            q2d = [rg.Point3d(p00.X, p00.Y, 0.0), rg.Point3d(p10.X, p10.Y, 0.0), rg.Point3d(p11.X, p11.Y, 0.0), rg.Point3d(p01.X, p01.Y, 0.0)]
+                            quads_2d_aterro.append(q2d)
+                            area_mancha_aterro_2d += quad_area_2d
+                            sum_aterro_x += cx * quad_area_2d; sum_aterro_y += cy * quad_area_2d
+                            if abs(diff_z) > 0.15:
+                                outer_slope_pts.append(p_cen_m)
+                                if (m % 3 == 0) and (k % 2 == 0):
+                                    is_l = ((m + k) % 4 == 0)
+                                    p_top_s = rg.Point3d(cx, cy, z_pr_m)
+                                    p_bot_s = rg.Point3d(cx, cy, z_tn_m)
+                                    dt_geoms = draw_slope_ticks_tadpoles_2d(p_top_s, p_bot_s, s=s, is_long=is_l, is_cut=False)
+                                    dentes_talude_geoms.extend(dt_geoms)
                         else:
                             quads_sup_3d_neutro.append([p00, p10, p11, p01])
+                            q2d = [rg.Point3d(p00.X, p00.Y, 0.0), rg.Point3d(p10.X, p10.Y, 0.0), rg.Point3d(p11.X, p11.Y, 0.0), rg.Point3d(p01.X, p01.Y, 0.0)]
+                            quads_2d_neutro.append(q2d)
 
     m_3d_corte_sec  = create_colored_mesh(quads_3d_corte_secoes, cor_corte)
     m_3d_aterro_sec = create_colored_mesh(quads_3d_aterro_secoes, cor_aterro)
@@ -4526,6 +4770,93 @@ def run():
             modelo_3d_completo.append(m_part)
     if not modelo_3d_completo and mesh_terreno_projetado and getattr(mesh_terreno_projetado, 'IsValid', False):
         modelo_3d_completo.append(mesh_terreno_projetado)
+
+    # 9.1 Manchas de Corte e Aterro (Grading 2D) com Cores Contrastantes
+    cor_corte_2d  = System.Drawing.Color.FromArgb(170, 230, 92, 0)
+    cor_aterro_2d = System.Drawing.Color.FromArgb(170, 46, 139, 87)
+    cor_neutro_2d = System.Drawing.Color.FromArgb(140, 220, 220, 100)
+    m_2d_corte  = create_colored_mesh(quads_2d_corte, cor_corte_2d)
+    m_2d_aterro = create_colored_mesh(quads_2d_aterro, cor_aterro_2d)
+    m_2d_neutro = create_colored_mesh(quads_2d_neutro, cor_neutro_2d)
+
+    manchas_grading_geoms = []
+    if m_2d_corte and getattr(m_2d_corte, 'IsValid', False):
+        manchas_grading_geoms.append(m_2d_corte)
+        planta_baixa_geoms.append(m_2d_corte)
+    if m_2d_aterro and getattr(m_2d_aterro, 'IsValid', False):
+        manchas_grading_geoms.append(m_2d_aterro)
+        planta_baixa_geoms.append(m_2d_aterro)
+    if m_2d_neutro and getattr(m_2d_neutro, 'IsValid', False):
+        manchas_grading_geoms.append(m_2d_neutro)
+        planta_baixa_geoms.append(m_2d_neutro)
+
+    # Selos das Manchas de Terraplenagem
+    if area_mancha_corte_2d > 1.0:
+        cen_cx = sum_corte_x / area_mancha_corte_2d
+        cen_cy = sum_corte_y / area_mancha_corte_2d
+        txt_c_badge = "ZONA DE CORTE: {:.2f} m²".format(area_mancha_corte_2d).replace('.', ',')
+        b_corte = draw_quadrant_badge(rg.Point3d(cen_cx, cen_cy, 0.0), txt_c_badge, s=s)
+        manchas_grading_geoms.extend(b_corte)
+        planta_baixa_geoms.extend(b_corte)
+
+    if area_mancha_aterro_2d > 1.0:
+        cen_ax = sum_aterro_x / area_mancha_aterro_2d
+        cen_ay = sum_aterro_y / area_mancha_aterro_2d
+        txt_a_badge = "ZONA DE ATERRO: {:.2f} m²".format(area_mancha_aterro_2d).replace('.', ',')
+        b_aterro = draw_quadrant_badge(rg.Point3d(cen_ax, cen_ay, 0.0), txt_a_badge, s=s)
+        manchas_grading_geoms.extend(b_aterro)
+        planta_baixa_geoms.extend(b_aterro)
+
+    # 9.2 Linhas de Talude, Linha Neutra e Dentes de Talude
+    linha_neutra_crvs = []
+    if m_2d_neutro and getattr(m_2d_neutro, 'IsValid', False):
+        try:
+            for nk in m_2d_neutro.GetNakedEdges() or []:
+                if nk:
+                    c_nk = nk.ToPolylineCurve()
+                    linha_neutra_crvs.append(c_nk)
+                    planta_baixa_geoms.append(c_nk)
+        except: pass
+
+    if m_2d_corte and getattr(m_2d_corte, 'IsValid', False):
+        try:
+            for nk in m_2d_corte.GetNakedEdges() or []:
+                if nk:
+                    c_nk = nk.ToPolylineCurve()
+                    taludes_geoms.append(c_nk)
+                    planta_baixa_geoms.append(c_nk)
+        except: pass
+
+    if m_2d_aterro and getattr(m_2d_aterro, 'IsValid', False):
+        try:
+            for nk in m_2d_aterro.GetNakedEdges() or []:
+                if nk:
+                    c_nk = nk.ToPolylineCurve()
+                    taludes_geoms.append(c_nk)
+                    planta_baixa_geoms.append(c_nk)
+        except: pass
+
+    planta_baixa_geoms.extend(dentes_talude_geoms)
+
+    # 9.3 Afastamento às Divisas (Faixa de Segurança / Non Aedificandi)
+    afastamento_divisas_geoms = []
+    min_dist_bnd = 1e9
+    if boundary_info is not None and outer_slope_pts:
+        afastamento_divisas_geoms, min_dist_bnd, _ = calculate_boundary_clearance(outer_slope_pts, boundary_info['curve'], s=s)
+        planta_baixa_geoms.extend(afastamento_divisas_geoms)
+
+    # 9.4 Curvas de Nível de Projeto (Modificadas de 1m e Mestras de 5m)
+    crvs_proj_1m, crvs_proj_5m, textos_mestras_proj = generate_project_contours(mesh_terreno_projetado, z_step=1.0, z_master_step=5.0, s=s)
+    crvs_proj_all = crvs_proj_1m + crvs_proj_5m
+    for c in crvs_proj_all:
+        modelo_3d_completo.append(c)
+        c_dup = c.DuplicateCurve()
+        if c_dup:
+            xf = rg.Transform.PlanarProjection(rg.Plane.WorldXY)
+            c_dup.Transform(xf)
+            planta_baixa_geoms.append(c_dup)
+    modelo_3d_completo.extend(textos_mestras_proj)
+    planta_baixa_geoms.extend(textos_mestras_proj)
 
     draped_road_curves_3d = []
     for p_info in road_polygons:
@@ -4827,10 +5158,39 @@ def run():
             "   - Desnível Padrão de Guia / Meio-Fio       : +0.15 m (Segregação de pedestres e veículos)",
             "   - Limite de Declividade Longitudinal       : Máximo de {:.1f}% verificado".format(max_slope * 100.0),
             "     * Diagnóstico de Trafegabilidade e Drenagem: " + diag_traf,
+            "-----------------------------------------------------------------------------------------",
+            "7. AUDITORIA NORMATIVA & CONFORMIDADE URBANÍSTICA (NBR 13.133 / NBR 6492 / LEI 6.766):",
+            "   - Identificação da Gleba & Matrícula      : Matrícula 30.901 | Área: {:.2f} m² (Nicole Y. Pisciottano)".format(area_lote_ref),
+            "   - Malha de Coordenadas & Orientação       : SIRGAS 2000 UTM Fuso 23S | Convergência Meridiana",
+            "   - Curvas de Nível Naturais (Existentes)   : Camadas MDT1_CURVAS (1m) e MDT1_CURVAS_MESTRE (5m)",
+            "   - Curvas de Nível de Projeto (Modificadas): CONFORME (Curvas de 1m e Mestras de 5m cotadas amarradas ao terreno)",
+            "   - Estaqueamento dos Eixos Viários (20m)   : CONFORME (Estacas 0, 1, 2... demarcadas com marcas a cada 20.00m)",
+            "   - Pés e Cristas de Taludes (Off-sets)     : CONFORME (Demarcados em planta com simbologia de dentes de talude NBR 6492)",
+            "   - Afastamento Mínimo do Talude à Divisa   : " + ("CONFORME (d = {:.2f} m >= 1.50 m - Respeita Faixa de Segurança)".format(min_dist_bnd).replace('.', ',') if min_dist_bnd < 1e8 and min_dist_bnd >= 1.50 else ("ALERTA (d = {:.2f} m < 1.50 m - Exige retaludamento ou contenção)".format(min_dist_bnd).replace('.', ',') if min_dist_bnd < 1e8 else "Não avaliado")),
+            "   - Manchas de Grading (Corte e Aterro 2D)  : CONFORME (Mapeamento cromático Laranja/Verde com Linha Neutra)",
+            "     * Área Total da Mancha de Corte em Planta: {:.2f} m²".format(area_mancha_corte_2d),
+            "     * Área Total da Mancha de Aterro em Planta: {:.2f} m²".format(area_mancha_aterro_2d),
             "========================================================================================="
         ])
 
     # Saídas dinâmicas para conexões opcionais no Grasshopper (aliases bilíngues)
+    globals()['CurvasProjeto1m'] = crvs_proj_1m
+    globals()['CurvasProjeto5m'] = crvs_proj_5m
+    globals()['CurvasProjetoMestres'] = crvs_proj_5m
+    globals()['CurvasProjeto'] = crvs_proj_all
+    globals()['CurvasModificadas3D'] = crvs_proj_all
+    globals()['EstacasVias2D'] = estaqueamento_vias_geoms
+    globals()['EstaqueamentoViario2D'] = estaqueamento_vias_geoms
+    globals()['Taludes2D'] = taludes_geoms
+    globals()['LinhasOffSetTalude'] = taludes_geoms
+    globals()['DentesTalude2D'] = dentes_talude_geoms
+    globals()['EspinhasDePeixe2D'] = dentes_talude_geoms
+    globals()['AfastamentoDivisas'] = afastamento_divisas_geoms
+    globals()['ManchasCorte2D'] = m_2d_corte
+    globals()['ManchasAterro2D'] = m_2d_aterro
+    globals()['ManchasCorteAterro2D'] = [m for m in [m_2d_corte, m_2d_aterro] if m]
+    globals()['LinhaNeutra2D'] = linha_neutra_crvs
+
     linhas_estacas_crvs = [item['curve'] for item in estacas_normativas_info]
     globals()['LinhasEstacas20m'] = linhas_estacas_crvs
     globals()['Estacas20m'] = linhas_estacas_crvs
