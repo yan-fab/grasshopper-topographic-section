@@ -2699,12 +2699,20 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
     sec_datum_z = math.floor(s_data['z_min'] - 2.0)
     sec_h = s_data['z_max'] - sec_datum_z
 
-    # Section Title
+    # Section Title & Stationing
     p_tit = rg.Point3d(base_x, base_y + sec_h + 8.5 * s, 0.0)
-    tit_crvs = make_text_geometry("{} {} - {}".format(axis_title_prefix.strip(), lbl, lbl), p_tit, 1.50 * s, rg.TextJustification.BottomLeft, s)
+    tit_str = "{} {} - {}".format(axis_title_prefix.strip(), lbl, lbl)
+    if not is_longitudinal and s_data.get('estaca_str'):
+        tit_str += " [{}]".format(s_data['estaca_str'])
+    tit_crvs = make_text_geometry(tit_str, p_tit, 1.50 * s, rg.TextJustification.BottomLeft, s)
     geoms_2d.extend(tit_crvs)
 
-    sub_str = "Length: {:.2f}m | Average Elevation: +{:.2f}m".format(total_ext, sum(p[1].Z for p in clean_pts)/len(clean_pts)).replace('.', ',')
+    sub_parts = []
+    if not is_longitudinal and s_data.get('estaca_str'):
+        sub_parts.append("Estaca: {}".format(s_data['estaca_str']))
+    sub_parts.append("Extensão: {:.2f}m".format(total_ext).replace('.', ','))
+    sub_parts.append("Cota Média: +{:.2f}m".format(sum(p[1].Z for p in clean_pts)/len(clean_pts)).replace('.', ','))
+    sub_str = " | ".join(sub_parts)
     p_sub = rg.Point3d(base_x, base_y + sec_h + 6.8 * s, 0.0)
     sub_crvs = make_text_geometry(sub_str, p_sub, 0.85 * s, rg.TextJustification.BottomLeft, s)
     geoms_2d.extend(sub_crvs)
@@ -2979,6 +2987,8 @@ def run():
     raw_limite       = get_input(['SiteBoundary', 'PropertyLine', 'Boundary', 'BoundaryLine', 'Limite', 'LimiteTerreno', 'Perimetro', 'PoligonalLote', 'Plataforma', 'LimitePropriedade', 'Lote'])
     raw_viario       = get_input(['Roadway', 'Viario', 'RoadNetwork', 'RoadBoundary', 'Pista', 'Ruas', 'CADViario', 'PoligonoViario', 'Vias', 'PoligonalViario', 'MalhaViaria', 'EixoViario', 'EixosViarios', 'Rua', 'RuasCAD', 'EixoRua', 'EixosRuas', 'Pistas'])
     raw_homogeneizacao = get_input(['HomogenizationFactor', 'CompactionFactor', 'ShrinkageFactor', 'FatorHomogeneizacao', 'FatorContracao', 'Fh'], 1.15)
+    raw_modo_estacas = get_input(['StationingMode', 'ModoEstacas', 'EstaqueamentoNormativo', 'Estacas20m', 'Normative20m', 'UsarEstacas20m', 'Modo20m'])
+    raw_passo_estacas = get_input(['StationInterval', 'PassoEstacas', 'IntervaloEstacas', 'DistanciaEstacas', 'Passo'], 20.0)
 
     try:
         if raw_inclinacao is not None:
@@ -3008,6 +3018,11 @@ def run():
         fh = float(raw_homogeneizacao) if raw_homogeneizacao is not None else 1.15
         if fh < 1.0 or fh > 2.0: fh = 1.15
     except: fh = 1.15
+
+    try:
+        passo_estacas = float(raw_passo_estacas) if raw_passo_estacas is not None else 20.0
+        if passo_estacas <= 1.0: passo_estacas = 20.0
+    except: passo_estacas = 20.0
 
     geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
     if not geoms_terreno:
@@ -3125,6 +3140,99 @@ def run():
                                p_ref.Y + u_fim_s * u_corte.Y,
                                0.0)
         lista_alinhadas.append(rg.LineCurve(p_ini_aln, p_fim_aln))
+
+    # GERAÇÃO DA REDE DE ESTAQUEAMENTO NORMATIVO A CADA 20 METROS (DNIT / SECRETARIAS DE OBRAS)
+    # 1 estaca = 20.00 metros
+    estacas_normativas_info = []
+    try:
+        v_ref_start = None
+        if lista_alinhadas:
+            pm0 = lista_alinhadas[0].PointAtNormalizedLength(0.5)
+            v_ref_start = pm0.X * u_long_down.X + pm0.Y * u_long_down.Y
+        elif boundary_info is not None and boundary_info.get('pts_2d'):
+            v_ref_start = min(p.X * u_long_down.X + p.Y * u_long_down.Y for p in boundary_info['pts_2d'])
+
+        v_ref_end = None
+        if lista_alinhadas:
+            pmn = lista_alinhadas[-1].PointAtNormalizedLength(0.5)
+            v_ref_end = pmn.X * u_long_down.X + pmn.Y * u_long_down.Y
+        elif boundary_info is not None and boundary_info.get('pts_2d'):
+            v_ref_end = max(p.X * u_long_down.X + p.Y * u_long_down.Y for p in boundary_info['pts_2d'])
+
+        if v_ref_start is not None and v_ref_end is not None and v_ref_end > v_ref_start + 1.0:
+            cur_v = v_ref_start
+            idx_st = 0
+            while cur_v <= v_ref_end + 1e-4:
+                p_ref = rg.Point3d(cur_v * u_long_down.X, cur_v * u_long_down.Y, 0.0)
+                clipped_int = None
+                if boundary_info is not None:
+                    clipped_int = find_ray_polygon_interval(
+                        (p_ref.X, p_ref.Y), (u_corte.X, u_corte.Y), boundary_info['pts_2d']
+                    )
+                if clipped_int is not None and (clipped_int[1] - clipped_int[0]) > 1.0:
+                    u0, u1 = clipped_int
+                else:
+                    u0, u1 = u_min_aligned, u_max_aligned
+
+                p0 = rg.Point3d(p_ref.X + u0 * u_corte.X, p_ref.Y + u0 * u_corte.Y, 0.0)
+                p1 = rg.Point3d(p_ref.X + u1 * u_corte.X, p_ref.Y + u1 * u_corte.Y, 0.0)
+                line_st = rg.LineCurve(p0, p1)
+
+                d_prog = cur_v - v_ref_start
+                lbl_estaca = "Estaca {}".format(idx_st)
+                estacas_normativas_info.append({
+                    'curve': line_st,
+                    'index': idx_st,
+                    'dist': d_prog,
+                    'v_coord': cur_v,
+                    'label': lbl_estaca,
+                    'tag': "{} ({:.2f}m)".format(lbl_estaca, d_prog).replace('.', ',')
+                })
+                cur_v += passo_estacas
+                idx_st += 1
+
+            resto_final = v_ref_end - (cur_v - passo_estacas)
+            if resto_final > 1.0:
+                p_ref = rg.Point3d(v_ref_end * u_long_down.X, v_ref_end * u_long_down.Y, 0.0)
+                clipped_int = None
+                if boundary_info is not None:
+                    clipped_int = find_ray_polygon_interval(
+                        (p_ref.X, p_ref.Y), (u_corte.X, u_corte.Y), boundary_info['pts_2d']
+                    )
+                if clipped_int is not None and (clipped_int[1] - clipped_int[0]) > 1.0:
+                    u0, u1 = clipped_int
+                else:
+                    u0, u1 = u_min_aligned, u_max_aligned
+                p0 = rg.Point3d(p_ref.X + u0 * u_corte.X, p_ref.Y + u0 * u_corte.Y, 0.0)
+                p1 = rg.Point3d(p_ref.X + u1 * u_corte.X, p_ref.Y + u1 * u_corte.Y, 0.0)
+                line_st = rg.LineCurve(p0, p1)
+                d_prog = v_ref_end - v_ref_start
+                last_i = int(d_prog // passo_estacas)
+                r_st = d_prog - (last_i * passo_estacas)
+                lbl_estaca = "Estaca Final ({}+{:05.2f})".format(last_i, r_st).replace('.', ',')
+                estacas_normativas_info.append({
+                    'curve': line_st,
+                    'index': last_i,
+                    'dist': d_prog,
+                    'v_coord': v_ref_end,
+                    'label': lbl_estaca,
+                    'tag': "{} ({:.2f}m)".format(lbl_estaca, d_prog).replace('.', ',')
+                })
+    except Exception as _e_est:
+        pass
+
+    # Se modo de estacas normativas foi solicitado ativamente, adota as estacas de 20m
+    usar_modo_estacas = False
+    if raw_modo_estacas is not None:
+        if isinstance(raw_modo_estacas, bool) and raw_modo_estacas:
+            usar_modo_estacas = True
+        elif isinstance(raw_modo_estacas, (int, float)) and raw_modo_estacas > 0:
+            usar_modo_estacas = True
+        elif isinstance(raw_modo_estacas, str) and raw_modo_estacas.strip().lower() in ['true', '1', 'sim', 'yes', 'estacas', '20m']:
+            usar_modo_estacas = True
+
+    if usar_modo_estacas and estacas_normativas_info:
+        lista_alinhadas = [item['curve'] for item in estacas_normativas_info]
 
     # 0.4 Processamento e Organização dos Eixos Longitudinais/Verticais (1, 2, 3...)
     # REGRA DA NORMA:
@@ -3502,6 +3610,30 @@ def run():
         except: w_single = 1.0
         distancias_eixos = [w_single]
 
+    # 6.0 Cálculo do Estaqueamento Progressivo (Estaca X+YY,YY) de cada seção
+    dist_acum_t = 0.0
+    estacas_secoes_t = []
+    for idx_s in range(num_secoes):
+        d_acum = 0.0 if idx_s == 0 else dist_acum_t
+        e_int = int(d_acum // passo_estacas)
+        e_rem = d_acum - (e_int * passo_estacas)
+        if e_rem < 0.005:
+            e_str = "Estaca {}+00,00".format(e_int)
+        else:
+            e_str = "Estaca {}+{:05.2f}".format(e_int, e_rem).replace('.', ',')
+
+        estacas_secoes_t.append({
+            'estaca_str': e_str,
+            'dist_acum': d_acum,
+            'e_int': e_int,
+            'e_rem': e_rem,
+            'd_prox': distancias_eixos[idx_s] if idx_s < len(distancias_eixos) else 0.0
+        })
+        sec_data_list[idx_s]['estaca_str'] = e_str
+        sec_data_list[idx_s]['dist_acum'] = d_acum
+        if idx_s < len(distancias_eixos):
+            dist_acum_t += distancias_eixos[idx_s]
+
     vols_trechos = []
     for i in range(num_secoes - 1):
         d_trecho = distancias_eixos[i]
@@ -3617,14 +3749,29 @@ def run():
         # Mass Haul Transfer Banner between Consecutive Cross Sections
         if idx_s < num_secoes - 1:
             lbl_prox = labels_t[idx_s + 1]
-            d_t, vc_t, va_t, va_banco_t, s_t = vols_trechos[idx_s]
-            fl_item = fluxo_transporte[idx_s]
-            if s_t > 0.01:
-                nota_t = "SOBRA LOCAL: +{:.1f}m³ | BRÜCKNER: {:+.1f}m³ (RAMO ASCENDENTE)".format(s_t, fl_item['ordenada']).replace('.', ',')
-            elif s_t < -0.01:
-                nota_t = "DÉFICIT LOCAL: {:.1f}m³ | BRÜCKNER: {:+.1f}m³ (DEMANDA JAZIDA)".format(s_t, fl_item['ordenada']).replace('.', ',')
+            vt_val = vols_trechos[idx_s]
+            if len(vt_val) == 5:
+                d_t, vc_t, va_t, va_banco_t, s_t = vt_val
+            elif len(vt_val) == 4:
+                d_t, vc_t, va_t, s_t = vt_val
+                va_banco_t = va_t
             else:
-                nota_t = "COMPENSADO LOCALMENTE | BRÜCKNER: {:+.1f}m³".format(fl_item['ordenada']).replace('.', ',')
+                d_t, vc_t, va_t, s_t = vt_val[0], vt_val[1], vt_val[2], vt_val[-1]
+                va_banco_t = va_t
+
+            fl_item = fluxo_transporte[idx_s] if idx_s < len(fluxo_transporte) else None
+            if isinstance(fl_item, dict):
+                ord_b = fl_item.get('ordenada', s_t)
+                if s_t > 0.01:
+                    nota_t = "SOBRA LOCAL: +{:.1f}m³ | BRÜCKNER: {:+.1f}m³ (RAMO ASCENDENTE)".format(s_t, ord_b).replace('.', ',')
+                elif s_t < -0.01:
+                    nota_t = "DÉFICIT LOCAL: {:.1f}m³ | BRÜCKNER: {:+.1f}m³ (DEMANDA JAZIDA)".format(s_t, ord_b).replace('.', ',')
+                else:
+                    nota_t = "COMPENSADO LOCALMENTE | BRÜCKNER: {:+.1f}m³".format(ord_b).replace('.', ',')
+            elif isinstance(fl_item, str):
+                nota_t = fl_item
+            else:
+                nota_t = ""
 
             next_sec = sec_data_list[idx_s + 1]
             next_datum = math.floor(next_sec['z_min'] - 2.0)
@@ -3676,8 +3823,29 @@ def run():
             # Mass Haul Transfer Banner between Consecutive Longitudinal Sections
             if idx_v < num_verticais - 1 and idx_v < len(vols_trechos_v):
                 lbl_v_prox = labels_v[idx_v + 1]
-                d_tv, vc_tv, va_tv, s_tv = vols_trechos_v[idx_v]
-                nota_tv = fluxo_transporte_v[idx_v]
+                vt_v_val = vols_trechos_v[idx_v]
+                if len(vt_v_val) == 5:
+                    d_tv, vc_tv, va_tv, va_banco_tv, s_tv = vt_v_val
+                elif len(vt_v_val) == 4:
+                    d_tv, vc_tv, va_tv, s_tv = vt_v_val
+                    va_banco_tv = va_tv
+                else:
+                    d_tv, vc_tv, va_tv, s_tv = vt_v_val[0], vt_v_val[1], vt_v_val[2], vt_v_val[-1]
+                    va_banco_tv = va_tv
+
+                fl_item_v = fluxo_transporte_v[idx_v] if idx_v < len(fluxo_transporte_v) else None
+                if isinstance(fl_item_v, dict):
+                    ord_bv = fl_item_v.get('ordenada', s_tv)
+                    if s_tv > 0.01:
+                        nota_tv = "SOBRA LOCAL: +{:.1f}m³ | BRÜCKNER: {:+.1f}m³".format(s_tv, ord_bv).replace('.', ',')
+                    elif s_tv < -0.01:
+                        nota_tv = "DÉFICIT LOCAL: {:.1f}m³ | BRÜCKNER: {:+.1f}m³".format(s_tv, ord_bv).replace('.', ',')
+                    else:
+                        nota_tv = "COMPENSADO LOCALMENTE | BRÜCKNER: {:+.1f}m³".format(ord_bv).replace('.', ',')
+                elif isinstance(fl_item_v, str):
+                    nota_tv = fl_item_v
+                else:
+                    nota_tv = ""
 
                 next_sec_v = sec_v_data_list[idx_v + 1]
                 next_datum_v = math.floor(next_sec_v['z_min'] - 2.0)
@@ -4088,20 +4256,47 @@ def run():
         "=========================================================================================",
         "1. RESUMO DAS SEÇÕES TRANSVERSAIS (EIXOS {} A {}):".format(labels_t[0], labels_t[-1]),
         "-----------------------------------------------------------------------------------------",
-        "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("SEÇÃO", "EXTENSÃO", "ÁREA CORTE", "ÁREA ATERRO", "H. MÁX CORTE", "H. MÁX ATERRO"),
+        "{:<8} | {:<16} | {:<11} | {:<13} | {:<13} | {:<10} | {:<10}".format("SEÇÃO", "ESTAQUEAMENTO", "EXTENSÃO", "ÁREA CORTE", "ÁREA ATERRO", "H.MÁX CORTE", "H.MÁX ATERRO"),
         "-----------------------------------------------------------------------------------------"
     ]
 
     for idx_sd, sd in enumerate(sec_data_list):
         lbl_sd = sd.get('label') or (labels_t[idx_sd] if idx_sd < len(labels_t) else "SEC {}".format(idx_sd + 1))
-        relatorio.append("{:<10} | {:<10.2f} m | {:<12.2f} m² | {:<12.2f} m² | {:<10.2f} m | {:<10.2f} m".format(
-            lbl_sd, sd.get('total_ext', 0.0), sd.get('area_total_corte', 0.0), sd.get('area_total_aterro', 0.0), sd.get('max_h_corte', 0.0), sd.get('max_h_aterro', 0.0)
+        est_sd = sd.get('estaca_str', '-')
+        relatorio.append("{:<8} | {:<16} | {:<9.2f} m | {:<11.2f} m² | {:<11.2f} m² | {:<8.2f} m | {:<8.2f} m".format(
+            lbl_sd, est_sd, sd.get('total_ext', 0.0), sd.get('area_total_corte', 0.0), sd.get('area_total_aterro', 0.0), sd.get('max_h_corte', 0.0), sd.get('max_h_aterro', 0.0)
         ))
+
+    # Adiciona seção de conformidade de estaqueamento normativo de 20m
+    relatorio.extend([
+        "-----------------------------------------------------------------------------------------",
+        "2. CONFORMIDADE DE ESTAQUEAMENTO NORMATIVO (SECRETARIA DE OBRAS / DNIT 108/2009-ES):",
+        "-----------------------------------------------------------------------------------------",
+        "   - Padrão Normativo Obrigatório        : 1 Estaca = 20,00 metros (ABNT NBR 13133 / DNIT)",
+        "   - Intervalo Adotado na Análise        : {:.2f} metros".format(passo_estacas),
+        "   - Extensão Total do Eixo Principal    : {:.2f} metros".format(dist_acum_t),
+        "   - Estaqueamento dos Eixos Executivos  :"
+    ])
+    for idx_e, st_info in enumerate(estacas_secoes_t):
+        lbl_e = labels_t[idx_e] if idx_e < len(labels_t) else "S{}".format(idx_e + 1)
+        relatorio.append("     * SEÇÃO {:<2} : {:<16} (Dist. Acumulada: {:6.2f} m | Δd p/ próxima: {:5.2f} m)".format(
+            lbl_e, st_info['estaca_str'], st_info['dist_acum'], st_info['d_prox']
+        ))
+
+    n_norm = len(estacas_normativas_info)
+    if n_norm > 0:
+        relatorio.append("   - Malha Normativa de Estacas Inteiras (Saída 'LinhasEstacas20m'):")
+        relatorio.append("     * Quantidade de Estacas Geradas: {} estacas normativas a cada 20m".format(n_norm))
+        relatorio.append("     * Intervalo Coberto            : {} até {}".format(estacas_normativas_info[0]['label'], estacas_normativas_info[-1]['label']))
+        relatorio.append("   - Parecer Técnico Municipal:")
+        relatorio.append("     * As seções A a J representam os marcos executivos do projeto de terraplenagem.")
+        relatorio.append("     * Para atendimento estrito ao checklist da Secretaria de Obras (seções a cada 20m),")
+        relatorio.append("       a malha de estacas normativas inteiras foi calculada e exportada na saída 'LinhasEstacas20m'.")
 
     if num_verticais >= 1:
         relatorio.extend([
             "-----------------------------------------------------------------------------------------",
-            "2. RESUMO DAS SEÇÕES LONGITUDINAIS (EIXOS {} A {}):".format(labels_v[0], labels_v[-1]),
+            "3. RESUMO DAS SEÇÕES LONGITUDINAIS (EIXOS {} A {}):".format(labels_v[0], labels_v[-1]),
             "-----------------------------------------------------------------------------------------",
             "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("EIXO", "EXTENSÃO", "ÁREA CORTE", "ÁREA ATERRO", "H. MÁX CORTE", "H. MÁX ATERRO"),
             "-----------------------------------------------------------------------------------------"
@@ -4211,6 +4406,13 @@ def run():
         ])
 
     # Saídas dinâmicas para conexões opcionais no Grasshopper (aliases bilíngues)
+    linhas_estacas_crvs = [item['curve'] for item in estacas_normativas_info]
+    globals()['LinhasEstacas20m'] = linhas_estacas_crvs
+    globals()['Estacas20m'] = linhas_estacas_crvs
+    globals()['SecoesEstacas20m'] = linhas_estacas_crvs
+    globals()['RotulosEstacas20m'] = [item['label'] for item in estacas_normativas_info]
+    globals()['NormativeStationLines'] = linhas_estacas_crvs
+    globals()['NormativeStations20m'] = linhas_estacas_crvs
     globals()['Viario3D'] = [m for m in [m_3d_asfalto, m_3d_calcada] if m and getattr(m, 'IsValid', False)]
     globals()['Roadway3D'] = globals()['Viario3D']
     globals()['Asfalto3D'] = m_3d_asfalto

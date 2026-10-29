@@ -1,46 +1,52 @@
 # -*- coding: utf-8 -*-
 """
 ===============================================================================
-MULTI-AXIS EARTHWORK & VOLUME CALCULATION (NBR 6492 & AGPTEA)
+CÁLCULO DE TERRAPLENAGEM, VOLUMES MULTI-EIXOS & SISTEMA VIÁRIO (NBR 6492 & AGPTEA)
 ===============================================================================
-Parametric algorithm for Grasshopper (Rhinoceros 8 / GhPython).
-Unifies multiple cross-sectional cut axes (A, B, C...) and longitudinal axes (1, 2, 3...),
-automatically calculates distances between consecutive axes, computes cut and fill
-cubic volumes using AGPTEA's Average End Area method, aligns all sections with uniform
-spacing, and performs PROGRESSIVE MASS HAUL BALANCING (tracking where surplus excavation
-supplies the embankment of subsequent sections).
+Algoritmo paramétrico para Grasshopper (Rhinoceros 8 / GhPython).
+Unifica múltiplos eixos de corte transversais (A, B, C...) e longitudinais (1, 2, 3...),
+integra o sistema viário projetado em 2D/3D (ruas, calçadas, abaulamento de 2.0% e desnível de guias),
+calcula automaticamente as distâncias entre eixos consecutivos, calcula as metragens
+cúbicas de corte e aterro pelo Método das Seções Transversais da AGPTEA, alinha todas
+as seções com espaçamento uniforme e realiza a COMPENSAÇÃO PROGRESSIVA DE MASSAS
+(rastreando de onde sai a terra excedente para abastecer o aterro da próxima seção).
 
-Methodology based on:
+Metodologia baseada em:
 - "TOPOGRAFIA: CÁLCULO DE VOLUMES – NOTAS DE AULA"
   Prof. Luís Augusto Koenig Veiga (UFPR / AGPTEA)
-  Chapter 3.2 (Average End Area Method) & Chapter 3.3 (Mass Haul Balancing)
-- NBR 6492: Architectural Project Representation (Sections, Levels & Notation)
+  Cap. 3.2 (Método das Seções Transversais) e Cap. 3.3 (Balanço de Massas)
+- NBR 6492: Representação de Projetos de Arquitetura (Simbologia de Cortes e Níveis)
+- Normas DNIT / NBR de Vias Urbanas (Carroçabilidade, Greide e Drenagem com Abaulamento)
 
-INPUTS (Bilingual - English / Português):
-  Terrain / Terreno                 [List, Curve/Mesh] : 3D contour curves or topographic mesh.
-  SectionLines / LinhasCorte        [List, Curve]      : Cross-sectional cut axes (Sections A, B, C, D...).
-  LongitudinalLines / EixosVerticais[List, Curve]      : Longitudinal/vertical axes (1, 2, 3...) [Optional].
-  GradingLine / CurvaProjeto        [Item/List, Curve] : Proposed grade or boundary curve(s) / BoundaryLine [Optional].
-  Roadway / Viario                  [Item/List, Curve] : Closed 2D CAD road network polygon(s) (calçada + rua + cul-de-sacs) [Optional].
-  MaxSlope / InclinacaoMaxima       [Item, float]      : Maximum allowable slope for grading line/boundary [Optional, Default = 15.0 (%)].
-  ProjectElevation / NivelProjeto   [Item/List/Tree]   : Pad/grade elevation per quadrant (single float, list [102.0, 105.0] or Tree) [Optional].
-  Point / Ponto                     [Item, Point3d]    : Base insertion point for 2D sections in Top View [Optional].
-  Spacing / Espacamento             [Item, float]      : Uniform vertical spacing between 2D sections [Optional].
-  Width / Largura                   [Item, float]      : Influence width for single section volume (default: 1.0 m).
-  BulkingFactor / Empolamento       [Item, float]      : Soil bulking factor for hauling (default: 1.20).
-  Selector / Seletor                [Item, int]        : Display mode:
-                                                         0 = Full (Natural Terrain + Grade + Areas + All Dimensions)
-                                                         1 = Earthwork / Proposed [Default]
-                                                         2 = Natural Terrain Only
-  Scale / Escala                    [Item, float]      : Scale multiplier for symbols, text and NBR bubbles (default: 1.0).
+ENTRADAS (INPUTS - Bilíngue Português / English):
+  Terreno / Terrain                 [List, Curve/Mesh] : Curvas de nível 3D ou Malha topográfica.
+  LinhasCorte / SectionLines        [List, Curve]      : Eixos de corte transversais (Seções A, B, C, D...).
+  EixosVerticais / LongitudinalLines[List, Curve]      : Eixos longitudinais/verticais (1, 2, 3...) [Opcional].
+  CurvaProjeto / GradingLine        [Item/List, Curve] : Curva(s) de greide ou projeto / LinhaDelimitadora [Opcional].
+  Viario / Roadway / Ruas           [Item/List, Curve] : Poligonais fechadas 2D do viário (calçadas + pistas + cul-de-sacs) [Opcional].
+  InclinacaoMaxima / MaxSlope       [Item, float]      : Inclinação máxima permitida para o greide delimitador [Opcional, Padrão = 15.0 (%)].
+  NivelProjeto / ProjectElevation   [Item/List/Tree]   : Cota(s) de platô individual por trecho/quadrante [Opcional].
+  Ponto / Point                     [Item, Point3d]    : Ponto base de inserção das seções 2D no Top View [Opcional].
+  Espacamento / Spacing             [Item, float]      : Distância vertical uniforme entre as seções 2D [Opcional].
+  Largura / Width                   [Item, float]      : Faixa de influência para seção unitária (padrão: 1.0 m).
+  Empolamento / BulkingFactor       [Item, float]      : Fator de empolamento do solo para transporte (padrão: 1.20).
+  Seletor / Selector                [Item, int]        : Modo de exibição:
+                                                         0 = Completo (TN + Greide + Áreas + Todas as Cotas)
+                                                         1 = Terraplenagem / Projetado [Padrão]
+                                                         2 = Apenas Terreno Natural
+  Escala / Scale                    [Item, float]      : Fator de escala dos símbolos, textos e balões NBR (padrão: 1.0).
 
-OUTPUTS:
-  a : Complete 3D Earthwork Model (Proposed Terrain Surface + 3D Section Slices Orange/Green + 3D Grades).
-  b : TECHNICAL PLAN VIEW (Axes A, B, C... and 1, 2, 3... with NBR Bubbles, Sight Arrows, Outer Dimensions & Quadrants).
-  c : COMPLETE 2D ALIGNED SECTION DRAWINGS (Titles, Orange/Green Meshes, NBR Level Markers, Cross-Axes & Mass Haul Banners).
-  d : CUT Polygons for all sections (Closed Curves for Area / Hatch / Bake).
-  e : FILL Polygons for all sections (Closed Curves for Area / Hatch / Bake).
-  f : Technical Earthwork & Mass Haul Calculation Report (Panel).
+SAÍDAS (OUTPUTS):
+  a : Modelo 3D Completo de Terraplenagem (Superfície Projetada com Asfalto/Calçada + Fatias 3D Laranja/Verde + Greides 3D).
+  b : PLANTA BAIXA TÉCNICA (Eixos A, B, C... e 1, 2, 3... com balões NBR, setas de corte, cotas de distância, quadrantes e viário).
+  c : DESENHO COMPLETO DAS SEÇÕES 2D ALINHADAS (Títulos, malhas coloridas Laranja/Verde, cotas NBR, corredores viários e banners).
+  d : Polígonos de CORTE de todas as seções (Curvas Fechadas para Hachura/Bake).
+  e : Polígonos de ATERRO de todas as seções (Curvas Fechadas para Hachura/Bake).
+  f : Memorial Técnico Completo de Terraplenagem, Balanço de Massas e Sistema Viário (Panel).
+  Viario3D / Roadway3D : Malhas 3D do leito viário (asfalto e calçadas com relevo de guias).
+  Asfalto3D            : Malhas 3D exclusivas da pista de rolamento (asfalto grafite escuro).
+  Calcadas3D           : Malhas 3D exclusivas dos passeios públicos (concreto claro).
+  Viario2D             : Contornos 2D das ruas para planta técnica.
 ===============================================================================
 """
 
@@ -304,14 +310,14 @@ def create_colored_mesh(quads_pts, color):
     return m
 
 # =============================================================================
-# ROAD NETWORK & DRIVABILITY ENGINE (VIÁRIO CARROÇÁVEL NBR / DNIT)
+# MOTOR DE VIÁRIO E TRAFEGABILIDADE (VIÁRIO CARROÇÁVEL NBR / DNIT)
 # =============================================================================
 
 def point_in_polygon_2d(x, y, poly_pts):
     """
-    Standard Ray-Casting Algorithm for 2D Point-in-Polygon containment.
-    100% immune to RhinoCommon tolerance bugs, clockwise/counter-clockwise winding,
-    and handles arbitrary concave shapes, cul-de-sacs, and complex CAD boundaries.
+    Algoritmo padrão de Ray-Casting para contenção de ponto em polígono 2D.
+    100% imune a tolerâncias do RhinoCommon e orientações de curva,
+    suportando geometrias côncavas, balões de retorno e poligonais complexas de CAD.
     """
     if not poly_pts or len(poly_pts) < 3:
         return False
@@ -328,8 +334,8 @@ def point_in_polygon_2d(x, y, poly_pts):
 
 def point_distance_to_segments(x, y, pts):
     """
-    Computes the minimum Euclidean distance from 2D point (x, y) to a polyline / polygon segment list.
-    Used for sidewalk vs roadway pavement classification and corridor buffer checks.
+    Calcula a distância euclidiana mínima de um ponto 2D (x, y) a uma lista de segmentos de polilinha.
+    Utilizado para classificação de calçada vs pista de asfalto e cálculo de buffers de corredor.
     """
     if not pts or len(pts) < 2:
         return 9999.0
@@ -354,8 +360,8 @@ def point_distance_to_segments(x, y, pts):
 
 def find_ray_polygon_interval(p_origin, u_dir, poly_pts):
     """
-    Finds the station interval [u_in, u_out] along 2D ray P(u) = p_origin + u * u_dir
-    that lies inside poly_pts. Used to trim section cut lines to exact lot boundaries.
+    Localiza o intervalo de estaca [u_in, u_out] ao longo do raio 2D P(u) = p_origin + u * u_dir
+    que se encontra no interior de poly_pts. Utilizado para recortar os eixos de corte exatamente no lote.
     """
     if not poly_pts or len(poly_pts) < 3:
         return None
@@ -384,10 +390,10 @@ def find_ray_polygon_interval(p_origin, u_dir, poly_pts):
 
 def sanitize_site_boundary(raw_limite, raw_projeto=None, tol=0.001):
     """
-    Sanitizes, planarizes to XY, welds, and validates the property / site boundary polygon.
-    Accepts: Curve, Polyline, Brep, Surface, Mesh, or unjoined boundary curves.
-    If raw_limite is None, checks if raw_projeto contains a closed site boundary polygon.
-    Returns: dict with curve, bbox, pts_2d, area, or None.
+    Higieniza, projeta em XY, une e valida o polígono de limite do terreno / perímetro do lote.
+    Suporta: Curve, Polyline, Brep, Surface, Mesh, ou segmentos de borda desmembrados.
+    Se raw_limite for None, verifica se raw_projeto contém o polígono fechado de divisa.
+    Retorna: dicionário com curve, bbox, pts_2d, area, ou None.
     """
     candidate_items = []
     if raw_limite is not None:
@@ -526,14 +532,14 @@ def sanitize_site_boundary(raw_limite, raw_projeto=None, tol=0.001):
 
 def sanitize_road_polygons(raw_viario, tol=0.001):
     """
-    Sanitizes, planarizes to XY, welds, and validates road network geometries from CAD/BIM/Civil 3D.
-    Supports:
-      1. Single or multiple closed Polylines/Curves (calçadas + pistas, lotes, cul-de-sacs).
-      2. Unjoined CAD curve segments (lines, arcs, polylines) - automatically joined via rg.Curve.JoinCurves.
-      3. Open cul-de-sac / street perimeters open at property boundary - automatically closed across entrance (up to 35m).
-      4. Open street centerlines or curb curves - converted to drivable corridors with buffer width.
-      5. Breps, Surfaces, and Meshes - automatically extracts boundary / edge curves.
-    Returns a list of structured road corridor dictionaries with pre-computed 2D vertex arrays for fast ray-casting.
+    Higieniza, projeta em XY, une e valida geometrias de malha viária de CAD/BIM/Civil 3D.
+    Suporta:
+      1. Poligonais/curvas fechadas únicas ou múltiplas (calçadas + pistas, lotes, balões de retorno).
+      2. Segmentos de curva de CAD desmembrados (linhas, arcos, polilinhas) - unidos via rg.Curve.JoinCurves.
+      3. Balões de retorno/ruas abertas na divisa do terreno - fechadas automaticamente na embocadura (até 35m).
+      4. Eixos de rua ou guias abertas - convertidos em corredores trafegáveis com largura de faixa.
+      5. Breps, Superfícies e Malhas - extrai automaticamente as bordas de contorno.
+    Retorna lista de dicionários com arrays discretos de vértices 2D para ray-casting de alta velocidade.
     """
     if not raw_viario:
         return []
@@ -612,7 +618,7 @@ def sanitize_road_polygons(raw_viario, tol=0.001):
     if not xy_curves:
         return []
 
-    # 1. Automatic multi-curve welding for fragmented CAD drawings
+    # 1. União automática de curvas fragmentadas de CAD
     joined_curves = []
     if len(xy_curves) > 1:
         try:
@@ -626,7 +632,7 @@ def sanitize_road_polygons(raw_viario, tol=0.001):
     else:
         joined_curves = list(xy_curves)
 
-    # 2. Automatically close near-closed curves (e.g. cul-de-sacs open at site boundary)
+    # 2. Fechamento automático de curvas quase-fechadas (ex: balão com embocadura aberta na divisa)
     processed_curves = []
     for c in joined_curves:
         if c is None or not c.IsValid:
@@ -635,7 +641,7 @@ def sanitize_road_polygons(raw_viario, tol=0.001):
             processed_curves.append(c)
             continue
         d_ends = c.PointAtStart.DistanceTo(c.PointAtEnd)
-        # In civil design, street access openings across property lines are typically 6m to 35m wide
+        # No desenho viário, embocaduras de acesso na divisa do lote medem tipicamente de 6m a 35m
         if d_ends <= 35.0:
             closed_success = False
             try:
@@ -658,7 +664,7 @@ def sanitize_road_polygons(raw_viario, tol=0.001):
                 continue
         processed_curves.append(c)
 
-    # 3. Discretize into vertex arrays for fast math (ray-casting & segment distance)
+    # 3. Discretização em arrays de vértices para cálculos ultra-rápidos (ray-casting e distância)
     polys = []
     for c in processed_curves:
         if c is None or not c.IsValid:
@@ -694,7 +700,7 @@ def sanitize_road_polygons(raw_viario, tol=0.001):
             'pts_2d': pts_2d,
             'is_closed': is_closed,
             'area': area_val,
-            'half_width': 4.70  # Default half-width for open street corridors (9.40m roadway)
+            'half_width': 4.70  # Meia-largura padrão para corredores abertos (via padrão 9.40m)
         })
 
     polys.sort(key=lambda p: (1 if p['is_closed'] else 0, p['area']), reverse=True)
@@ -702,9 +708,9 @@ def sanitize_road_polygons(raw_viario, tol=0.001):
 
 def is_point_in_road(pt, road_polygons, tol=0.001):
     """
-    Ultra-robust point-in-road containment and classification engine.
-    Uses Ray-Casting algorithm for closed polygons and buffer distance for open corridors.
-    Returns: (is_inside_road, is_roadway_asphalt, is_sidewalk_calcada)
+    Motor ultra-robusto de contenção e classificação de ponto na malha viária.
+    Utiliza Ray-Casting para polígonos fechados e distância de buffer para eixos abertos.
+    Retorna: (esta_no_viario, eh_pista_asfalto, eh_calcada_pedestre)
     """
     if not road_polygons:
         return False, False, False
@@ -712,7 +718,7 @@ def is_point_in_road(pt, road_polygons, tol=0.001):
     px, py = pt.X, pt.Y
     pt_2d = rg.Point3d(px, py, 0.0)
 
-    # 1. Closed polygons check (Ray-Casting + NBR Sidewalk buffer)
+    # 1. Verificação de polígonos fechados (Ray-Casting + Buffer de calçada NBR)
     for p_info in road_polygons:
         if not p_info['is_closed']:
             continue
@@ -728,12 +734,12 @@ def is_point_in_road(pt, road_polygons, tol=0.001):
                     pass
             if inside:
                 d_edge = point_distance_to_segments(px, py, p_info['pts_2d'])
-                # NBR 9050 sidewalk width: 1.25m border strip
+                # Faixa de passeio NBR 9050: 1.25m junto às bordas externas
                 is_sidewalk = (d_edge < 1.25)
                 is_pista = not is_sidewalk
                 return True, is_pista, is_sidewalk
 
-    # 2. Open corridor centerlines / curb lines check (Corridor buffer)
+    # 2. Verificação de eixos/guias abertas (Buffer de proximidade)
     for c_info in road_polygons:
         if c_info['is_closed']:
             continue
@@ -750,8 +756,8 @@ def is_point_in_road(pt, road_polygons, tol=0.001):
 
 def compute_road_corridors_for_section(crv_corte, road_polygons, tol=0.001):
     """
-    Finds all road entry/exit station intervals [d_in, d_out] where a section cut line
-    crosses one or more road polygons or corridor centerlines (calçada + pista).
+    Localiza todos os intervalos de estaca [d_in, d_out] onde a linha de corte da seção
+    atravessa um ou mais polígonos de viário ou eixos de via (calçada + pista).
     """
     if not crv_corte or not road_polygons:
         return []
@@ -808,7 +814,7 @@ def compute_road_corridors_for_section(crv_corte, road_polygons, tol=0.001):
                             'poly': r_crv
                         })
         else:
-            # Open corridor centerline or curb curve:
+            # Eixo de via aberto ou guia aberta:
             half_w = p_info.get('half_width', 4.70)
             if bb_r.Max.X + half_w < bb_c.Min.X or bb_r.Min.X - half_w > bb_c.Max.X or bb_r.Max.Y + half_w < bb_c.Min.Y or bb_r.Min.Y - half_w > bb_c.Max.Y:
                 continue
@@ -1593,7 +1599,7 @@ def make_mass_haul_banner(center_x, center_y, label_prev, label_next, dist_val, 
     pad_y  = 1.30 * s   # Margem vertical
     gap_y  = 1.30 * s   # Folga entre os textos e a divisória central
 
-    t1_str = "STATION {} - {} (D = {:.2f}m) | Cut Vol: {:.1f}m³ | Fill Vol: {:.1f}m³ | Balance: {:+.1f}m³".format(
+    t1_str = "TRECHO {} - {} (D = {:.2f}m) | Vol. Corte: {:.1f}m³ | Vol. Aterro: {:.1f}m³ | Saldo: {:+.1f}m³".format(
         label_prev, label_next, dist_val, vol_corte, vol_aterro, saldo
     ).replace('.', ',')
 
@@ -2466,9 +2472,9 @@ def evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, 
         d_mid = (d_a + d_b) / 2.0
         z_tn_m = interpolate_terrain_z(d_mid, clean_pts)
         z_pr_m = get_proj_z(d_mid)
-        # Executive geotechnical classification (NBR 6492 / DNIT / AASHTO):
-        # Embankment/Fill: proposed grade above natural terrain (Grade > Terrain).
-        # Cut/Excavation: natural ground above proposed grade (Terrain > Grade).
+        # Classificação geotécnica executiva (NBR 6492 / DNIT):
+        # Aterro: cota de greide superior ao terreno natural (Greide > Terreno).
+        # Corte: terreno natural superior à cota de greide (Terreno > Greide).
         tipo = "ATERRO" if z_tn_m >= z_pr_m else "CORTE"
 
         if tipo != cur_tipo:
@@ -2624,7 +2630,7 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
 # MAIN COORDINATOR: MULTI-AXIS, ALIGNMENT, VOLUMES AND MASS HAUL BALANCE
 # =============================================================================
 
-def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, cor_corte, cor_aterro, crv_aln_3d=None, is_longitudinal=False, axis_title_prefix="SECTION "):
+def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, cor_corte, cor_aterro, crv_aln_3d=None, is_longitudinal=False, axis_title_prefix="SEÇÃO "):
     """
     Renders all 2D graphic elements and 3D geometries of an individual section
     (either cross section A, B, C... or longitudinal 1, 2, 3...).
@@ -2693,12 +2699,20 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
     sec_datum_z = math.floor(s_data['z_min'] - 2.0)
     sec_h = s_data['z_max'] - sec_datum_z
 
-    # Section Title
+    # Section Title & Stationing
     p_tit = rg.Point3d(base_x, base_y + sec_h + 8.5 * s, 0.0)
-    tit_crvs = make_text_geometry("{} {} - {}".format(axis_title_prefix.strip(), lbl, lbl), p_tit, 1.50 * s, rg.TextJustification.BottomLeft, s)
+    tit_str = "{} {} - {}".format(axis_title_prefix.strip(), lbl, lbl)
+    if not is_longitudinal and s_data.get('estaca_str'):
+        tit_str += " [{}]".format(s_data['estaca_str'])
+    tit_crvs = make_text_geometry(tit_str, p_tit, 1.50 * s, rg.TextJustification.BottomLeft, s)
     geoms_2d.extend(tit_crvs)
 
-    sub_str = "Length: {:.2f}m | Average Elevation: +{:.2f}m".format(total_ext, sum(p[1].Z for p in clean_pts)/len(clean_pts)).replace('.', ',')
+    sub_parts = []
+    if not is_longitudinal and s_data.get('estaca_str'):
+        sub_parts.append("Estaca: {}".format(s_data['estaca_str']))
+    sub_parts.append("Extensão: {:.2f}m".format(total_ext).replace('.', ','))
+    sub_parts.append("Cota Média: +{:.2f}m".format(sum(p[1].Z for p in clean_pts)/len(clean_pts)).replace('.', ','))
+    sub_str = " | ".join(sub_parts)
     p_sub = rg.Point3d(base_x, base_y + sec_h + 6.8 * s, 0.0)
     sub_crvs = make_text_geometry(sub_str, p_sub, 0.85 * s, rg.TextJustification.BottomLeft, s)
     geoms_2d.extend(sub_crvs)
@@ -2800,7 +2814,7 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
             p_arr_start = rg.Point3d(x_axis + 4.5 * s, y_axis, 0.0)
             p_arr_end = rg.Point3d(x_axis - 7.5 * s, y_axis, 0.0)
 
-        txt_note = "INTERNAL COMPENSATION: {:.2f} m²".format(it['area_transf']).replace('.', ',')
+        txt_note = "COMPENSAÇÃO INTERNA: {:.2f} m²".format(it['area_transf']).replace('.', ',')
         arrow_geoms = draw_section_internal_transfer_arrow(p_arr_start, p_arr_end, txt_note, s)
         geoms_2d.extend(arrow_geoms)
 
@@ -2829,12 +2843,12 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
 
         # 2. Road callout card
         lbl_v1 = "ROADWAY / VIÁRIO CARROÇÁVEL"
-        lbl_v2 = "Corridor: {:.2f}m | Lane: {:.2f}m | Crown: 2.0%".format(w, w_pista).replace('.', ',')
+        lbl_v2 = "Corredor: {:.2f}m | Pista: {:.2f}m | Abaulamento: 2,0%".format(w, w_pista).replace('.', ',')
         card_geoms = make_callout_card(x_mid, base_y + sec_h + 2.5 * s, lbl_v1, lbl_v2, s, is_corte=True)
         geoms_2d.extend(card_geoms)
 
         # 3. NBR Level marker on road centerline
-        m_eixo, _ = draw_nbr_level_marker(x_mid, y_eixo, "ROAD +{:.2f}".format(z_eixo).replace('.', ','), s)
+        m_eixo, _ = draw_nbr_level_marker(x_mid, y_eixo, "RUA +{:.2f}".format(z_eixo).replace('.', ','), s)
         geoms_2d.extend(m_eixo)
 
     # Cotas de Nível NBR 6492
@@ -2854,8 +2868,8 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
     if modo_cotas in [0, 1]:
         z_ini = get_proj_z(0.0)
         z_fim = get_proj_z(total_ext)
-        m_g_ini, _ = draw_nbr_level_marker(base_x, base_y + (z_ini - sec_datum_z), "GRADE +{:.2f}".format(z_ini).replace('.', ','), s)
-        m_g_fim, _ = draw_nbr_level_marker(base_x + total_ext, base_y + (z_fim - sec_datum_z), "GRADE +{:.2f}".format(z_fim).replace('.', ','), s)
+        m_g_ini, _ = draw_nbr_level_marker(base_x, base_y + (z_ini - sec_datum_z), "GREIDE +{:.2f}".format(z_ini).replace('.', ','), s)
+        m_g_fim, _ = draw_nbr_level_marker(base_x + total_ext, base_y + (z_fim - sec_datum_z), "GREIDE +{:.2f}".format(z_fim).replace('.', ','), s)
         geoms_2d.extend(m_g_ini)
         geoms_2d.extend(m_g_fim)
 
@@ -2878,8 +2892,8 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
                 if tr['area_corte'] > 0.01:
                     z_sub_corte = [interpolate_terrain_z(d, clean_pts) for d, _ in clean_pts if tr['d_start'] <= d <= tr['d_end']]
                     z_c_top = max(z_sub_corte) if z_sub_corte else (sec_datum_z + 2.0)
-                    txt_v1 = "CUT {}: {:.2f} m²".format(lbl_q, tr['area_corte']).replace('.', ',')
-                    txt_v2 = "Max H: {:.2f}m | Bench: +{:.2f}m".format(tr['max_h_corte'], tr['z_proj']).replace('.', ',')
+                    txt_v1 = "CORTE {}: {:.2f} m²".format(lbl_q, tr['area_corte']).replace('.', ',')
+                    txt_v2 = "H. Máx: {:.2f}m | Cota: +{:.2f}m".format(tr['max_h_corte'], tr['z_proj']).replace('.', ',')
                     hc_est = 5.5 * s
                     y_c_box = base_y + (z_c_top - sec_datum_z) + 6.0 * s + (hc_est / 2.0)
                     c_card, (wc, hc) = make_callout_card(x_box_tr, y_c_box, txt_v1, txt_v2, s, True)
@@ -2890,8 +2904,8 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
                     geoms_2d.append(rg.Circle(p_crest, 0.30 * s).ToNurbsCurve())
 
                 if tr['area_aterro'] > 0.01:
-                    txt_a1 = "FILL {}: {:.2f} m²".format(lbl_q, tr['area_aterro']).replace('.', ',')
-                    txt_a2 = "Max H: {:.2f}m | Bench: +{:.2f}m".format(tr['max_h_aterro'], tr['z_proj']).replace('.', ',')
+                    txt_a1 = "ATERRO {}: {:.2f} m²".format(lbl_q, tr['area_aterro']).replace('.', ',')
+                    txt_a2 = "H. Máx: {:.2f}m | Cota: +{:.2f}m".format(tr['max_h_aterro'], tr['z_proj']).replace('.', ',')
                     ha_est = 5.5 * s
                     y_a_box = base_y - 5.5 * s - (ha_est / 2.0)
                     a_card, (wa, ha) = make_callout_card(x_box_tr, y_a_box, txt_a1, txt_a2, s, False)
@@ -2905,8 +2919,8 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
             if s_data['area_total_corte'] > 0.01 and d_c_all:
                 d_c_mid = (min(d_c_all) + max(d_c_all)) / 2.0
                 z_c_top = max(interpolate_terrain_z(d, clean_pts) for d in d_c_all)
-                txt_v1 = "CUT {}: {:.2f} m²".format(lbl, s_data['area_total_corte']).replace('.', ',')
-                txt_v2 = "Max Height: {:.2f}m".format(s_data['max_h_corte']).replace('.', ',')
+                txt_v1 = "CORTE {}: {:.2f} m²".format(lbl, s_data['area_total_corte']).replace('.', ',')
+                txt_v2 = "Altura Máxima: {:.2f}m".format(s_data['max_h_corte']).replace('.', ',')
                 hc_est = 5.5 * s
                 y_c_box = base_y + (z_c_top - sec_datum_z) + 6.0 * s + (hc_est / 2.0)
                 x_c_box = base_x + d_c_mid
@@ -2920,8 +2934,8 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
             d_a_all = [d for r_type, d_list in s_data['regioes'] if r_type == "ATERRO" for d in d_list]
             if s_data['area_total_aterro'] > 0.01 and d_a_all:
                 d_a_mid = (min(d_a_all) + max(d_a_all)) / 2.0
-                txt_a1 = "FILL {}: {:.2f} m²".format(lbl, s_data['area_total_aterro']).replace('.', ',')
-                txt_a2 = "Max Height: {:.2f}m".format(s_data['max_h_aterro']).replace('.', ',')
+                txt_a1 = "ATERRO {}: {:.2f} m²".format(lbl, s_data['area_total_aterro']).replace('.', ',')
+                txt_a2 = "Altura Máxima: {:.2f}m".format(s_data['max_h_aterro']).replace('.', ',')
                 ha_est = 5.5 * s
                 y_a_box = base_y - 5.5 * s - (ha_est / 2.0)
                 x_a_box = base_x + d_a_mid
@@ -2973,6 +2987,8 @@ def run():
     raw_limite       = get_input(['SiteBoundary', 'PropertyLine', 'Boundary', 'BoundaryLine', 'Limite', 'LimiteTerreno', 'Perimetro', 'PoligonalLote', 'Plataforma', 'LimitePropriedade', 'Lote'])
     raw_viario       = get_input(['Roadway', 'Viario', 'RoadNetwork', 'RoadBoundary', 'Pista', 'Ruas', 'CADViario', 'PoligonoViario', 'Vias', 'PoligonalViario', 'MalhaViaria', 'EixoViario', 'EixosViarios', 'Rua', 'RuasCAD', 'EixoRua', 'EixosRuas', 'Pistas'])
     raw_homogeneizacao = get_input(['HomogenizationFactor', 'CompactionFactor', 'ShrinkageFactor', 'FatorHomogeneizacao', 'FatorContracao', 'Fh'], 1.15)
+    raw_modo_estacas = get_input(['StationingMode', 'ModoEstacas', 'EstaqueamentoNormativo', 'Estacas20m', 'Normative20m', 'UsarEstacas20m', 'Modo20m'])
+    raw_passo_estacas = get_input(['StationInterval', 'PassoEstacas', 'IntervaloEstacas', 'DistanciaEstacas', 'Passo'], 20.0)
 
     try:
         if raw_inclinacao is not None:
@@ -3002,6 +3018,11 @@ def run():
         fh = float(raw_homogeneizacao) if raw_homogeneizacao is not None else 1.15
         if fh < 1.0 or fh > 2.0: fh = 1.15
     except: fh = 1.15
+
+    try:
+        passo_estacas = float(raw_passo_estacas) if raw_passo_estacas is not None else 20.0
+        if passo_estacas <= 1.0: passo_estacas = 20.0
+    except: passo_estacas = 20.0
 
     geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
     if not geoms_terreno:
@@ -3119,6 +3140,99 @@ def run():
                                p_ref.Y + u_fim_s * u_corte.Y,
                                0.0)
         lista_alinhadas.append(rg.LineCurve(p_ini_aln, p_fim_aln))
+
+    # GERAÇÃO DA REDE DE ESTAQUEAMENTO NORMATIVO A CADA 20 METROS (DNIT / SECRETARIAS DE OBRAS)
+    # 1 estaca = 20.00 metros
+    estacas_normativas_info = []
+    try:
+        v_ref_start = None
+        if lista_alinhadas:
+            pm0 = lista_alinhadas[0].PointAtNormalizedLength(0.5)
+            v_ref_start = pm0.X * u_long_down.X + pm0.Y * u_long_down.Y
+        elif boundary_info is not None and boundary_info.get('pts_2d'):
+            v_ref_start = min(p.X * u_long_down.X + p.Y * u_long_down.Y for p in boundary_info['pts_2d'])
+
+        v_ref_end = None
+        if lista_alinhadas:
+            pmn = lista_alinhadas[-1].PointAtNormalizedLength(0.5)
+            v_ref_end = pmn.X * u_long_down.X + pmn.Y * u_long_down.Y
+        elif boundary_info is not None and boundary_info.get('pts_2d'):
+            v_ref_end = max(p.X * u_long_down.X + p.Y * u_long_down.Y for p in boundary_info['pts_2d'])
+
+        if v_ref_start is not None and v_ref_end is not None and v_ref_end > v_ref_start + 1.0:
+            cur_v = v_ref_start
+            idx_st = 0
+            while cur_v <= v_ref_end + 1e-4:
+                p_ref = rg.Point3d(cur_v * u_long_down.X, cur_v * u_long_down.Y, 0.0)
+                clipped_int = None
+                if boundary_info is not None:
+                    clipped_int = find_ray_polygon_interval(
+                        (p_ref.X, p_ref.Y), (u_corte.X, u_corte.Y), boundary_info['pts_2d']
+                    )
+                if clipped_int is not None and (clipped_int[1] - clipped_int[0]) > 1.0:
+                    u0, u1 = clipped_int
+                else:
+                    u0, u1 = u_min_aligned, u_max_aligned
+
+                p0 = rg.Point3d(p_ref.X + u0 * u_corte.X, p_ref.Y + u0 * u_corte.Y, 0.0)
+                p1 = rg.Point3d(p_ref.X + u1 * u_corte.X, p_ref.Y + u1 * u_corte.Y, 0.0)
+                line_st = rg.LineCurve(p0, p1)
+
+                d_prog = cur_v - v_ref_start
+                lbl_estaca = "Estaca {}".format(idx_st)
+                estacas_normativas_info.append({
+                    'curve': line_st,
+                    'index': idx_st,
+                    'dist': d_prog,
+                    'v_coord': cur_v,
+                    'label': lbl_estaca,
+                    'tag': "{} ({:.2f}m)".format(lbl_estaca, d_prog).replace('.', ',')
+                })
+                cur_v += passo_estacas
+                idx_st += 1
+
+            resto_final = v_ref_end - (cur_v - passo_estacas)
+            if resto_final > 1.0:
+                p_ref = rg.Point3d(v_ref_end * u_long_down.X, v_ref_end * u_long_down.Y, 0.0)
+                clipped_int = None
+                if boundary_info is not None:
+                    clipped_int = find_ray_polygon_interval(
+                        (p_ref.X, p_ref.Y), (u_corte.X, u_corte.Y), boundary_info['pts_2d']
+                    )
+                if clipped_int is not None and (clipped_int[1] - clipped_int[0]) > 1.0:
+                    u0, u1 = clipped_int
+                else:
+                    u0, u1 = u_min_aligned, u_max_aligned
+                p0 = rg.Point3d(p_ref.X + u0 * u_corte.X, p_ref.Y + u0 * u_corte.Y, 0.0)
+                p1 = rg.Point3d(p_ref.X + u1 * u_corte.X, p_ref.Y + u1 * u_corte.Y, 0.0)
+                line_st = rg.LineCurve(p0, p1)
+                d_prog = v_ref_end - v_ref_start
+                last_i = int(d_prog // passo_estacas)
+                r_st = d_prog - (last_i * passo_estacas)
+                lbl_estaca = "Estaca Final ({}+{:05.2f})".format(last_i, r_st).replace('.', ',')
+                estacas_normativas_info.append({
+                    'curve': line_st,
+                    'index': last_i,
+                    'dist': d_prog,
+                    'v_coord': v_ref_end,
+                    'label': lbl_estaca,
+                    'tag': "{} ({:.2f}m)".format(lbl_estaca, d_prog).replace('.', ',')
+                })
+    except Exception as _e_est:
+        pass
+
+    # Se modo de estacas normativas foi solicitado ativamente, adota as estacas de 20m
+    usar_modo_estacas = False
+    if raw_modo_estacas is not None:
+        if isinstance(raw_modo_estacas, bool) and raw_modo_estacas:
+            usar_modo_estacas = True
+        elif isinstance(raw_modo_estacas, (int, float)) and raw_modo_estacas > 0:
+            usar_modo_estacas = True
+        elif isinstance(raw_modo_estacas, str) and raw_modo_estacas.strip().lower() in ['true', '1', 'sim', 'yes', 'estacas', '20m']:
+            usar_modo_estacas = True
+
+    if usar_modo_estacas and estacas_normativas_info:
+        lista_alinhadas = [item['curve'] for item in estacas_normativas_info]
 
     # 0.4 Processamento e Organização dos Eixos Longitudinais/Verticais (1, 2, 3...)
     # REGRA DA NORMA:
@@ -3496,6 +3610,30 @@ def run():
         except: w_single = 1.0
         distancias_eixos = [w_single]
 
+    # 6.0 Cálculo do Estaqueamento Progressivo (Estaca X+YY,YY) de cada seção
+    dist_acum_t = 0.0
+    estacas_secoes_t = []
+    for idx_s in range(num_secoes):
+        d_acum = 0.0 if idx_s == 0 else dist_acum_t
+        e_int = int(d_acum // passo_estacas)
+        e_rem = d_acum - (e_int * passo_estacas)
+        if e_rem < 0.005:
+            e_str = "Estaca {}+00,00".format(e_int)
+        else:
+            e_str = "Estaca {}+{:05.2f}".format(e_int, e_rem).replace('.', ',')
+
+        estacas_secoes_t.append({
+            'estaca_str': e_str,
+            'dist_acum': d_acum,
+            'e_int': e_int,
+            'e_rem': e_rem,
+            'd_prox': distancias_eixos[idx_s] if idx_s < len(distancias_eixos) else 0.0
+        })
+        sec_data_list[idx_s]['estaca_str'] = e_str
+        sec_data_list[idx_s]['dist_acum'] = d_acum
+        if idx_s < len(distancias_eixos):
+            dist_acum_t += distancias_eixos[idx_s]
+
     vols_trechos = []
     for i in range(num_secoes - 1):
         d_trecho = distancias_eixos[i]
@@ -3544,13 +3682,13 @@ def run():
             if disp_v >= va_v:
                 sobra_v = disp_v - va_v
                 if j < num_verticais - 2:
-                    nota_v = "SURPLUS: {:+.1f}m³ -> COMPENSATE AXIS {} - {}".format(sobra_v, labels_v[j+1], labels_v[j+2]).replace('.', ',')
+                    nota_v = "SOBRA: {:+.1f}m³ -> COMPENSAR EIXO {} - {}".format(sobra_v, labels_v[j+1], labels_v[j+2]).replace('.', ',')
                 else:
-                    nota_v = "FINAL LONGITUDINAL SURPLUS: {:+.1f}m³ (SPOIL SITE)".format(sobra_v).replace('.', ',')
+                    nota_v = "SOBRA LONGITUDINAL FINAL: {:+.1f}m³ (BOTA-FORA)".format(sobra_v).replace('.', ',')
                 saldo_acum_v = sobra_v
             else:
                 falta_v = va_v - disp_v
-                nota_v = "LONGITUDINAL DEFICIT: -{:.1f}m³ (BORROW PIT)".format(falta_v).replace('.', ',')
+                nota_v = "DÉFICIT LONGITUDINAL: -{:.1f}m³ (EMPRÉSTIMO DE JAZIDA)".format(falta_v).replace('.', ',')
                 saldo_acum_v = -falta_v
             fluxo_transporte_v.append(nota_v)
 
@@ -3575,9 +3713,9 @@ def run():
 
     # 7.1 Column 1 Header: CROSS SECTIONS
     p_hdr_col1 = rg.Point3d(orig_x, orig_y + max_h_above + 14.5 * s, 0.0)
-    t_hdr1 = make_text_geometry("CROSS SECTIONS (A - A, B - B...)", p_hdr_col1, 2.0 * s, rg.TextJustification.BottomLeft, s)
+    t_hdr1 = make_text_geometry("SEÇÕES TRANSVERSAIS (A - A, B - B...)", p_hdr_col1, 2.0 * s, rg.TextJustification.BottomLeft, s)
     p_sub_hdr1 = rg.Point3d(orig_x, orig_y + max_h_above + 12.0 * s, 0.0)
-    sub_hdr1 = make_text_geometry("Cross Sections | Profile Visualization and Grading Edit", p_sub_hdr1, 0.90 * s, rg.TextJustification.BottomLeft, s)
+    sub_hdr1 = make_text_geometry("Perfis Topográficos e de Terraplenagem | Representação Executiva NBR 6492", p_sub_hdr1, 0.90 * s, rg.TextJustification.BottomLeft, s)
     desenho_completo_secoes_2d.extend(t_hdr1)
     desenho_completo_secoes_2d.extend(sub_hdr1)
     desenho_secoes_t_only.extend(t_hdr1)
@@ -3592,7 +3730,7 @@ def run():
 
         res_sec = render_single_section_2d_and_3d(
             s_data, lbl, base_x, base_y, s, modo_cotas, cor_corte, cor_aterro,
-            crv_aln_3d=crv_aln_3d, is_longitudinal=False, axis_title_prefix="SECTION "
+            crv_aln_3d=crv_aln_3d, is_longitudinal=False, axis_title_prefix="SEÇÃO "
         )
 
         desenho_completo_secoes_2d.extend(res_sec['geoms_2d'])
@@ -3611,14 +3749,29 @@ def run():
         # Mass Haul Transfer Banner between Consecutive Cross Sections
         if idx_s < num_secoes - 1:
             lbl_prox = labels_t[idx_s + 1]
-            d_t, vc_t, va_t, va_banco_t, s_t = vols_trechos[idx_s]
-            fl_item = fluxo_transporte[idx_s]
-            if s_t > 0.01:
-                nota_t = "LOCAL SURPLUS: +{:.1f}m³ | BRÜCKNER: {:+.1f}m³ (ASCENDING BRANCH)".format(s_t, fl_item['ordenada']).replace('.', ',')
-            elif s_t < -0.01:
-                nota_t = "LOCAL DEFICIT: {:.1f}m³ | BRÜCKNER: {:+.1f}m³ (BORROW PIT REQUIRED)".format(s_t, fl_item['ordenada']).replace('.', ',')
+            vt_val = vols_trechos[idx_s]
+            if len(vt_val) == 5:
+                d_t, vc_t, va_t, va_banco_t, s_t = vt_val
+            elif len(vt_val) == 4:
+                d_t, vc_t, va_t, s_t = vt_val
+                va_banco_t = va_t
             else:
-                nota_t = "LOCALLY BALANCED | BRÜCKNER: {:+.1f}m³".format(fl_item['ordenada']).replace('.', ',')
+                d_t, vc_t, va_t, s_t = vt_val[0], vt_val[1], vt_val[2], vt_val[-1]
+                va_banco_t = va_t
+
+            fl_item = fluxo_transporte[idx_s] if idx_s < len(fluxo_transporte) else None
+            if isinstance(fl_item, dict):
+                ord_b = fl_item.get('ordenada', s_t)
+                if s_t > 0.01:
+                    nota_t = "SOBRA LOCAL: +{:.1f}m³ | BRÜCKNER: {:+.1f}m³ (RAMO ASCENDENTE)".format(s_t, ord_b).replace('.', ',')
+                elif s_t < -0.01:
+                    nota_t = "DÉFICIT LOCAL: {:.1f}m³ | BRÜCKNER: {:+.1f}m³ (DEMANDA JAZIDA)".format(s_t, ord_b).replace('.', ',')
+                else:
+                    nota_t = "COMPENSADO LOCALMENTE | BRÜCKNER: {:+.1f}m³".format(ord_b).replace('.', ',')
+            elif isinstance(fl_item, str):
+                nota_t = fl_item
+            else:
+                nota_t = ""
 
             next_sec = sec_data_list[idx_s + 1]
             next_datum = math.floor(next_sec['z_min'] - 2.0)
@@ -3635,9 +3788,9 @@ def run():
     # 7.2 Column 2 Header and Rendering: LONGITUDINAL SECTIONS (1, 2, 3...)
     if num_verticais >= 1:
         p_hdr_col2 = rg.Point3d(col2_x, orig_y + max_h_above_v + 14.5 * s, 0.0)
-        t_hdr2 = make_text_geometry("LONGITUDINAL SECTIONS (1 - 1, 2 - 2...)", p_hdr_col2, 2.0 * s, rg.TextJustification.BottomLeft, s)
+        t_hdr2 = make_text_geometry("SEÇÕES LONGITUDINAIS (1 - 1, 2 - 2...)", p_hdr_col2, 2.0 * s, rg.TextJustification.BottomLeft, s)
         p_sub_hdr2 = rg.Point3d(col2_x, orig_y + max_h_above_v + 12.0 * s, 0.0)
-        sub_hdr2 = make_text_geometry("Longitudinal Profiles | Profile Visualization and Grading Edit", p_sub_hdr2, 0.90 * s, rg.TextJustification.BottomLeft, s)
+        sub_hdr2 = make_text_geometry("Perfis Longitudinais | Visualização e Edição de Greide", p_sub_hdr2, 0.90 * s, rg.TextJustification.BottomLeft, s)
         desenho_completo_secoes_2d.extend(t_hdr2)
         desenho_completo_secoes_2d.extend(sub_hdr2)
         desenho_secoes_v_only.extend(t_hdr2)
@@ -3651,7 +3804,7 @@ def run():
 
             res_sec_v = render_single_section_2d_and_3d(
                 s_data_v, lbl_v, base_x_v, base_y_v, s, modo_cotas, cor_corte, cor_aterro,
-                crv_aln_3d=crv_aln_3d_v, is_longitudinal=True, axis_title_prefix="SECTION "
+                crv_aln_3d=crv_aln_3d_v, is_longitudinal=True, axis_title_prefix="SEÇÃO "
             )
 
             desenho_completo_secoes_2d.extend(res_sec_v['geoms_2d'])
@@ -3670,8 +3823,29 @@ def run():
             # Mass Haul Transfer Banner between Consecutive Longitudinal Sections
             if idx_v < num_verticais - 1 and idx_v < len(vols_trechos_v):
                 lbl_v_prox = labels_v[idx_v + 1]
-                d_tv, vc_tv, va_tv, s_tv = vols_trechos_v[idx_v]
-                nota_tv = fluxo_transporte_v[idx_v]
+                vt_v_val = vols_trechos_v[idx_v]
+                if len(vt_v_val) == 5:
+                    d_tv, vc_tv, va_tv, va_banco_tv, s_tv = vt_v_val
+                elif len(vt_v_val) == 4:
+                    d_tv, vc_tv, va_tv, s_tv = vt_v_val
+                    va_banco_tv = va_tv
+                else:
+                    d_tv, vc_tv, va_tv, s_tv = vt_v_val[0], vt_v_val[1], vt_v_val[2], vt_v_val[-1]
+                    va_banco_tv = va_tv
+
+                fl_item_v = fluxo_transporte_v[idx_v] if idx_v < len(fluxo_transporte_v) else None
+                if isinstance(fl_item_v, dict):
+                    ord_bv = fl_item_v.get('ordenada', s_tv)
+                    if s_tv > 0.01:
+                        nota_tv = "SOBRA LOCAL: +{:.1f}m³ | BRÜCKNER: {:+.1f}m³".format(s_tv, ord_bv).replace('.', ',')
+                    elif s_tv < -0.01:
+                        nota_tv = "DÉFICIT LOCAL: {:.1f}m³ | BRÜCKNER: {:+.1f}m³".format(s_tv, ord_bv).replace('.', ',')
+                    else:
+                        nota_tv = "COMPENSADO LOCALMENTE | BRÜCKNER: {:+.1f}m³".format(ord_bv).replace('.', ',')
+                elif isinstance(fl_item_v, str):
+                    nota_tv = fl_item_v
+                else:
+                    nota_tv = ""
 
                 next_sec_v = sec_v_data_list[idx_v + 1]
                 next_datum_v = math.floor(next_sec_v['z_min'] - 2.0)
@@ -3782,7 +3956,7 @@ def run():
                     planta_baixa_geoms.extend(q_badge)
 
     # =========================================================================
-    # 9. CONSTRUCTION OF 3D EARTHWORK SURFACE & BIM PAVEMENT (PROPOSED TERRAIN)
+    # 9. CONSTRUÇÃO DA SUPERFÍCIE 3D DE TERRAPLENAGEM & PAVIMENTAÇÃO BIM
     # =========================================================================
     quads_sup_3d_corte = []
     quads_sup_3d_aterro = []
@@ -3790,11 +3964,11 @@ def run():
     quads_sup_3d_asfalto = []
     quads_sup_3d_calcada = []
 
-    cor_asfalto = System.Drawing.Color.FromArgb(45, 47, 52)      # Rich dark charcoal matte asphalt
-    cor_calcada = System.Drawing.Color.FromArgb(218, 220, 224)   # Clean concrete paver / sidewalk light grey
-    cor_corte   = System.Drawing.Color.FromArgb(230, 92, 0)      # Vibrant orange cut slope
-    cor_aterro  = System.Drawing.Color.FromArgb(46, 139, 87)     # Forest green fill slope
-    cor_neutro  = System.Drawing.Color.FromArgb(195, 198, 192)   # Natural ground neutral
+    cor_asfalto = System.Drawing.Color.FromArgb(45, 47, 52)      # Asfalto fosco carvão escuro
+    cor_calcada = System.Drawing.Color.FromArgb(218, 220, 224)   # Concreto claro para calçadas/passeios
+    cor_corte   = System.Drawing.Color.FromArgb(230, 92, 0)      # Laranja vibrante para taludes de corte
+    cor_aterro  = System.Drawing.Color.FromArgb(46, 139, 87)     # Verde floresta para taludes de aterro
+    cor_neutro  = System.Drawing.Color.FromArgb(195, 198, 192)   # Cinza neutro de passagem
 
     area_mesh_lote = 0.0
     area_viario_lote = 0.0
@@ -3854,7 +4028,7 @@ def run():
                     p01, t01_z = eval_surf_pt(u0, v1)
 
                     cx = (p00.X + p10.X + p11.X + p01.X) / 4.0
-                    cy = (p00.Y + p10.Y + p11.Y + p01.Y) / 4.0
+                    cy = (p00.Y + p10.Y + p01.Y + p11.Y) / 4.0
 
                     if boundary_info is not None:
                         if not point_in_polygon_2d(cx, cy, boundary_info['pts_2d']):
@@ -4057,7 +4231,7 @@ def run():
             modelo_3d_completo.append(crv)
 
     # =========================================================================
-    # 10. TECHNICAL EARTHWORK REPORT (AVERAGE END AREA & BRÜCKNER METHOD)
+    # 10. MEMORIAL TÉCNICO DE TERRAPLENAGEM (ÁREAS MÉDIAS & DIAGRAMA DE BRÜCKNER)
     # =========================================================================
     vol_total_corte_geo = sum(item[1] for item in vols_trechos)
     vol_total_aterro_geo = sum(item[2] for item in vols_trechos)
@@ -4066,96 +4240,123 @@ def run():
     vol_total_corte_solto = vol_total_corte_geo * fator_k
 
     if saldo_global_geo < -0.01:
-        diag_global = "MATERIAL DEFICIT ({:+.2f} m³ in bank): Internal cuts meet only {:.1f}% of compacted fill demand (Fh={:.2f}). External borrow pit import of {:.2f} m³ is mandatory.".format(
+        diag_global = "DÉFICIT CRÍTICO DE ATERRO ({:+.2f} m³ em banco): Os cortes internos suprem apenas {:.1f}% da demanda necessária de aterro (considerando Fh={:.2f}). É mandatória a importação externa de {:.2f} m³ de material de jazida/empréstimo.".format(
             saldo_global_geo, (vol_total_corte_geo / max(vol_total_aterro_banco, 1e-4)) * 100.0, fh, abs(saldo_global_geo)
         )
     elif saldo_global_geo > 0.01:
-        diag_global = "MATERIAL SURPLUS ({:+.2f} m³ in bank): Internal excavation exceeds fill requirements. Excess volume of {:.2f} m³ ({:.2f} m³ loose at K={:.2f}) must be hauled to licensed spoil site.".format(
+        diag_global = "SUPERÁVIT DE ESCAVAÇÃO ({:+.2f} m³ em banco): Os cortes internos suprem 100% dos aterros. O volume excedente de {:.2f} m³ ({:.2f} m³ solto com K={:.2f}) deve ser destinado a bota-fora licenciado.".format(
             saldo_global_geo, saldo_global_geo, vol_total_corte_solto, fator_k
         )
     else:
-        diag_global = "PERFECT EQUILIBRIUM: Excavation precisely matches compacted embankment demand (Fh={:.2f}).".format(fh)
+        diag_global = "EQUILÍBRIO VOLUMÉTRICO PLENO: O volume escavado atende com precisão à demanda de aterro compactado (Fh={:.2f}).".format(fh)
 
     relatorio = [
         "=========================================================================================",
-        "   TECHNICAL EARTHWORK & MASS HAUL REPORT (AVERAGE END AREA & BRÜCKNER METHOD)           ",
+        "   MEMORIAL TÉCNICO DE TERRAPLENAGEM (MÉTODO DAS ÁREAS MÉDIAS & DIAGRAMA DE BRÜCKNER)   ",
         "=========================================================================================",
-        "1. SUMMARY OF CROSS SECTIONS (AXES {} TO {}):".format(labels_t[0], labels_t[-1]),
+        "1. RESUMO DAS SEÇÕES TRANSVERSAIS (EIXOS {} A {}):".format(labels_t[0], labels_t[-1]),
         "-----------------------------------------------------------------------------------------",
-        "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("SECTION", "LENGTH", "CUT AREA", "FILL AREA", "MAX H. CUT", "MAX H. FILL"),
+        "{:<8} | {:<16} | {:<11} | {:<13} | {:<13} | {:<10} | {:<10}".format("SEÇÃO", "ESTAQUEAMENTO", "EXTENSÃO", "ÁREA CORTE", "ÁREA ATERRO", "H.MÁX CORTE", "H.MÁX ATERRO"),
         "-----------------------------------------------------------------------------------------"
     ]
 
     for idx_sd, sd in enumerate(sec_data_list):
         lbl_sd = sd.get('label') or (labels_t[idx_sd] if idx_sd < len(labels_t) else "SEC {}".format(idx_sd + 1))
-        relatorio.append("{:<10} | {:<10.2f} m | {:<12.2f} m² | {:<12.2f} m² | {:<10.2f} m | {:<10.2f} m".format(
-            lbl_sd, sd.get('total_ext', 0.0), sd.get('area_total_corte', 0.0), sd.get('area_total_aterro', 0.0), sd.get('max_h_corte', 0.0), sd.get('max_h_aterro', 0.0)
+        est_sd = sd.get('estaca_str', '-')
+        relatorio.append("{:<8} | {:<16} | {:<9.2f} m | {:<11.2f} m² | {:<11.2f} m² | {:<8.2f} m | {:<8.2f} m".format(
+            lbl_sd, est_sd, sd.get('total_ext', 0.0), sd.get('area_total_corte', 0.0), sd.get('area_total_aterro', 0.0), sd.get('max_h_corte', 0.0), sd.get('max_h_aterro', 0.0)
         ))
+
+    # Adiciona seção de conformidade de estaqueamento normativo de 20m
+    relatorio.extend([
+        "-----------------------------------------------------------------------------------------",
+        "2. CONFORMIDADE DE ESTAQUEAMENTO NORMATIVO (SECRETARIA DE OBRAS / DNIT 108/2009-ES):",
+        "-----------------------------------------------------------------------------------------",
+        "   - Padrão Normativo Obrigatório        : 1 Estaca = 20,00 metros (ABNT NBR 13133 / DNIT)",
+        "   - Intervalo Adotado na Análise        : {:.2f} metros".format(passo_estacas),
+        "   - Extensão Total do Eixo Principal    : {:.2f} metros".format(dist_acum_t),
+        "   - Estaqueamento dos Eixos Executivos  :"
+    ])
+    for idx_e, st_info in enumerate(estacas_secoes_t):
+        lbl_e = labels_t[idx_e] if idx_e < len(labels_t) else "S{}".format(idx_e + 1)
+        relatorio.append("     * SEÇÃO {:<2} : {:<16} (Dist. Acumulada: {:6.2f} m | Δd p/ próxima: {:5.2f} m)".format(
+            lbl_e, st_info['estaca_str'], st_info['dist_acum'], st_info['d_prox']
+        ))
+
+    n_norm = len(estacas_normativas_info)
+    if n_norm > 0:
+        relatorio.append("   - Malha Normativa de Estacas Inteiras (Saída 'LinhasEstacas20m'):")
+        relatorio.append("     * Quantidade de Estacas Geradas: {} estacas normativas a cada 20m".format(n_norm))
+        relatorio.append("     * Intervalo Coberto            : {} até {}".format(estacas_normativas_info[0]['label'], estacas_normativas_info[-1]['label']))
+        relatorio.append("   - Parecer Técnico Municipal:")
+        relatorio.append("     * As seções A a J representam os marcos executivos do projeto de terraplenagem.")
+        relatorio.append("     * Para atendimento estrito ao checklist da Secretaria de Obras (seções a cada 20m),")
+        relatorio.append("       a malha de estacas normativas inteiras foi calculada e exportada na saída 'LinhasEstacas20m'.")
 
     if num_verticais >= 1:
         relatorio.extend([
             "-----------------------------------------------------------------------------------------",
-            "2. SUMMARY OF LONGITUDINAL SECTIONS (AXES {} TO {}):".format(labels_v[0], labels_v[-1]),
+            "3. RESUMO DAS SEÇÕES LONGITUDINAIS (EIXOS {} A {}):".format(labels_v[0], labels_v[-1]),
             "-----------------------------------------------------------------------------------------",
-            "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("AXIS", "LENGTH", "CUT AREA", "FILL AREA", "MAX H. CUT", "MAX H. FILL"),
+            "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("EIXO", "EXTENSÃO", "ÁREA CORTE", "ÁREA ATERRO", "H. MÁX CORTE", "H. MÁX ATERRO"),
             "-----------------------------------------------------------------------------------------"
         ])
         for idx_sdv, sdv in enumerate(sec_v_data_list):
             lbl_v_sdv = sdv.get('label') or (labels_v[idx_sdv] if idx_sdv < len(labels_v) else str(idx_sdv + 1))
-            lbl_display = str(lbl_v_sdv) if str(lbl_v_sdv).upper().startswith("AXIS") else "AXIS " + str(lbl_v_sdv)
+            lbl_display = str(lbl_v_sdv) if str(lbl_v_sdv).upper().startswith("EIXO") else "EIXO " + str(lbl_v_sdv)
             relatorio.append("{:<10} | {:<10.2f} m | {:<12.2f} m² | {:<12.2f} m² | {:<10.2f} m | {:<10.2f} m".format(
                 lbl_display, sdv.get('total_ext', 0.0), sdv.get('area_total_corte', 0.0), sdv.get('area_total_aterro', 0.0), sdv.get('max_h_corte', 0.0), sdv.get('max_h_aterro', 0.0)
             ))
 
     relatorio.extend([
         "-----------------------------------------------------------------------------------------",
-        "3. MASS HAUL BALANCING & BRÜCKNER DIAGRAM (LONGITUDINAL COMPENSATION):",
+        "3. BALANÇO DE MASSAS & DIAGRAMA DE BRÜCKNER (COMPENSAÇÃO LONGITUDINAL):",
     ])
     for item_fl in fluxo_transporte:
         i_seg = fluxo_transporte.index(item_fl)
-        relatorio.append("   - Segment {} -> {} (Span: {:.2f} m):".format(labels_t[i_seg], labels_t[i_seg+1], item_fl['d_trecho']))
+        relatorio.append("   - Trecho {} -> {} (Extensão: {:.2f} m):".format(labels_t[i_seg], labels_t[i_seg+1], item_fl['d_trecho']))
         if item_fl['saldo_local'] > 0.01:
-            desc_l = "LOCAL SURPLUS: +{:.1f} m³ (Cut {:.1f} m³ > Bank Fill {:.1f} m³)".format(item_fl['saldo_local'], item_fl['vc'], item_fl['va_banco'])
+            desc_l = "SOBRA LOCAL NO TRECHO: +{:.1f} m³ (Corte {:.1f} m³ > Aterro Banco {:.1f} m³)".format(item_fl['saldo_local'], item_fl['vc'], item_fl['va_banco'])
         elif item_fl['saldo_local'] < -0.01:
-            desc_l = "LOCAL DEFICIT: {:.1f} m³ (Fill Demand {:.1f} m³ in bank w/ Fh={:.2f})".format(item_fl['saldo_local'], item_fl['va_banco'], fh)
+            desc_l = "DÉFICIT LOCAL NO TRECHO: {:.1f} m³ (Demanda Aterro Banco {:.1f} m³ c/ Fh={:.2f})".format(item_fl['saldo_local'], item_fl['va_banco'], fh)
         else:
-            desc_l = "LOCALLY BALANCED SEGMENT (Cut satisfies Fill)"
+            desc_l = "TRECHO COMPENSADO LOCALMENTE (Corte atende rigorosamente ao Aterro)"
 
         if item_fl['ordenada'] > 0.01:
-            ramo_l = "BRÜCKNER DIAGRAM: Cumulative Ordinate +{:.1f} m³ (Ascending branch - Downstream haul)".format(item_fl['ordenada'])
+            ramo_l = "DIAGRAMA DE BRÜCKNER: Ordenada Acumulada +{:.1f} m³ (Ramo Ascendente - Transporte a jusante)".format(item_fl['ordenada'])
         elif item_fl['ordenada'] < -0.01:
-            ramo_l = "BRÜCKNER DIAGRAM: Cumulative Ordinate {:.1f} m³ (Descending branch - Cumulative deficit / Borrow pit required)".format(item_fl['ordenada'])
+            ramo_l = "DIAGRAMA DE BRÜCKNER: Ordenada Acumulada {:.1f} m³ (Ramo Descendente - Déficit acumulado / Demanda jazida)".format(item_fl['ordenada'])
         else:
-            ramo_l = "BRÜCKNER DIAGRAM: Ground Line Axis (0.0 m³ - Full volumetric compensation)"
+            ramo_l = "DIAGRAMA DE BRÜCKNER: Linha de Terra (0.0 m³ - Compensação volumétrica acumulada plena)"
         relatorio.append("     * " + desc_l)
         relatorio.append("     * " + ramo_l)
 
     relatorio.extend([
-        "     * MASS HAUL TRANSPORT DIRECTIVE (BRÜCKNER DIAGRAM):",
-        "       Surplus excavation generated in deep cut sections (Sections J, I, H, G, F)",
-        "       must be hauled upstream to satisfy embankment fill demand in low sections",
-        "       (Sections E, D, C, B, A). The residual surplus balance ({:+.1f} m³)".format(saldo_global_geo),
-        "       shall be hauled to an authorized external spoil site."
+        "     * DIRETRIZ DE TRANSPORTE LONGITUDINAL (DIAGRAMA DE BRÜCKNER):",
+        "       O excedente de escavação gerado nos trechos em corte profundo (Seções J, I, H, G, F)",
+        "       deve ser transportado a montante para suprir a demanda de aterro dos",
+        "       trechos em depressão (Seções E, D, C, B, A). O saldo excedente residual ({:+.1f} m³)".format(saldo_global_geo),
+        "       deverá ser destinado para bota-fora externo licenciado."
     ])
 
     ext_acumulada_long = sum(sdv.get('total_ext', 0.0) for sdv in sec_v_data_list) if sec_v_data_list else sum(cv.GetLength() for cv in lista_verticais)
     relatorio.extend([
         "-----------------------------------------------------------------------------------------",
-        "4. OVERALL PROJECT TOTALS & GEOTECHNICAL MASS BALANCE:",
-        "   - Number of Cross Sections Analyzed       : {}".format(num_secoes),
-        "   - Number of Longitudinal Sampling Axes    : {} (Total length: {:.2f} m)".format(num_verticais, ext_acumulada_long),
-        "   - Soil Bulking Factor Adopted (K)         : {:.2f} ({}% loose expansion)".format(fator_k, int(round((fator_k - 1.0) * 100))),
-        "   - Homogenization / Compaction Factor (Fh) : {:.2f} ({}% embankment shrinkage)".format(fh, int(round((fh - 1.0) * 100))),
-        "   - Boundary Line / Grade Constraint Rule   : Maximum Slope {:.1f}% ({})".format(
+        "4. TOTAIS GERAIS DA OBRA & BALANÇO VOLUMÉTRICO GEOTÉCNICO:",
+        "   - Número de Seções Transversais Analisadas: {}".format(num_secoes),
+        "   - Número de Eixos Longitudinais de Amostragem: {} (Extensão acumulada: {:.2f} m)".format(num_verticais, ext_acumulada_long),
+        "   - Fator de Empolamento do Solo Adotado (K): {:.2f} ({}% de expansão volumétrica solta)".format(fator_k, int(round((fator_k - 1.0) * 100))),
+        "   - Fator de Homogeneização / Contração (Fh): {:.2f} ({}% de redução volumétrica por compactação)".format(fh, int(round((fh - 1.0) * 100))),
+        "   - Regra de Inclinação Máxima do Greide    : Limite de {:.1f}% ({})".format(
             max_slope * 100.0,
-            "Clamped to 15% ceiling where exceeded" if any(sd.get('was_clamped') for sd in (sec_data_list + sec_v_data_list)) else "Satisfied across all sections"
+            "Ajustado ao limite de 15% onde excedido" if any(sd.get('was_clamped') for sd in (sec_data_list + sec_v_data_list)) else "Satisfeito em todas as seções"
         ),
-        "   - Total Geometric In-Situ CUT (Bank)      : {:.2f} m³".format(vol_total_corte_geo),
-        "   - Total Compacted Embankment FILL (Field) : {:.2f} m³".format(vol_total_aterro_geo),
-        "   - Required Bank Excavation for Fill (Fh)  : {:.2f} m³".format(vol_total_aterro_banco),
-        "   - NET GEOTECHNICAL BALANCE (Bank Cut-Fill): {:+.2f} m³".format(saldo_global_geo),
-        "   - Total Loose Cut Volume (Hauling / Spoil): {:.2f} m³ (K={:.2f})".format(vol_total_corte_solto, fator_k),
-        "   - Operational Geotechnical Diagnostic:",
+        "   - Volume Total de CORTE Geométrico (Banco): {:.2f} m³".format(vol_total_corte_geo),
+        "   - Volume Total de ATERRO Compactado (Obra): {:.2f} m³".format(vol_total_aterro_geo),
+        "   - Demanda de Escavação em Banco p/ Aterro : {:.2f} m³ (Aterro x Fh)".format(vol_total_aterro_banco),
+        "   - SALDO GEOTÉCNICO LÍQUIDO EM BANCO       : {:+.2f} m³".format(saldo_global_geo),
+        "   - Volume Total de Corte Solto (Transporte): {:.2f} m³ (Corte x K)".format(vol_total_corte_solto),
+        "   - Diagnóstico Operacional da Obra:",
         "     " + diag_global,
         "========================================================================================="
     ])
@@ -4163,11 +4364,11 @@ def run():
     if boundary_info is not None and boundary_info.get('area', 0.0) > 0.0:
         relatorio.extend([
             "-----------------------------------------------------------------------------------------",
-            "5. SITE BOUNDARY DELIMITATION & TOPOGRAPHIC SURVEY (NBR 13133):",
-            "   - Total Property Boundary Area (Footprint)  : {:.2f} m² ({:.4f} ha)".format(boundary_info['area'], boundary_info['area'] / 10000.0),
-            "   - Property Perimeter Length                 : {:.2f} m".format(boundary_info['curve'].GetLength()),
-            "   - Section & Volume Calibration             : 100% Strictly clipped to property (NBR 13133)",
-            "   - Earthwork Construction Tolerances        : Cadastral boundary control (Field tolerance: ±3 cm to ±5 cm per DNIT 108/2009-ES)",
+            "5. DELIMITAÇÃO DA GLEBA & CONTROLE TOPOGRÁFICO (NBR 13133):",
+            "   - Área do Limite da Propriedade (Poligonal) : {:.2f} m² ({:.4f} ha)".format(boundary_info['area'], boundary_info['area'] / 10000.0),
+            "   - Extensão do Perímetro do Lote            : {:.2f} m".format(boundary_info['curve'].GetLength()),
+            "   - Calibração de Seções e Volumes          : 100% Estritamente contido no lote (NBR 13133)",
+            "   - Tolerâncias Executivas de Terraplenagem : Controle cadastral de divisas (Tolerância de campo: ±3 cm a ±5 cm conf. DNIT 108/2009-ES)",
         ])
 
     if area_viario_lote > 0.0:
@@ -4176,35 +4377,42 @@ def run():
         ext_viario_est = area_viario_lote / 9.40
 
         if 15.0 <= taxa_viario <= 30.0:
-            diag_urb = "Complies strictly with Federal Law 6.766/1979 (urban right-of-way 15% to 25%)"
+            diag_urb = "Em rigorosa conformidade com a Lei Federal nº 6.766/1979 (faixa de 15% a 25%)"
         elif taxa_viario > 30.0:
-            diag_urb = "Alert: Road area exceeds 30% of site footprint. Verify if regional corridors are included."
+            diag_urb = "Atenção: Área viária superior a 30% da gleba. Verificar se há faixas externas conectadas."
         else:
-            diag_urb = "Road footprint compatible with horizontal gated subdivision or local cul-de-sac."
+            diag_urb = "Área viária compatível com condomínio horizontal ou via de acesso local."
 
         if max_slope <= 0.08:
-            diag_traf = "Gentle slope (<= 8.0%). Comfortable and safe for all vehicle classes (DNIT)."
+            diag_traf = "Declividade suave (<= 8.0%). Conforto e segurança plenos para veículos leves e pesados (DNIT)."
         elif max_slope <= 0.12:
-            diag_traf = "Moderate slope (8.0% to 12.0%). Standard for local residential streets in rolling terrain."
+            diag_traf = "Declividade moderada (8.0% a 12.0%). Padrão normativo de vias locais em terreno ondulado."
         else:
-            diag_traf = "Steep grade (12.0% to 15.0%). Critical normative limit: requires high-friction pavement, reinforced stormwater dissipation in curbs/gutters, and caution signage."
+            diag_traf = "Rampa acentuada (12.0% a 15.0%). Limite normativo crítico: Exige pavimento de alta aderência (CBUQ rugoso/intertravado), sarjetas reforçadas com dissipadores de energia e sinalização de cautela."
 
         relatorio.extend([
             "-----------------------------------------------------------------------------------------",
-            "6. ROAD NETWORK & PAVEMENT GUIDELINES (NBR / DNIT / LAW 6.766):",
-            "   - Net Road Footprint Within Site Boundary : {:.2f} m² ({:.1f}% of lot area)".format(area_viario_lote, taxa_viario),
-            "     * Urban Planning Diagnostic             : " + diag_urb,
-            "   - Net Roadway Pavement (Asphalt)          : {:.2f} m² (BIM relief: +0.03 m)".format(area_pista_lote),
-            "   - Net Pedestrian Sidewalks (Concrete)     : {:.2f} m² (Physical curb step: +0.15 m above street)".format(area_calcada_lote),
-            "   - Estimated Developed Street Length       : {:.2f} m (9.40m standard right-of-way)".format(ext_viario_est),
-            "   - Normative Cross Slope (Crown)           : 2.0% (Positive drainage to roadside gutters)",
-            "   - Standard Curb Step                      : +0.15 m (Pedestrian and vehicular segregation)",
-            "   - Longitudinal Grade Slope Limit          : Max {:.1f}% verified".format(max_slope * 100.0),
-            "     * Traffic & Drainage Operational Analysis: " + diag_traf,
+            "6. RESUMO DO SISTEMA VIÁRIO & DIRETRIZES DE PAVIMENTAÇÃO (NBR / DNIT / LEI 6.766):",
+            "   - Área Efetiva do Viário Contida no Lote  : {:.2f} m² ({:.1f}% da gleba)".format(area_viario_lote, taxa_viario),
+            "     * Enquadramento Urbanístico              : " + diag_urb,
+            "   - Área Efetiva de Pista (Asfalto)         : {:.2f} m² (Relevo BIM: +0.03 m)".format(area_pista_lote),
+            "   - Área Efetiva de Passeio (Calçadas)      : {:.2f} m² (Degrau físico de guia: +0.15 m acima da pista)".format(area_calcada_lote),
+            "   - Extensão Estimada da Malha Viária       : {:.2f} m (Gabarito padrão de 9.40m)".format(ext_viario_est),
+            "   - Inclinação Transversal Normativa (Coroa): 2.0% (Escoamento positivo para as sarjetas pluviais)",
+            "   - Desnível Padrão de Guia / Meio-Fio       : +0.15 m (Segregação de pedestres e veículos)",
+            "   - Limite de Declividade Longitudinal       : Máximo de {:.1f}% verificado".format(max_slope * 100.0),
+            "     * Diagnóstico de Trafegabilidade e Drenagem: " + diag_traf,
             "========================================================================================="
         ])
 
-    # Dynamic outputs for optional Grasshopper connections (bilingual aliases)
+    # Saídas dinâmicas para conexões opcionais no Grasshopper (aliases bilíngues)
+    linhas_estacas_crvs = [item['curve'] for item in estacas_normativas_info]
+    globals()['LinhasEstacas20m'] = linhas_estacas_crvs
+    globals()['Estacas20m'] = linhas_estacas_crvs
+    globals()['SecoesEstacas20m'] = linhas_estacas_crvs
+    globals()['RotulosEstacas20m'] = [item['label'] for item in estacas_normativas_info]
+    globals()['NormativeStationLines'] = linhas_estacas_crvs
+    globals()['NormativeStations20m'] = linhas_estacas_crvs
     globals()['Viario3D'] = [m for m in [m_3d_asfalto, m_3d_calcada] if m and getattr(m, 'IsValid', False)]
     globals()['Roadway3D'] = globals()['Viario3D']
     globals()['Asfalto3D'] = m_3d_asfalto
