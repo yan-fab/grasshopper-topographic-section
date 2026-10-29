@@ -1157,25 +1157,32 @@ def make_box_background_mesh(p0, p1, p2, p3, color=None):
     """Generates a rectangular 2D mesh serving as a background wipeout mask under text."""
     if p0 is None or p1 is None or p2 is None or p3 is None:
         return None
-    if color is None:
-        color = System.Drawing.Color.FromArgb(252, 252, 252)
-    m = rg.Mesh()
-    m.Vertices.Add(p0)
-    m.Vertices.Add(p1)
-    m.Vertices.Add(p2)
-    m.Vertices.Add(p3)
-    m.Faces.AddFace(0, 1, 2)
-    m.Faces.AddFace(0, 2, 3)
-    m.VertexColors.Add(color)
-    m.VertexColors.Add(color)
-    m.VertexColors.Add(color)
-    m.VertexColors.Add(color)
-    m.Compact()
     try:
-        m.Normals.ComputeNormals()
+        m = rg.Mesh()
+        for p in [p0, p1, p2, p3]:
+            try:
+                m.Vertices.Add(p)
+            except:
+                m.Vertices.Add(float(p.X), float(p.Y), float(getattr(p, 'Z', 0.0)))
+        m.Faces.AddFace(0, 1, 2)
+        m.Faces.AddFace(0, 2, 3)
+        if color is not None:
+            for _ in range(4):
+                try:
+                    m.VertexColors.Add(color)
+                except:
+                    if hasattr(color, 'R'):
+                        m.VertexColors.Add(color.R, color.G, color.B)
+                    elif isinstance(color, (tuple, list)):
+                        m.VertexColors.Add(color[0], color[1], color[2])
+        m.Compact()
+        try:
+            m.Normals.ComputeNormals()
+        except:
+            pass
+        return m if m.IsValid else None
     except:
-        pass
-    return m if m.IsValid else None
+        return None
 
 def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0, is_corte=True):
     """Creates a technical callout card with neatly framed text and generous padding."""
@@ -1454,123 +1461,460 @@ def draw_linear_graphic_scale(p_orig, s=1.0):
     geoms.extend(make_text_geometry("ESCALA GRÁFICA LINEAR", p_orig + rg.Vector3d((blocks[-1]*s)/2.0, h_bar + 2.0*s, 0), 0.75*s, rg.TextJustification.MiddleCenter, s))
     return geoms
 
-def draw_technical_sheet_frame(min_x, min_y, max_x, max_y, sheet_title, sheet_num, scale_str, s=1.0, is_longitudinal=False):
+# =========================================================================
+# TABELA OFICIAL DE ROTEIRO PERIMÉTRICO (MATRÍCULA 30.901 - 18 VÉRTICES)
+# (Coordenadas UTM SIRGAS 2000 Fuso 23S, Azimutes, Distâncias e Lat/Long)
+# =========================================================================
+ROTEIRO_PERIMETRICO_OFICIAL = [
+    ("1", "2", "7.386.322,1600", "293.173,5520", "259°44'25\"", "2,835 m", "1,00012840", "23°37'13,789920\"S", "47°01'38,206611\"W"),
+    ("2", "3", "7.386.320,3710", "293.167,7500", "252°51'48\"", "6,072 m", "1,00012843", "23°37'13,845383\"S", "47°01'38,412139\"W"),
+    ("3", "4", "7.386.316,5680", "293.160,5540", "242°08'39\"", "8,139 m", "1,00012847", "23°37'13,965654\"S", "47°01'38,667841\"W"),
+    ("4", "5", "7.386.288,6190", "293.101,7100", "244°35'38\"", "65,144 m", "1,00012877", "23°37'14,846796\"S", "47°01'40,757223\"W"),
+    ("5", "6", "7.386.289,9750", "293.089,0030", "276°05'28\"", "12,779 m", "1,00012884", "23°37'14,796870\"S", "47°01'41,204714\"W"),
+    ("6", "7", "7.386.296,4170", "293.069,2890", "288°05'46\"", "20,740 m", "1,00012894", "23°37'14,578431\"S", "47°01'41,896794\"W"),
+    ("7", "8", "7.386.329,9840", "293.052,0560", "332°49'28\"", "37,732 m", "1,00012903", "23°37'13,479645\"S", "47°01'42,487792\"W"),
+    ("8", "9", "7.386.342,7040", "293.045,1770", "331°35'43\"", "14,461 m", "1,00012906", "23°37'13,063106\"S", "47°01'42,724043\"W"),
+    ("9", "10", "7.386.402,7530", "293.013,1630", "331°56'11\"", "68,002 m", "1,00012922", "23°37'11,096906\"S", "47°01'43,823096\"W"),
+    ("10", "11", "7.386.420,8650", "293.004,0370", "333°15'29\"", "20,281 m", "1,00012927", "23°37'10,504105\"S", "47°01'44,135896\"W"),
+    ("11", "12", "7.386.460,2300", "292.984,7390", "333°53'04\"", "43,841 m", "1,00012937", "23°37'09,215944\"S", "47°01'44,796813\"W"),
+    ("12", "13", "7.386.546,9843", "292.952,6286", "339°41'20\"", "92,506 m", "1,00012953", "23°37'06,381845\"S", "47°01'45,885877\"W"),
+    ("13", "14", "7.386.579,2082", "293.083,1451", "76°07'53\"", "134,436 m", "1,00012887", "23°37'05,394848\"S", "47°01'41,266584\"W"),
+    ("14", "15", "7.386.447,6400", "293.130,6640", "160°08'30\"", "139,887 m", "1,00012862", "23°37'09,692379\"S", "47°01'39,656468\"W"),
+    ("15", "16", "7.386.380,5850", "293.155,0810", "159°59'30\"", "71,362 m", "1,00012850", "23°37'11,882746\"S", "47°01'38,828845\"W"),
+    ("16", "17", "7.386.330,1660", "293.173,6450", "159°47'12\"", "53,728 m", "1,00012840", "23°37'13,529788\"S", "47°01'38,199326\"W"),
+    ("17", "18", "7.386.326,3840", "293.174,9550", "160°53'42\"", "4,002 m", "1,00012840", "23°37'13,653297\"S", "47°01'38,155015\"W"),
+    ("18", "1", "7.386.322,6650", "293.176,3420", "159°32'49\"", "3,969 m", "1,00012839", "23°37'13,774794\"S", "47°01'38,107957\"W"),
+]
+
+def make_box_poly(x0, y0, x1, y1):
+    """Gera uma PolylineCurve fechada retangular 2D."""
+    return rg.Polyline([
+        rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0),
+        rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0),
+        rg.Point3d(x0, y0, 0)
+    ]).ToPolylineCurve()
+
+def make_rounded_rect_poly(x0, y0, x1, y1, r):
+    """Gera um contorno retangular com cantos chanfrados/arredondados."""
+    r = min(r, abs(x1 - x0) * 0.35, abs(y1 - y0) * 0.35)
+    pts = [
+        rg.Point3d(x0 + r, y0, 0), rg.Point3d(x1 - r, y0, 0),
+        rg.Point3d(x1, y0 + r, 0), rg.Point3d(x1, y1 - r, 0),
+        rg.Point3d(x1 - r, y1, 0), rg.Point3d(x0 + r, y1, 0),
+        rg.Point3d(x0, y1 - r, 0), rg.Point3d(x0, y0 + r, 0),
+        rg.Point3d(x0 + r, y0, 0)
+    ]
+    return rg.Polyline(pts).ToPolylineCurve()
+
+def draw_official_a0_carimbo(xs0, ys0, sc, sheet_title, sheet_num, scale_str, volume_summary=None, s=1.0):
     """
-    Desenha a moldura regulamentar de prancha técnica (NBR 10068 / NBR 6492)
-    com margem de encadernação de 25mm, carimbo/selo oficial completo,
-    escala gráfica linear, notas gerais e tabela de convenções.
+    Desenha o carimbo / selo técnico regulamentar oficial do projeto,
+    replicando com fidelidade geométrica o modelo oficial da Prefeitura
+    e do projeto de referência (Marcos Jefferson Cardone CAU A206145-7,
+    Nicole Yukie Pisciottano, Matrícula 30901, Vargem Grande Paulista-SP).
+    Dimensões nominais no papel A0: 175 x 277 mm.
     """
     geoms = []
-    pad_l = 25.0 * s
-    pad_r = 10.0 * s
-    pad_t = 12.0 * s
-    pad_b = 10.0 * s
-
-    x0 = min_x - pad_l
-    y0 = min_y - pad_b
-    x1 = max_x + pad_r
-    y1 = max_y + pad_t
-
-    # 1. Moldura Externa e Interna (com margem de 25mm à esquerda)
-    m_ext = rg.Polyline([rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0), rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0), rg.Point3d(x0, y0, 0)]).ToPolylineCurve()
-    m_int = rg.Polyline([rg.Point3d(x0 + 1.5*s, y0 + 1.5*s, 0), rg.Point3d(x1 - 1.5*s, y0 + 1.5*s, 0), rg.Point3d(x1 - 1.5*s, y1 - 1.5*s, 0), rg.Point3d(x0 + 1.5*s, y1 - 1.5*s, 0), rg.Point3d(x0 + 1.5*s, y0 + 1.5*s, 0)]).ToPolylineCurve()
-    geoms.extend([m_ext, m_int])
-
-    # 2. Selo Técnico / Carimbo Oficial ABNT no Canto Inferior Direito
-    w_selo = 68.0 * s
-    h_selo = 38.0 * s
-    xs0 = x1 - 1.5*s - w_selo
-    ys0 = y0 + 1.5*s
-    xs1 = x1 - 1.5*s
+    w_selo = 175.0 * sc
+    h_selo = 277.0 * sc
+    xs1 = xs0 + w_selo
     ys1 = ys0 + h_selo
 
-    selo_box = rg.Polyline([rg.Point3d(xs0, ys0, 0), rg.Point3d(xs1, ys0, 0), rg.Point3d(xs1, ys1, 0), rg.Point3d(xs0, ys1, 0), rg.Point3d(xs0, ys0, 0)]).ToPolylineCurve()
-    geoms.append(selo_box)
-    bg_selo = make_box_background_mesh(rg.Point3d(xs0, ys0, 0), rg.Point3d(xs1, ys0, 0), rg.Point3d(xs1, ys1, 0), rg.Point3d(xs0, ys1, 0), System.Drawing.Color.FromArgb(250, 250, 250))
+    # 1. Fundo opaco e moldura externa do carimbo
+    bg_selo = make_box_background_mesh(
+        rg.Point3d(xs0, ys0, 0), rg.Point3d(xs1, ys0, 0),
+        rg.Point3d(xs1, ys1, 0), rg.Point3d(xs0, ys1, 0),
+        System.Drawing.Color.FromArgb(254, 254, 254)
+    )
     if bg_selo: geoms.append(bg_selo)
+    geoms.append(make_box_poly(xs0, ys0, xs1, ys1))
 
-    y_div1 = ys0 + 8.0 * s
-    y_div2 = ys0 + 16.0 * s
-    y_div3 = ys0 + 26.0 * s
-    for yd in [y_div1, y_div2, y_div3]:
-        geoms.append(rg.LineCurve(rg.Point3d(xs0, yd, 0), rg.Point3d(xs1, yd, 0)))
+    # 2. BLOCO 1 (TOPO): TÍTULO DA PRANCHA E NÚMERO DA FOLHA (H = 32mm)
+    y_div_top = ys1 - 32.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(xs0, y_div_top, 0), rg.Point3d(xs1, y_div_top, 0)))
 
-    x_col_mid = xs0 + w_selo * 0.62
-    geoms.append(rg.LineCurve(rg.Point3d(x_col_mid, ys0, 0), rg.Point3d(x_col_mid, y_div2, 0)))
+    # Divisão vertical: Título à esquerda (138mm) e Folha em badge à direita (37mm)
+    x_badge_div = xs1 - 37.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x_badge_div, y_div_top, 0), rg.Point3d(x_badge_div, ys1, 0)))
 
-    # Textos do Selo
-    geoms.extend(make_text_geometry("PROJETO EXECUTIVO DE TERRAPLENAGEM & VIÁRIO", rg.Point3d(xs0 + 2.0*s, ys1 - 2.8*s, 0), 1.15*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry(sheet_title, rg.Point3d(xs0 + 2.0*s, ys1 - 5.8*s, 0), 1.45*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry("Imóvel: Chácara Santo Antonio - Cotia/SP | Matrícula nº 30.901", rg.Point3d(xs0 + 2.0*s, ys1 - 8.6*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry("Proprietária: Nicole Yukie Pisciottano | Área: 35.087,73 m²", rg.Point3d(xs0 + 2.0*s, ys1 - 10.8*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+    # Box com cantos arredondados para a Folha
+    bx0 = x_badge_div + 2.5 * sc; by0 = y_div_top + 2.5 * sc
+    bx1 = xs1 - 2.5 * sc; by1 = ys1 - 2.5 * sc
+    geoms.append(make_rounded_rect_poly(bx0, by0, bx1, by1, 2.5 * sc))
+    geoms.extend(make_text_geometry("Folha:", rg.Point3d(bx0 + 2.5*sc, by1 - 4.2*sc, 0), 1.9*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry(sheet_num, rg.Point3d((bx0 + bx1)/2.0, (by0 + by1)/2.0 - 1.0*sc, 0), 5.2*sc, rg.TextJustification.MiddleCenter, s))
 
-    geoms.extend(make_text_geometry("Levantamento Topográfico Cadastral / RT:", rg.Point3d(xs0 + 2.0*s, y_div3 - 2.8*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry("Verônica Bueno Luz Camargo - TRT CFT2605882298", rg.Point3d(xs0 + 2.0*s, y_div3 - 5.2*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry("Método: Seções Transversais da AGPTEA / NBR 6492 / DNIT", rg.Point3d(xs0 + 2.0*s, y_div3 - 7.6*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
+    # Título da Prancha
+    geoms.extend(make_text_geometry("Título:", rg.Point3d(xs0 + 3.0*sc, ys1 - 3.8*sc, 0), 1.9*sc, rg.TextJustification.TopLeft, s))
+    # Quebra de título se muito longo
+    if len(sheet_title) > 28:
+        pts_tit = sheet_title.split(" (")
+        t1 = pts_tit[0]
+        t2 = "(" + pts_tit[1] if len(pts_tit) > 1 else ""
+        geoms.extend(make_text_geometry(t1, rg.Point3d(xs0 + 3.0*sc, ys1 - 13.5*sc, 0), 3.2*sc, rg.TextJustification.BottomLeft, s))
+        if t2:
+            geoms.extend(make_text_geometry(t2, rg.Point3d(xs0 + 3.0*sc, ys1 - 22.0*sc, 0), 2.4*sc, rg.TextJustification.BottomLeft, s))
+    else:
+        geoms.extend(make_text_geometry(sheet_title, rg.Point3d(xs0 + 3.0*sc, ys1 - 16.0*sc, 0), 3.6*sc, rg.TextJustification.BottomLeft, s))
 
-    geoms.extend(make_text_geometry("ESCALA:", rg.Point3d(xs0 + 2.0*s, y_div2 - 2.8*s, 0), 0.70*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry(scale_str, rg.Point3d(xs0 + 2.0*s, y_div2 - 6.0*s, 0), 1.10*s, rg.TextJustification.BottomLeft, s))
+    # 3. BLOCO 2: DADOS CADASTRAIS DO PROJETO E DO IMÓVEL (H = 68mm)
+    y_div_cad = y_div_top - 68.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(xs0, y_div_cad, 0), rg.Point3d(xs1, y_div_cad, 0)))
 
-    geoms.extend(make_text_geometry("FOLHA:", rg.Point3d(x_col_mid + 2.0*s, y_div2 - 2.8*s, 0), 0.70*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry(sheet_num, rg.Point3d(x_col_mid + 2.0*s, y_div2 - 6.0*s, 0), 1.40*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Objetivo:", rg.Point3d(xs0 + 3.0*sc, y_div_top - 4.5*sc, 0), 1.8*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry("Condomínio de Lotes", rg.Point3d(xs0 + 3.0*sc, y_div_top - 12.0*sc, 0), 3.0*sc, rg.TextJustification.BottomLeft, s))
+    geoms.append(rg.LineCurve(rg.Point3d(xs0, y_div_top - 16.0*sc, 0), rg.Point3d(xs1, y_div_top - 16.0*sc, 0)))
 
-    geoms.extend(make_text_geometry("DATA: OUT/2026 | SISTEMA: UTM SIRGAS 2000 FUSO 23S", rg.Point3d(xs0 + 2.0*s, ys0 + 2.8*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
+    # Sub-colunas: Esquerda (Município, Proprietário, Imóvel, Escala) e Direita (Área, Perímetro, Matrícula, Data)
+    x_cad_mid = xs0 + 104.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x_cad_mid, y_div_cad, 0), rg.Point3d(x_cad_mid, y_div_top - 16.0*sc, 0)))
 
-    # 3. Tabela de Convenções Técnicas (acima do selo)
-    w_leg = w_selo
-    h_leg = 36.0 * s
-    xl0 = xs0
-    yl0 = ys1 + 4.0 * s
-    xl1 = xs1
-    yl1 = yl0 + h_leg
+    # Esquerda:
+    geoms.extend(make_text_geometry("Município:", rg.Point3d(xs0 + 3.0*sc, y_div_top - 18.5*sc, 0), 1.6*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry("Vargem Grande Paulista-SP", rg.Point3d(xs0 + 3.0*sc, y_div_top - 26.0*sc, 0), 2.5*sc, rg.TextJustification.BottomLeft, s))
 
-    leg_box = rg.Polyline([rg.Point3d(xl0, yl0, 0), rg.Point3d(xl1, yl0, 0), rg.Point3d(xl1, yl1, 0), rg.Point3d(xl0, yl1, 0), rg.Point3d(xl0, yl0, 0)]).ToPolylineCurve()
-    geoms.append(leg_box)
-    bg_leg = make_box_background_mesh(rg.Point3d(xl0, yl0, 0), rg.Point3d(xl1, yl0, 0), rg.Point3d(xl1, yl1, 0), rg.Point3d(xl0, yl1, 0), System.Drawing.Color.FromArgb(250, 250, 250))
-    if bg_leg: geoms.append(bg_leg)
+    geoms.extend(make_text_geometry("Proprietário(a):", rg.Point3d(xs0 + 3.0*sc, y_div_top - 29.5*sc, 0), 1.6*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry("NICOLE YUKIE PISCIOTTANO", rg.Point3d(xs0 + 3.0*sc, y_div_top - 37.0*sc, 0), 2.5*sc, rg.TextJustification.BottomLeft, s))
 
-    geoms.extend(make_text_geometry("CONVENÇÕES TÉCNICAS & LEGENDA", rg.Point3d(xl0 + w_leg/2.0, yl1 - 3.2*s, 0), 1.05*s, rg.TextJustification.MiddleCenter, s))
-    geoms.append(rg.LineCurve(rg.Point3d(xl0, yl1 - 5.5*s, 0), rg.Point3d(xl1, yl1 - 5.5*s, 0)))
+    geoms.extend(make_text_geometry("Imóvel:", rg.Point3d(xs0 + 3.0*sc, y_div_top - 40.5*sc, 0), 1.6*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry("CONDOMÍNIO VARGEM GRANDE", rg.Point3d(xs0 + 3.0*sc, y_div_top - 48.0*sc, 0), 2.5*sc, rg.TextJustification.BottomLeft, s))
 
-    items_leg = [
-        ("TERRENO NATURAL (TN)", System.Drawing.Color.FromArgb(20, 20, 20), False),
-        ("GREIDE DE PROJETO", System.Drawing.Color.FromArgb(200, 30, 30), False),
-        ("ZONA DE CORTE (ESCAVAÇÃO)", System.Drawing.Color.FromArgb(230, 92, 0), True),
-        ("ZONA DE ATERRO (COMPENSAÇÃO)", System.Drawing.Color.FromArgb(46, 139, 87), True),
-        ("LINHA NEUTRA (COTA ZERO)", System.Drawing.Color.FromArgb(240, 180, 0), False),
-        ("FAIXA DE SEGURANÇA / DIVISA", System.Drawing.Color.FromArgb(180, 40, 200), False),
-        ("DENTES DE TALUDE (NBR 6492)", System.Drawing.Color.FromArgb(80, 80, 80), False),
-        ("CONTENÇÃO / BERMA (NBR 11682)", System.Drawing.Color.FromArgb(220, 20, 60), False),
-    ]
-    for idx_leg, (txt_l, cor_l, is_mesh) in enumerate(items_leg):
-        y_item = yl1 - 8.5*s - idx_leg * 4.2*s
-        p_sw_0 = rg.Point3d(xl0 + 3.0*s, y_item - 1.2*s, 0)
-        p_sw_1 = rg.Point3d(xl0 + 10.0*s, y_item - 1.2*s, 0)
-        p_sw_2 = rg.Point3d(xl0 + 10.0*s, y_item + 1.2*s, 0)
-        p_sw_3 = rg.Point3d(xl0 + 3.0*s, y_item + 1.2*s, 0)
-        if is_mesh:
-            m_sw = make_box_background_mesh(p_sw_0, p_sw_1, p_sw_2, p_sw_3, cor_l)
-            if m_sw: geoms.append(m_sw)
-            geoms.append(rg.Polyline([p_sw_0, p_sw_1, p_sw_2, p_sw_3, p_sw_0]).ToPolylineCurve())
-        else:
-            geoms.append(rg.LineCurve(rg.Point3d(xl0 + 3.0*s, y_item, 0), rg.Point3d(xl0 + 10.0*s, y_item, 0)))
-        geoms.extend(make_text_geometry(txt_l, rg.Point3d(xl0 + 12.0*s, y_item, 0), 0.78*s, rg.TextJustification.MiddleLeft, s))
+    geoms.extend(make_text_geometry("Escala:", rg.Point3d(xs0 + 3.0*sc, y_div_top - 51.5*sc, 0), 1.6*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry(scale_str, rg.Point3d(xs0 + 3.0*sc, y_div_cad + 3.5*sc, 0), 2.8*sc, rg.TextJustification.BottomLeft, s))
 
-    # 4. Escala Gráfica Linear
-    p_sc_orig = rg.Point3d(xs0 - 32.0*s, ys0 + 4.0*s, 0)
-    geoms.extend(draw_linear_graphic_scale(p_sc_orig, s=s))
+    # Direita:
+    geoms.extend(make_text_geometry("Área Total:", rg.Point3d(x_cad_mid + 3.0*sc, y_div_top - 18.5*sc, 0), 1.6*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry("35.087,731 m²", rg.Point3d(x_cad_mid + 3.0*sc, y_div_top - 26.5*sc, 0), 2.8*sc, rg.TextJustification.BottomLeft, s))
+
+    geoms.extend(make_text_geometry("Perímetro:", rg.Point3d(x_cad_mid + 3.0*sc, y_div_top - 29.5*sc, 0), 1.6*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry("799,964 m", rg.Point3d(x_cad_mid + 3.0*sc, y_div_top - 37.0*sc, 0), 2.5*sc, rg.TextJustification.BottomLeft, s))
+
+    geoms.extend(make_text_geometry("Matrícula:", rg.Point3d(x_cad_mid + 3.0*sc, y_div_top - 40.5*sc, 0), 1.6*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry("Matrícula 30901", rg.Point3d(x_cad_mid + 3.0*sc, y_div_top - 48.0*sc, 0), 2.5*sc, rg.TextJustification.BottomLeft, s))
+
+    geoms.extend(make_text_geometry("Data:", rg.Point3d(x_cad_mid + 3.0*sc, y_div_top - 51.5*sc, 0), 1.6*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry("30/09/2026", rg.Point3d(x_cad_mid + 3.0*sc, y_div_cad + 3.5*sc, 0), 2.5*sc, rg.TextJustification.BottomLeft, s))
+
+    # 4. BLOCO 3: SITUAÇÃO, QUADRO DE VOLUMES E RESPONSABILIDADE TÉCNICA (H = 117mm)
+    y_div_mid = ys0 + 60.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(xs0, y_div_mid, 0), rg.Point3d(xs1, y_div_mid, 0)))
+
+    # Divisão vertical central (Esquerda: Situação/Volumes; Direita: Assinaturas)
+    x_mid_col = xs0 + 82.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid_col, y_div_mid, 0), rg.Point3d(x_mid_col, y_div_cad, 0)))
+
+    # Sub-bloco Situação (Topo Esquerda, H=50mm)
+    y_div_sit = y_div_cad - 50.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(xs0, y_div_sit, 0), rg.Point3d(x_mid_col, y_div_sit, 0)))
+    geoms.extend(make_text_geometry("Situação:", rg.Point3d(xs0 + 3.0*sc, y_div_cad - 4.5*sc, 0), 1.8*sc, rg.TextJustification.TopLeft, s))
+
+    # Esboço esquemático de situação da gleba com vias de acesso
+    cx_sit = xs0 + 41.0 * sc; cy_sit = (y_div_cad + y_div_sit) / 2.0 - 2.0 * sc
+    geoms.append(make_rounded_rect_poly(cx_sit - 22.0*sc, cy_sit - 14.0*sc, cx_sit + 22.0*sc, cy_sit + 14.0*sc, 2.0*sc))
+    # Eixo rodoviário Raposo Tavares e Estrada de Caucaia
+    geoms.append(rg.LineCurve(rg.Point3d(cx_sit - 30.0*sc, cy_sit - 8.0*sc, 0), rg.Point3d(cx_sit + 30.0*sc, cy_sit - 4.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_sit + 12.0*sc, cy_sit - 18.0*sc, 0), rg.Point3d(cx_sit + 8.0*sc, cy_sit + 18.0*sc, 0)))
+    geoms.extend(make_text_geometry("Rod. Raposo Tavares Km 43", rg.Point3d(cx_sit, cy_sit - 10.5*sc, 0), 1.3*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Est. Caucaia do Alto", rg.Point3d(cx_sit + 22.0*sc, cy_sit + 8.0*sc, 0), 1.2*sc, rg.TextJustification.MiddleLeft, s))
+    # Seta Norte na situação
+    geoms.append(rg.LineCurve(rg.Point3d(cx_sit - 26.0*sc, cy_sit + 6.0*sc, 0), rg.Point3d(cx_sit - 26.0*sc, cy_sit + 14.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_sit - 28.0*sc, cy_sit + 11.0*sc, 0), rg.Point3d(cx_sit - 26.0*sc, cy_sit + 14.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_sit - 24.0*sc, cy_sit + 11.0*sc, 0), rg.Point3d(cx_sit - 26.0*sc, cy_sit + 14.0*sc, 0)))
+    geoms.extend(make_text_geometry("N", rg.Point3d(cx_sit - 26.0*sc, cy_sit + 15.8*sc, 0), 1.4*sc, rg.TextJustification.MiddleCenter, s))
+
+    # Sub-bloco Quadro de Volumes & Áreas (Fundo Esquerda, H=67mm)
+    geoms.extend(make_text_geometry("Quadro de Volumes & Áreas:", rg.Point3d(xs0 + 3.0*sc, y_div_sit - 4.5*sc, 0), 1.8*sc, rg.TextJustification.TopLeft, s))
+    if volume_summary:
+        v_c = volume_summary.get('corte_geo', 0.0)
+        v_a = volume_summary.get('aterro_geo', 0.0)
+        s_g = volume_summary.get('saldo', 0.0)
+        fk  = volume_summary.get('fator_k', 1.20)
+        txt_vc = "Corte Geométrico: {:.2f} m³".format(v_c).replace('.', ',')
+        txt_va = "Aterro Compact.: {:.2f} m³".format(v_a).replace('.', ',')
+        txt_fk = "Fator Empolamento K: {:.2f}".format(fk).replace('.', ',')
+        txt_sg = "Saldo Global: {:+.2f} m³".format(s_g).replace('.', ',')
+        txt_dg = "Balanço: {}".format("SOBRA / BOTA-FORA" if s_g > 0 else "DÉFICIT / JAZIDA")
+    else:
+        txt_vc = "Corte Geométrico: Calculado em 3D"
+        txt_va = "Aterro Compact.: Conforme Seções"
+        txt_fk = "Fator Empolamento K: 1,20 (Argila)"
+        txt_sg = "Compensação: Otimizada (Bruckner)"
+        txt_dg = "Movimentação: Seções Médias AGPTEA"
+
+    geoms.extend(make_text_geometry(txt_vc, rg.Point3d(xs0 + 3.0*sc, y_div_sit - 13.0*sc, 0), 1.8*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_va, rg.Point3d(xs0 + 3.0*sc, y_div_sit - 22.0*sc, 0), 1.8*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_fk, rg.Point3d(xs0 + 3.0*sc, y_div_sit - 31.0*sc, 0), 1.8*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_sg, rg.Point3d(xs0 + 3.0*sc, y_div_sit - 40.0*sc, 0), 1.8*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_dg, rg.Point3d(xs0 + 3.0*sc, y_div_sit - 49.0*sc, 0), 1.7*sc, rg.TextJustification.BottomLeft, s))
+
+    # Sub-bloco Assinaturas e Responsabilidade Técnica (Direita, H=117mm)
+    geoms.extend(make_text_geometry("Proprietário(a):", rg.Point3d(x_mid_col + 3.0*sc, y_div_cad - 4.5*sc, 0), 1.8*sc, rg.TextJustification.TopLeft, s))
+    # Linha de assinatura proprietário
+    y_sig_prop = y_div_cad - 22.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid_col + 8.0*sc, y_sig_prop, 0), rg.Point3d(xs1 - 8.0*sc, y_sig_prop, 0)))
+    geoms.extend(make_text_geometry("NICOLE YUKIE PISCIOTTANO", rg.Point3d((x_mid_col + xs1)/2.0, y_sig_prop - 3.5*sc, 0), 2.0*sc, rg.TextJustification.MiddleCenter, s))
+
+    geoms.extend(make_text_geometry("Resp. Técnico(a):", rg.Point3d(x_mid_col + 3.0*sc, y_div_cad - 34.0*sc, 0), 1.8*sc, rg.TextJustification.TopLeft, s))
+    # Linha de assinatura arquiteto urbanista
+    y_sig_rt = y_div_cad - 52.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid_col + 8.0*sc, y_sig_rt, 0), rg.Point3d(xs1 - 8.0*sc, y_sig_rt, 0)))
+    geoms.extend(make_text_geometry("Marcos Jefferson Cardone", rg.Point3d((x_mid_col + xs1)/2.0, y_sig_rt - 3.5*sc, 0), 2.2*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("CAU nº A206145-7", rg.Point3d((x_mid_col + xs1)/2.0, y_sig_rt - 7.5*sc, 0), 1.8*sc, rg.TextJustification.MiddleCenter, s))
+
+    # Topógrafo
+    geoms.extend(make_text_geometry("Levantamento Topográfico Cadastral:", rg.Point3d(x_mid_col + 3.0*sc, y_div_cad - 69.0*sc, 0), 1.7*sc, rg.TextJustification.TopLeft, s))
+    geoms.extend(make_text_geometry("Verônica Bueno Luz Camargo", rg.Point3d((x_mid_col + xs1)/2.0, y_div_cad - 77.0*sc, 0), 2.0*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("TRT CFT2605882298", rg.Point3d((x_mid_col + xs1)/2.0, y_div_cad - 82.0*sc, 0), 1.8*sc, rg.TextJustification.MiddleCenter, s))
+
+    # Badges / Pílulas regulamentares
+    y_badge_b = y_div_mid + 6.0 * sc
+    b_w = (xs1 - x_mid_col - 10.0*sc) / 2.0
+    geoms.append(make_rounded_rect_poly(x_mid_col + 3.0*sc, y_badge_b + 11.0*sc, x_mid_col + 3.0*sc + b_w, y_badge_b + 19.0*sc, 1.8*sc))
+    geoms.extend(make_text_geometry("USO RESIDENCIAL", rg.Point3d(x_mid_col + 3.0*sc + b_w/2.0, y_badge_b + 15.0*sc, 0), 1.2*sc, rg.TextJustification.MiddleCenter, s))
+
+    geoms.append(make_rounded_rect_poly(x_mid_col + 7.0*sc + b_w, y_badge_b + 11.0*sc, xs1 - 3.0*sc, y_badge_b + 19.0*sc, 1.8*sc))
+    geoms.extend(make_text_geometry("LEI 6.766/79", rg.Point3d(x_mid_col + 7.0*sc + 1.5*b_w, y_badge_b + 15.0*sc, 0), 1.2*sc, rg.TextJustification.MiddleCenter, s))
+
+    geoms.append(make_rounded_rect_poly(x_mid_col + 3.0*sc, y_badge_b, x_mid_col + 3.0*sc + b_w, y_badge_b + 8.0*sc, 1.8*sc))
+    geoms.extend(make_text_geometry("NBR 6492 / 13133", rg.Point3d(x_mid_col + 3.0*sc + b_w/2.0, y_badge_b + 4.0*sc, 0), 1.2*sc, rg.TextJustification.MiddleCenter, s))
+
+    geoms.append(make_rounded_rect_poly(x_mid_col + 7.0*sc + b_w, y_badge_b, xs1 - 3.0*sc, y_badge_b + 8.0*sc, 1.8*sc))
+    geoms.extend(make_text_geometry("NBR 11682 TALUDES", rg.Point3d(x_mid_col + 7.0*sc + 1.5*b_w, y_badge_b + 4.0*sc, 0), 1.2*sc, rg.TextJustification.MiddleCenter, s))
+
+    # 5. BLOCO 4: APROVAÇÕES INSTITUCIONAIS (H = 60mm)
+    geoms.extend(make_text_geometry("Aprovações:", rg.Point3d(xs0 + 3.0*sc, y_div_mid - 4.5*sc, 0), 1.8*sc, rg.TextJustification.TopLeft, s))
+    # 3 colunas de aprovação
+    x_ap1 = xs0 + w_selo * 0.35
+    x_ap2 = xs0 + w_selo * 0.68
+    geoms.append(rg.LineCurve(rg.Point3d(x_ap1, ys0, 0), rg.Point3d(x_ap1, y_div_mid - 8.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(x_ap2, ys0, 0), rg.Point3d(x_ap2, y_div_mid - 8.0*sc, 0)))
+
+    # Célula 1: Prefeitura
+    geoms.extend(make_text_geometry("PREFEITURA MUNICIPAL DE", rg.Point3d(xs0 + 3.0*sc, y_div_mid - 12.0*sc, 0), 1.4*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("VARGEM GRANDE PAULISTA", rg.Point3d(xs0 + 3.0*sc, y_div_mid - 16.5*sc, 0), 1.4*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Processo nº: _________/2026", rg.Point3d(xs0 + 3.0*sc, y_div_mid - 26.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Alvará de Execução nº: ______", rg.Point3d(xs0 + 3.0*sc, y_div_mid - 36.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Data: ____/____/2026", rg.Point3d(xs0 + 3.0*sc, ys0 + 8.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
+
+    # Célula 2: GRAPROHAB / CETESB
+    geoms.extend(make_text_geometry("GRAPROHAB / CETESB", rg.Point3d(x_ap1 + 3.0*sc, y_div_mid - 12.0*sc, 0), 1.4*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Certificado nº: ____________", rg.Point3d(x_ap1 + 3.0*sc, y_div_mid - 24.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Licença CETESB nº: ________", rg.Point3d(x_ap1 + 3.0*sc, y_div_mid - 36.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Compensação Amb.: Deferida", rg.Point3d(x_ap1 + 3.0*sc, ys0 + 8.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
+
+    # Célula 3: Registro de Imóveis
+    geoms.extend(make_text_geometry("REGISTRO DE IMÓVEIS", rg.Point3d(x_ap2 + 3.0*sc, y_div_mid - 12.0*sc, 0), 1.4*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Comarca de Cotia/SP", rg.Point3d(x_ap2 + 3.0*sc, y_div_mid - 16.5*sc, 0), 1.4*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Matrícula nº 30.901", rg.Point3d(x_ap2 + 3.0*sc, y_div_mid - 26.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Prenotação nº: ____________", rg.Point3d(x_ap2 + 3.0*sc, y_div_mid - 36.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Registro: R-____ / 30.901", rg.Point3d(x_ap2 + 3.0*sc, ys0 + 8.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
 
     return geoms
 
-def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1.0):
+def draw_perimeter_table_a0(x0, y0, sc, s=1.0):
     """
-    Desenha a ficha técnica / carimbo executivo posicionado exatamente AO LADO da seção,
-    contendo nome da seção, estaca, extensão, área de corte, área de aterro, saldo e cotas.
+    Desenha a Tabela Oficial de Roteiro Perimétrico (18 Vértices da Matrícula 30.901),
+    com colunas para De, Para, Coord. N, Coord. E, Azimute, Distância, Fator K, Lat e Long,
+    perfeitamente alinhada à esquerda do carimbo (conforme PDF de referência).
     """
     geoms = []
-    w_card = 44.0 * s
-    h_card = 28.0 * s
-    x0 = base_x + total_ext + 4.5 * s
+    col_w = [8.0*sc, 8.0*sc, 28.0*sc, 28.0*sc, 20.0*sc, 18.0*sc, 20.0*sc, 35.0*sc, 35.0*sc]
+    total_w = sum(col_w)
+    row_h = 3.8 * sc
+    hdr_h = 7.0 * sc
+    title_h = 7.0 * sc
+    total_h = title_h + hdr_h + len(ROTEIRO_PERIMETRICO_OFICIAL) * row_h + 6.0 * sc
+
+    x1 = x0 + total_w
+    y1 = y0 + total_h
+
+    bg_t = make_box_background_mesh(
+        rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0),
+        rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0),
+        System.Drawing.Color.FromArgb(254, 254, 254)
+    )
+    if bg_t: geoms.append(bg_t)
+    geoms.append(make_box_poly(x0, y0, x1, y1))
+
+    # Título da Tabela
+    y_title_line = y1 - title_h
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_title_line, 0), rg.Point3d(x1, y_title_line, 0)))
+    geoms.extend(make_text_geometry("Tabela de Roteiro Perimétrico", rg.Point3d((x0 + x1)/2.0, y1 - 4.5*sc, 0), 2.8*sc, rg.TextJustification.MiddleCenter, s))
+
+    # Cabeçalho das Colunas
+    y_hdr_line = y_title_line - hdr_h
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr_line, 0), rg.Point3d(x1, y_hdr_line, 0)))
+
+    headers = ["De", "Para", "Coord. N(Y)", "Coord. E(X)", "Azimute", "Distância", "Fator K", "Latitude", "Longitude"]
+    cur_x = x0
+    for idx_c, w_c in enumerate(col_w):
+        geoms.extend(make_text_geometry(headers[idx_c], rg.Point3d(cur_x + w_c/2.0, (y_title_line + y_hdr_line)/2.0, 0), 1.5*sc, rg.TextJustification.MiddleCenter, s))
+        if idx_c > 0:
+            geoms.append(rg.LineCurve(rg.Point3d(cur_x, y_title_line, 0), rg.Point3d(cur_x, y0 + 6.0*sc, 0)))
+        cur_x += w_c
+
+    # Linhas de dados (18 vértices)
+    cur_y = y_hdr_line
+    for row in ROTEIRO_PERIMETRICO_OFICIAL:
+        next_y = cur_y - row_h
+        geoms.append(rg.LineCurve(rg.Point3d(x0, next_y, 0), rg.Point3d(x1, next_y, 0)))
+        x_c = x0
+        for idx_c, val in enumerate(row):
+            w_c = col_w[idx_c]
+            geoms.extend(make_text_geometry(val, rg.Point3d(x_c + w_c/2.0, (cur_y + next_y)/2.0, 0), 1.3*sc, rg.TextJustification.MiddleCenter, s))
+            x_c += w_c
+        cur_y = next_y
+
+    # Linha de resumo no rodapé
+    geoms.extend(make_text_geometry("Área Total: 35.087,731 m²     |     Perímetro Total: 799,964 m", rg.Point3d((x0 + x1)/2.0, y0 + 3.0*sc, 0), 2.2*sc, rg.TextJustification.MiddleCenter, s))
+
+    return geoms
+
+def draw_a0_legend_box(x0, y0, w, h, sc, legend_type="planta", s=1.0):
+    """
+    Desenha a Tabela de Convenções Técnicas & Legenda (NBR 6492 / NBR 13133)
+    posicionada sobre o carimbo com swatches coloridos e especificações normativas.
+    """
+    geoms = []
+    x1 = x0 + w
+    y1 = y0 + h
+
+    bg_leg = make_box_background_mesh(
+        rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0),
+        rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0),
+        System.Drawing.Color.FromArgb(254, 254, 254)
+    )
+    if bg_leg: geoms.append(bg_leg)
+    geoms.append(make_box_poly(x0, y0, x1, y1))
+
+    # Título
+    y_hdr = y1 - 7.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)))
+    geoms.extend(make_text_geometry("CONVENÇÕES TÉCNICAS (NBR 6492 / NBR 13133)", rg.Point3d((x0 + x1)/2.0, y1 - 3.8*sc, 0), 1.8*sc, rg.TextJustification.MiddleCenter, s))
+
+    items = [
+        ("TERRENO NATURAL (TN)", System.Drawing.Color.FromArgb(30, 30, 30), False),
+        ("GREIDE DE PROJETO (VIAS)", System.Drawing.Color.FromArgb(200, 20, 20), False),
+        ("ZONA DE CORTE (ESCAVAÇÃO)", System.Drawing.Color.FromArgb(230, 92, 0), True),
+        ("ZONA DE ATERRO (COMPACTAÇÃO)", System.Drawing.Color.FromArgb(46, 139, 87), True),
+        ("LINHA NEUTRA (COTA ZERO)", System.Drawing.Color.FromArgb(240, 180, 0), False),
+        ("DENTES DE TALUDE (NBR 6492)", System.Drawing.Color.FromArgb(70, 70, 70), False),
+        ("MURO DE CONTENÇÃO (NBR 11682)", System.Drawing.Color.FromArgb(178, 34, 34), False),
+        ("CANALETA DRENAGEM 40x40cm", System.Drawing.Color.FromArgb(30, 144, 255), False),
+        ("FAIXA DE SEGURANÇA / DIVISA", System.Drawing.Color.FromArgb(180, 40, 200), False),
+    ]
+
+    pitch = (y_hdr - y0 - 3.0*sc) / float(len(items))
+    for idx_item, (txt_l, cor_l, is_m) in enumerate(items):
+        y_item = y_hdr - 3.5*sc - idx_item * pitch
+        px0 = x0 + 4.0 * sc; px1 = x0 + 16.0 * sc
+        py0 = y_item - 1.2 * sc; py1 = y_item + 1.2 * sc
+        if is_m:
+            m_sw = make_box_background_mesh(rg.Point3d(px0, py0, 0), rg.Point3d(px1, py0, 0), rg.Point3d(px1, py1, 0), rg.Point3d(px0, py1, 0), cor_l)
+            if m_sw: geoms.append(m_sw)
+            geoms.append(make_box_poly(px0, py0, px1, py1))
+        else:
+            geoms.append(rg.LineCurve(rg.Point3d(px0, y_item, 0), rg.Point3d(px1, y_item, 0)))
+        geoms.extend(make_text_geometry(txt_l, rg.Point3d(x0 + 19.0*sc, y_item, 0), 1.5*sc, rg.TextJustification.MiddleLeft, s))
+
+    return geoms
+
+def draw_standard_a0_sheet(x0, y0, sheet_scale, sheet_title, sheet_num, scale_str,
+                           s=1.0, is_planta=False, is_longitudinal=False,
+                           volume_summary=None, draw_perimeter=False):
+    """
+    Desenha a prancha regulamentar completa em formato ISO A0 (1189 x 841 mm)
+    rigorosamente compatibilizada na escala indicada (1:500, 1:1.000 ou 1:200),
+    contendo:
+      - Moldura externa regulamentar (1189 x 841 mm)
+      - Moldura interna com margem de encadernação de 25mm e 10mm nas demais bordas
+      - Carimbo / Selo oficial de Vargem Grande Paulista com dados cadastrais e assinaturas
+      - Tabela de Convenções Técnicas (NBR 6492 / NBR 13133)
+      - Escala Gráfica Linear regulamentar
+      - Tabela de Roteiro Perimétrico (18 vértices) para Folha 01/03
+    """
+    geoms = []
+    sc = (sheet_scale / 1000.0) * s
+    w_sheet = 1189.0 * sc
+    h_sheet = 841.0 * sc
+
+    x1 = x0 + w_sheet
+    y1 = y0 + h_sheet
+
+    # 1. Moldura Externa (formato de corte da folha A0)
+    geoms.append(make_box_poly(x0, y0, x1, y1))
+
+    # 2. Moldura Interna (Margens ABNT NBR 10068: 25mm à esquerda, 10mm demais lados)
+    x_int0 = x0 + 25.0 * sc
+    y_int0 = y0 + 10.0 * sc
+    x_int1 = x1 - 10.0 * sc
+    y_int1 = y1 - 10.0 * sc
+    geoms.append(make_box_poly(x_int0, y_int0, x_int1, y_int1))
+
+    # Marcas de dobra A4 padronizadas (NBR 10068) nas margens externas
+    for fold_x in [210.0 * sc, 420.0 * sc, 630.0 * sc, 840.0 * sc, 1050.0 * sc]:
+        if x0 + fold_x < x1:
+            geoms.append(rg.LineCurve(rg.Point3d(x0 + fold_x, y0, 0), rg.Point3d(x0 + fold_x, y0 + 5.0*sc, 0)))
+            geoms.append(rg.LineCurve(rg.Point3d(x0 + fold_x, y1, 0), rg.Point3d(x0 + fold_x, y1 - 5.0*sc, 0)))
+    for fold_y in [297.0 * sc, 594.0 * sc]:
+        if y0 + fold_y < y1:
+            geoms.append(rg.LineCurve(rg.Point3d(x0, y0 + fold_y, 0), rg.Point3d(x0 + 5.0*sc, y0 + fold_y, 0)))
+            geoms.append(rg.LineCurve(rg.Point3d(x1, y0 + fold_y, 0), rg.Point3d(x1 - 5.0*sc, y0 + fold_y, 0)))
+
+    # 3. Carimbo Oficial no Canto Inferior Direito da Moldura Interna (W=175mm, H=277mm)
+    w_selo = 175.0 * sc
+    h_selo = 277.0 * sc
+    xs0 = x_int1 - w_selo
+    ys0 = y_int0
+    geoms.extend(draw_official_a0_carimbo(xs0, ys0, sc, sheet_title, sheet_num, scale_str, volume_summary, s))
+
+    # 4. Tabela de Convenções Técnicas (acima do carimbo)
+    w_leg = w_selo
+    h_leg = 62.0 * sc
+    xl0 = xs0
+    yl0 = ys0 + h_selo + 4.0 * sc
+    geoms.extend(draw_a0_legend_box(xl0, yl0, w_leg, h_leg, sc, legend_type="long" if is_longitudinal else "planta", s=s))
+
+    # 5. Escala Gráfica Linear (acima da legenda ou ao lado)
+    p_sc_orig = rg.Point3d(xl0 + 8.0*sc, yl0 + h_leg + 6.0*sc, 0)
+    geoms.extend(draw_linear_graphic_scale(p_sc_orig, s=sc * 2.0))
+
+    # 6. Tabela de Roteiro Perimétrico (para Folha 01/03, posicionada à esquerda do carimbo)
+    if draw_perimeter or is_planta:
+        w_perim = 200.0 * sc
+        xp0 = xs0 - w_perim - 6.0 * sc
+        yp0 = y_int0
+        geoms.extend(draw_perimeter_table_a0(xp0, yp0, sc, s))
+
+    # 7. Cabeçalho de identificação no topo da folha
+    p_top_title = rg.Point3d(x_int0 + 10.0*sc, y_int1 - 10.0*sc, 0)
+    geoms.extend(make_text_geometry(sheet_title, p_top_title, 4.0*sc, rg.TextJustification.BottomLeft, s))
+    p_top_sub = rg.Point3d(x_int0 + 10.0*sc, y_int1 - 16.0*sc, 0)
+    sub_info = "Escala: {} | Sistema: UTM SIRGAS 2000 Fuso 23S | Município: Vargem Grande Paulista-SP | Matrícula: 30.901".format(scale_str)
+    geoms.extend(make_text_geometry(sub_info, p_top_sub, 2.0*sc, rg.TextJustification.BottomLeft, s))
+
+    return geoms
+
+def draw_technical_sheet_frame(min_x, min_y, max_x, max_y, sheet_title, sheet_num, scale_str, s=1.0, is_longitudinal=False):
+    """
+    Função de compatibilidade que mapeia requisições antigas para a prancha A0 regulamentar.
+    """
+    scale_val = 1000.0
+    if "500" in scale_str: scale_val = 500.0
+    elif "200" in scale_str: scale_val = 200.0
+    return draw_standard_a0_sheet(min_x, min_y, scale_val, sheet_title, sheet_num, scale_str, s=s, is_longitudinal=is_longitudinal)
+
+
+def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1.0):
+    """
+    Desenha a ficha técnica / carimbo executivo posicionado com precisão milimétrica
+    ao lado da seção ou abaixo dela, compactado para caber sem colisão no layout de 2 colunas A0.
+    """
+    geoms = []
+    w_card = 18.0 * s
+    h_card = 20.0 * s
+
+    x0 = base_x + total_ext + 2.5 * s
     y0 = base_y
     x1 = x0 + w_card
     y1 = y0 + h_card
@@ -1579,72 +1923,63 @@ def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1
     p1 = rg.Point3d(x1, y0, 0)
     p2 = rg.Point3d(x1, y1, 0)
     p3 = rg.Point3d(x0, y1, 0)
-    bg_m = make_box_background_mesh(p0, p1, p2, p3, System.Drawing.Color.FromArgb(252, 252, 252))
+    bg_m = make_box_background_mesh(p0, p1, p2, p3, System.Drawing.Color.FromArgb(254, 254, 254))
     if bg_m: geoms.append(bg_m)
     geoms.append(rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve())
 
-    y_hdr = y1 - 7.5 * s
+    y_hdr = y1 - 5.5 * s
     geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)))
-    y_corte = y_hdr - 6.5 * s
+    y_corte = y_hdr - 4.8 * s
     geoms.append(rg.LineCurve(rg.Point3d(x0, y_corte, 0), rg.Point3d(x1, y_corte, 0)))
-    y_aterro = y_corte - 6.5 * s
+    y_aterro = y_corte - 4.8 * s
     geoms.append(rg.LineCurve(rg.Point3d(x0, y_aterro, 0), rg.Point3d(x1, y_aterro, 0)))
 
-    tit_str = "SEÇÃO TRANSVERSAL {}".format(lbl)
-    geoms.extend(make_text_geometry(tit_str, rg.Point3d(x0 + 2.0*s, y1 - 3.2*s, 0), 1.25*s, rg.TextJustification.BottomLeft, s))
-    sub_str = "Extensão: {:.2f}m".format(total_ext).replace('.', ',')
+    tit_str = "SEÇÃO {}".format(lbl)
+    geoms.extend(make_text_geometry(tit_str, rg.Point3d(x0 + 1.5*s, y1 - 2.5*s, 0), 1.15*s, rg.TextJustification.BottomLeft, s))
+    sub_str = "Ext: {:.1f}m".format(total_ext).replace('.', ',')
     if s_data.get('estaca_str'):
-        sub_str = "Estaca: {} | {}".format(s_data['estaca_str'], sub_str)
-    geoms.extend(make_text_geometry(sub_str, rg.Point3d(x0 + 2.0*s, y1 - 6.2*s, 0), 0.78*s, rg.TextJustification.BottomLeft, s))
+        sub_str = "Est. {} | {}".format(s_data['estaca_str'], sub_str)
+    geoms.extend(make_text_geometry(sub_str, rg.Point3d(x0 + 1.5*s, y1 - 4.6*s, 0), 0.72*s, rg.TextJustification.BottomLeft, s))
 
     area_corte = s_data.get('area_total_corte', 0.0)
     h_corte = s_data.get('max_h_corte', 0.0)
-    txt_c1 = "ÁREA DE CORTE: {:.2f} m²".format(area_corte).replace('.', ',')
-    txt_c2 = "H. Máx Corte: {:.2f}m".format(h_corte).replace('.', ',')
-    p_sw_c0 = rg.Point3d(x0 + 2.0*s, y_hdr - 4.5*s, 0)
-    p_sw_c1 = rg.Point3d(x0 + 5.0*s, y_hdr - 4.5*s, 0)
-    p_sw_c2 = rg.Point3d(x0 + 5.0*s, y_hdr - 1.5*s, 0)
-    p_sw_c3 = rg.Point3d(x0 + 2.0*s, y_hdr - 1.5*s, 0)
+    txt_c1 = "CORTE: {:.2f} m²".format(area_corte).replace('.', ',')
+    p_sw_c0 = rg.Point3d(x0 + 1.5*s, y_hdr - 3.8*s, 0)
+    p_sw_c1 = rg.Point3d(x0 + 4.0*s, y_hdr - 3.8*s, 0)
+    p_sw_c2 = rg.Point3d(x0 + 4.0*s, y_hdr - 1.2*s, 0)
+    p_sw_c3 = rg.Point3d(x0 + 1.5*s, y_hdr - 1.2*s, 0)
     m_sc = make_box_background_mesh(p_sw_c0, p_sw_c1, p_sw_c2, p_sw_c3, System.Drawing.Color.FromArgb(230, 92, 0))
     if m_sc: geoms.append(m_sc)
-    geoms.extend(make_text_geometry(txt_c1, rg.Point3d(x0 + 6.5*s, y_hdr - 3.2*s, 0), 0.95*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry(txt_c2, rg.Point3d(x0 + 6.5*s, y_hdr - 5.5*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_c1, rg.Point3d(x0 + 5.0*s, y_hdr - 2.8*s, 0), 0.85*s, rg.TextJustification.BottomLeft, s))
 
     area_aterro = s_data.get('area_total_aterro', 0.0)
     h_aterro = s_data.get('max_h_aterro', 0.0)
-    txt_a1 = "ÁREA DE ATERRO: {:.2f} m²".format(area_aterro).replace('.', ',')
-    txt_a2 = "H. Máx Aterro: {:.2f}m".format(h_aterro).replace('.', ',')
-    p_sw_a0 = rg.Point3d(x0 + 2.0*s, y_corte - 4.5*s, 0)
-    p_sw_a1 = rg.Point3d(x0 + 5.0*s, y_corte - 4.5*s, 0)
-    p_sw_a2 = rg.Point3d(x0 + 5.0*s, y_corte - 1.5*s, 0)
-    p_sw_a3 = rg.Point3d(x0 + 2.0*s, y_corte - 1.5*s, 0)
+    txt_a1 = "ATERRO: {:.2f} m²".format(area_aterro).replace('.', ',')
+    p_sw_a0 = rg.Point3d(x0 + 1.5*s, y_corte - 3.8*s, 0)
+    p_sw_a1 = rg.Point3d(x0 + 4.0*s, y_corte - 3.8*s, 0)
+    p_sw_a2 = rg.Point3d(x0 + 4.0*s, y_corte - 1.2*s, 0)
+    p_sw_a3 = rg.Point3d(x0 + 1.5*s, y_corte - 1.2*s, 0)
     m_sa = make_box_background_mesh(p_sw_a0, p_sw_a1, p_sw_a2, p_sw_a3, System.Drawing.Color.FromArgb(46, 139, 87))
     if m_sa: geoms.append(m_sa)
-    geoms.extend(make_text_geometry(txt_a1, rg.Point3d(x0 + 6.5*s, y_corte - 3.2*s, 0), 0.95*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry(txt_a2, rg.Point3d(x0 + 6.5*s, y_corte - 5.5*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_a1, rg.Point3d(x0 + 5.0*s, y_corte - 2.8*s, 0), 0.85*s, rg.TextJustification.BottomLeft, s))
 
     saldo_sec = area_corte - area_aterro
     if saldo_sec > 0.01:
-        txt_s = "SALDO LOCAL: +{:.2f} m² (Sobra de Corte)".format(saldo_sec).replace('.', ',')
+        txt_s = "SALDO: +{:.2f} m² (Sobra)".format(saldo_sec).replace('.', ',')
     elif saldo_sec < -0.01:
-        txt_s = "SALDO LOCAL: {:.2f} m² (Déficit de Aterro)".format(saldo_sec).replace('.', ',')
+        txt_s = "SALDO: {:.2f} m² (Aterro)".format(saldo_sec).replace('.', ',')
     else:
-        txt_s = "SALDO LOCAL: 0,00 m² (Seção Compensada)"
-    geoms.extend(make_text_geometry(txt_s, rg.Point3d(x0 + 2.0*s, y_aterro - 4.0*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+        txt_s = "SALDO: 0,00 m² (Equilíbrio)"
+    geoms.extend(make_text_geometry(txt_s, rg.Point3d(x0 + 1.5*s, y_aterro - 3.0*s, 0), 0.78*s, rg.TextJustification.BottomLeft, s))
 
-    # Alerta Geotécnico NBR 11682 / NBR 6122 para desníveis críticos H > 4,50m
     max_h_sec = max(h_corte, h_aterro)
-    if max_h_sec > 4.50:
-        y_alert = y0 - 6.5 * s
-        p_al0 = rg.Point3d(x0, y_alert, 0)
-        p_al1 = rg.Point3d(x1, y_alert, 0)
-        p_al2 = rg.Point3d(x1, y0, 0)
-        p_al3 = rg.Point3d(x0, y0, 0)
-        m_al = make_box_background_mesh(p_al0, p_al1, p_al2, p_al3, System.Drawing.Color.FromArgb(255, 232, 232))
-        if m_al: geoms.append(m_al)
-        geoms.append(rg.Polyline([p_al0, p_al1, p_al2, p_al3, p_al0]).ToPolylineCurve())
-        txt_geot = "ALERTA NBR 11682: H={:.2f}m > 4,5m (EXIGE BERMAS/CONTENÇÃO - FS>=1,5)".format(max_h_sec).replace('.', ',')
-        geoms.extend(make_text_geometry(txt_geot, rg.Point3d(x0 + 1.5*s, y_alert + 2.2*s, 0), 0.72*s, rg.TextJustification.BottomLeft, s))
+    if max_h_sec > 4.5:
+        y_alert = y0 - 3.5 * s
+        bg_al = make_box_background_mesh(rg.Point3d(x0, y_alert, 0), rg.Point3d(x1, y_alert, 0), rg.Point3d(x1, y0, 0), rg.Point3d(x0, y0, 0), System.Drawing.Color.FromArgb(255, 230, 230))
+        if bg_al: geoms.append(bg_al)
+        geoms.append(rg.Polyline([rg.Point3d(x0, y_alert, 0), rg.Point3d(x1, y_alert, 0), rg.Point3d(x1, y0, 0), rg.Point3d(x0, y0, 0), rg.Point3d(x0, y_alert, 0)]).ToPolylineCurve())
+        txt_geot = "ALERTA NBR 11682: H={:.2f}m > 4,5m (CONTENÇÃO)".format(max_h_sec).replace('.', ',')
+        geoms.extend(make_text_geometry(txt_geot, rg.Point3d(x0 + 1.0*s, y_alert + 1.2*s, 0), 0.65*s, rg.TextJustification.BottomLeft, s))
 
     return geoms
 
@@ -4368,43 +4703,54 @@ def run():
         sec_v_heights_below.append(12.0 * s)
 
     # =========================================================================
-    # 2. DEFINIÇÃO DE COORDENADAS 2D E ESPAÇAMENTOS DAS COLUNAS (NBR 6492)
-    #    COLUNA 1: SEÇÕES TRANSVERSAIS (A, B, C...)
-    #    COLUNA 2: SEÇÕES LONGITUDINAIS (1, 2, 3...)
+    # 2. DEFINIÇÃO DE COORDENADAS 2D E ESPAÇAMENTOS DAS PRANCHAS A0 REGULAMENTARES (NBR 10068 / NBR 6492)
+    #    FOLHA 03/03: SEÇÕES TRANSVERSAIS (A, B, C...) - 2 COLUNAS DE 5 SEÇÕES (ESCALA 1:200)
+    #    FOLHA 02/03: PERFIS LONGITUDINAIS VIÁRIOS COM GUITARRA (ESCALA H=1:1.000 / V=1:100)
     # =========================================================================
-    banner_space = 18.0 * s
+    banner_space = 14.0 * s
 
-    # Espaçamento vertical da Coluna 1 (Transversais)
-    max_h_above = max(sec_heights_above) if sec_heights_above else (20.0 * s)
-    max_h_below = max(sec_heights_below) if sec_heights_below else (12.0 * s)
-    if raw_espacamento is not None:
-        try:
-            val_user = float(raw_espacamento)
-            gap_livre = max(val_user, 45.0 * s)
-        except:
-            gap_livre = max(max_h_above * 0.85 + 50.0 * s, 75.0 * s)
-    else:
-        gap_livre = max(max_h_above * 0.85 + 50.0 * s, 75.0 * s)
+    # Organização das Seções Transversais em 2 Colunas para caber perfeitamente na Folha A0 (237.8 x 168.2 m a 1:200)
+    # Coluna 1 (Seções A a E): base_x = orig_x + 8.0*s
+    # Coluna 2 (Seções F a J): base_x = orig_x + 104.0*s
+    # Carimbo oficial e Legenda: base_x = orig_x + 200.8*s a 235.8*s
+    num_half = (num_secoes + 1) // 2 if num_secoes > 5 else num_secoes
+    sec_base_xs = []
+    sec_base_ys = []
+    y_start_sec = orig_y - 30.0 * s
+    pitch_sec_y = 28.5 * s
 
-    espacamento_y = max_h_below + banner_space + gap_livre + max_h_above
-    sec_base_ys = [orig_y - i * espacamento_y for i in range(num_secoes)]
+    for i in range(num_secoes):
+        if num_secoes <= 5:
+            col_i = 0
+            row_i = i
+        else:
+            col_i = 0 if i < num_half else 1
+            row_i = i if i < num_half else (i - num_half)
+        bx = orig_x + (8.0 * s if col_i == 0 else 104.0 * s)
+        by = y_start_sec - row_i * pitch_sec_y
+        sec_base_xs.append(bx)
+        sec_base_ys.append(by)
+
+    # Espaçamento vertical de segurança para compatibilidade legada
+    espacamento_y = pitch_sec_y
     max_w_t = max([t['total_ext'] for t in sec_terrain_info] or [120.0])
 
-    # Espaçamento vertical da Coluna 2: Perfis Longitudinais Viários com Guitarra (H=1:1.000 / V=1:100 - Ev=10x)
+    # Folha 02/03: Perfis Longitudinais das Vias com Guitarra (H=1:1.000 / V=1:100 - Ev=10x)
+    # Dimensões A0 a 1:1.000: 1189.0 x 841.0 m. Posicionada à direita da Folha 03 com folga ampla (248m)
+    folha2_orig_x = orig_x + 248.0 * s
+    folha2_orig_y = orig_y - 841.0 * s
     h_guitarra_est = 41.0 * s
+    sec_v_base_xs = [folha2_orig_x + 50.0 * s for _ in range(num_verticais)]
     sec_v_base_ys = []
-    y_cursor_v = orig_y - 20.0 * s
+    y_top_v_datum = orig_y - 130.0 * s
+    pitch_v = 145.0 * s
     for j in range(num_verticais):
-        t_info_j = sec_v_terrain_info[j]
-        h_prof_j = (t_info_j['sec_h'] + 2.0) * ev_long + 20.0 * s
-        datum_y_j = y_cursor_v - h_prof_j
+        datum_y_j = y_top_v_datum - j * pitch_v
         sec_v_base_ys.append(datum_y_j)
-        y_cursor_v = datum_y_j - h_guitarra_est - 45.0 * s
-    espacamento_y_v = (sec_v_base_ys[0] - sec_v_base_ys[1]) if len(sec_v_base_ys) >= 2 else (100.0 * s)
-    max_w_v = max([t['total_ext'] for t in sec_v_terrain_info] or [120.0])
 
-    # Posição X da Coluna 2 (à direita da Coluna 1 com folga ampla de visualização)
-    col2_x = orig_x + max_w_t + max(65.0 * s, 45.0)
+    espacamento_y_v = pitch_v
+    col2_x = folha2_orig_x + 50.0 * s
+    max_w_v = max([t['total_ext'] for t in sec_v_terrain_info] or [120.0])
 
     # =========================================================================
     # 3. MAPEAMENTO UNIVERSAL DE CURVAS DE PROJETO / LINHAS DELIMITADORAS
@@ -4414,7 +4760,7 @@ def run():
     for i in range(num_secoes):
         all_targets.append({
             'key': ('T', i),
-            'base_x': orig_x,
+            'base_x': sec_base_xs[i],
             'base_y': sec_base_ys[i],
             'total_ext': sec_terrain_info[i]['total_ext'],
             'sec_h': sec_terrain_info[i]['sec_h']
@@ -4422,12 +4768,11 @@ def run():
     for j in range(num_verticais):
         all_targets.append({
             'key': ('V', j),
-            'base_x': col2_x,
+            'base_x': sec_v_base_xs[j],
             'base_y': sec_v_base_ys[j],
             'total_ext': sec_v_terrain_info[j]['total_ext'],
             'sec_h': sec_v_terrain_info[j]['sec_h']
         })
-
     raw_projeto_long = globals().get('LinhaDelimitadoraLongitudinal', globals().get('ProjetoLongitudinal', globals().get('DelimitadoraLongitudinal', globals().get('GreideLongitudinal', None))))
     all_project_curves = [to_rhino_curve(c) for c in (to_list(raw_projeto) + to_list(raw_projeto_long)) if to_rhino_curve(c) is not None and not getattr(to_rhino_curve(c), 'IsClosed', False)]
 
@@ -4439,7 +4784,7 @@ def run():
     sec_data_list = []
     for idx_s, t_info in enumerate(sec_terrain_info):
         lbl = labels_t[idx_s]
-        base_x = orig_x
+        base_x = sec_base_xs[idx_s]
         base_y = sec_base_ys[idx_s]
         crv_p, curve_base_y = matched_curves_map.get(('T', idx_s), (None, base_y))
 
@@ -4459,7 +4804,7 @@ def run():
     sec_v_data_list = []
     for idx_v, t_info_v in enumerate(sec_v_terrain_info):
         lbl_v = labels_v[idx_v]
-        base_x_v = col2_x
+        base_x_v = sec_v_base_xs[idx_v]
         base_y_v = sec_v_base_ys[idx_v]
         crv_p_v, curve_base_y_v = matched_curves_map.get(('V', idx_v), (None, base_y_v))
 
@@ -4687,10 +5032,10 @@ def run():
     cor_corte  = System.Drawing.Color.FromArgb(245, 130, 32)
     cor_aterro = System.Drawing.Color.FromArgb(46, 204, 113)
 
-    # 7.1 Column 1 Header: CROSS SECTIONS
-    p_hdr_col1 = rg.Point3d(orig_x, orig_y + max_h_above + 14.5 * s, 0.0)
-    t_hdr1 = make_text_geometry("SEÇÕES TRANSVERSAIS (A - A, B - B...)", p_hdr_col1, 2.0 * s, rg.TextJustification.BottomLeft, s)
-    p_sub_hdr1 = rg.Point3d(orig_x, orig_y + max_h_above + 12.0 * s, 0.0)
+    # 7.1 Cabeçalho da Folha 03 (Seções Transversais em 2 Colunas A0)
+    p_hdr_col1 = rg.Point3d(orig_x + 8.0 * s, orig_y - 14.0 * s, 0.0)
+    t_hdr1 = make_text_geometry("SEÇÕES TRANSVERSAIS DE TERRAPLENAGEM (COLUNAS A-E e F-J)", p_hdr_col1, 1.8 * s, rg.TextJustification.BottomLeft, s)
+    p_sub_hdr1 = rg.Point3d(orig_x + 8.0 * s, orig_y - 18.0 * s, 0.0)
     sub_hdr1 = make_text_geometry("Perfis Topográficos e de Terraplenagem | Representação Executiva NBR 6492", p_sub_hdr1, 0.90 * s, rg.TextJustification.BottomLeft, s)
     desenho_completo_secoes_2d.extend(t_hdr1)
     desenho_completo_secoes_2d.extend(sub_hdr1)
@@ -4700,7 +5045,7 @@ def run():
     # Rendering of each Cross Section
     for idx_s, s_data in enumerate(sec_data_list):
         lbl = labels_t[idx_s]
-        base_x = orig_x
+        base_x = sec_base_xs[idx_s]
         base_y = sec_base_ys[idx_s]
         crv_aln_3d = lista_alinhadas[idx_s]
 
@@ -4750,37 +5095,44 @@ def run():
                 nota_t = ""
 
             next_sec = sec_data_list[idx_s + 1]
+            next_base_x = sec_base_xs[idx_s + 1]
+            next_base_y = sec_base_ys[idx_s + 1]
             next_datum = math.floor(next_sec['z_min'] - 2.0)
             next_h_top = (next_sec['z_max'] - next_datum) + 16.0 * s
             y_bot_current = base_y - 12.0 * s
-            y_top_next = (base_y - espacamento_y) + next_h_top
-            y_banner = (y_bot_current + y_top_next) / 2.0
-            x_banner = base_x + s_data['total_ext'] / 2.0
+            if abs(next_base_x - base_x) < 5.0 * s:
+                y_top_next = next_base_y + next_h_top
+                y_banner = (y_bot_current + y_top_next) / 2.0
+                x_banner = base_x + s_data['total_ext'] / 2.0
+            else:
+                y_banner = y_bot_current - 6.0 * s
+                x_banner = base_x + s_data['total_ext'] / 2.0
 
             banner_geoms, _ = make_mass_haul_banner(x_banner, y_banner, lbl, lbl_prox, d_t, vc_t, va_t, s_t, nota_t, s)
             desenho_completo_secoes_2d.extend(banner_geoms)
             desenho_secoes_t_only.extend(banner_geoms)
 
-    # 7.1.1 Enquadramento em Prancha Técnica Regulamentar A1/A0 para Seções Transversais (NBR 10068 / NBR 6492)
+    # 7.1.1 ENQUADRAMENTO EM PRANCHA REGULAMENTAR A0 (FOLHA 03/03) - ESCALA 1:200
+    #     Dimensões A0 a 1:200: 237.80 x 168.20 m.
+    #     10 Seções organizadas em 2 Colunas de 5 seções + Carimbo Oficial de Vargem Grande Paulista.
     prancha_secoes_geoms = []
     if num_secoes >= 1:
-        min_sec_x = orig_x - 10.0 * s
-        max_sec_x = orig_x + max_w_t + 54.0 * s
-        min_sec_y = sec_base_ys[-1] - 42.0 * s
-        max_sec_y = orig_y + 30.0 * s
-        prancha_secoes_geoms = draw_technical_sheet_frame(
-            min_sec_x, min_sec_y, max_sec_x, max_sec_y,
+        f3_x0 = orig_x
+        f3_y0 = orig_y - 168.2 * s
+        prancha_secoes_geoms = draw_standard_a0_sheet(
+            f3_x0, f3_y0, 200.0,
             "SEÇÕES TRANSVERSAIS DE TERRAPLENAGEM (EIXOS A A J)",
-            "FOLHA 03/03", "1:200", s=s, is_longitudinal=False
+            "FOLHA 03/03", "1 / 200", s=s, is_planta=False, is_longitudinal=False,
+            volume_summary=global_vol_summary
         )
         desenho_completo_secoes_2d.extend(prancha_secoes_geoms)
         desenho_secoes_t_only.extend(prancha_secoes_geoms)
 
-    # 7.2 Column 2 Header and Rendering: PERFIS LONGITUDINAIS COM GUITARRA (EIXOS 1 A 5)
+    # 7.2 Cabeçalho da Folha 02 (Perfis Longitudinais Viários A0)
     if num_verticais >= 1:
-        p_hdr_col2 = rg.Point3d(col2_x, orig_y + 16.0 * s, 0.0)
-        t_hdr2 = make_text_geometry("PERFIS LONGITUDINAIS VIÁRIOS COM GUITARRA (EIXOS 1 A 5)", p_hdr_col2, 2.2 * s, rg.TextJustification.BottomLeft, s)
-        p_sub_hdr2 = rg.Point3d(col2_x, orig_y + 13.0 * s, 0.0)
+        p_hdr_col2 = rg.Point3d(folha2_orig_x + 50.0 * s, orig_y - 35.0 * s, 0.0)
+        t_hdr2 = make_text_geometry("PERFIS LONGITUDINAIS VIÁRIOS COM GUITARRA (EIXOS 1 A 5)", p_hdr_col2, 4.0 * s, rg.TextJustification.BottomLeft, s)
+        p_sub_hdr2 = rg.Point3d(folha2_orig_x + 50.0 * s, orig_y - 45.0 * s, 0.0)
         sub_hdr2 = make_text_geometry("Escalas: H=1:1.000 / V=1:100 (Exagero: 10x) | Grade Técnica Normativa com Cota TN, Greide, Alturas, Estacas e PIVs", p_sub_hdr2, 0.95 * s, rg.TextJustification.BottomLeft, s)
         desenho_completo_secoes_2d.extend(t_hdr2)
         desenho_completo_secoes_2d.extend(sub_hdr2)
@@ -4789,7 +5141,7 @@ def run():
 
         for idx_v, s_data_v in enumerate(sec_v_data_list):
             lbl_v = labels_v[idx_v]
-            base_x_v = col2_x
+            base_x_v = sec_v_base_xs[idx_v]
             base_y_v = sec_v_base_ys[idx_v]
             crv_aln_3d_v = lista_verticais[idx_v]
 
@@ -4851,16 +5203,17 @@ def run():
                 desenho_completo_secoes_2d.extend(banner_geoms_v)
                 desenho_secoes_v_only.extend(banner_geoms_v)
 
-        # Enquadramento em Prancha Técnica Regulamentar A1/A0 para Perfis Longitudinais Viários com Guitarra
+        # ENQUADRAMENTO EM PRANCHA REGULAMENTAR A0 (FOLHA 02/03) - ESCALA H=1:1.000 / V=1:100
+        # Dimensões A0 a 1:1.000: 1189.00 x 841.00 m.
+        # 5 Perfis Longitudinais com Guitarra Completa + Carimbo Oficial de Vargem Grande Paulista.
         if num_verticais >= 1 and sec_v_base_ys:
-            min_v_x = col2_x - 42.0 * s
-            max_v_x = col2_x + max_w_v + 15.0 * s
-            min_v_y = sec_v_base_ys[-1] - 52.0 * s
-            max_v_y = orig_y + 30.0 * s
-            prancha_long_geoms = draw_technical_sheet_frame(
-                min_v_x, min_v_y, max_v_x, max_v_y,
+            f2_x0 = folha2_orig_x
+            f2_y0 = folha2_orig_y
+            prancha_long_geoms = draw_standard_a0_sheet(
+                f2_x0, f2_y0, 1000.0,
                 "PERFIS LONGITUDINAIS DAS VIAS COM GUITARRA (EIXOS 1 A 5)",
-                "FOLHA 02/03", "H=1:1.000 / V=1:100", s=s, is_longitudinal=True
+                "FOLHA 02/03", "H=1:1.000 / V=1:100", s=s, is_planta=False, is_longitudinal=True,
+                volume_summary=global_vol_summary
             )
             desenho_completo_secoes_2d.extend(prancha_long_geoms)
             desenho_secoes_v_only.extend(prancha_long_geoms)
@@ -5448,7 +5801,9 @@ def run():
             modelo_3d_completo.append(crv)
 
     # 9.5 Enquadramento em Prancha Técnica Regulamentar A1/A0 para Planta Geral (NBR 10068 / NBR 6492)
-    # PRANCHA 01 (FOLHA 01/03): PLANTA GERAL DE TERRAPLENAGEM (Escala 1:1.000)
+    # ENQUADRAMENTO EM PRANCHA REGULAMENTAR A0 (FOLHA 01/03) - ESCALA 1:500
+    # Dimensões A0 a 1:500: 594.50 x 420.50 m.
+    # Planta Geral de Terraplenagem e Sistema Viário + Tabela de Roteiro Perimétrico (18 Vértices) + Carimbo Oficial.
     prancha_planta_geoms = []
     min_plan_x = 1e12; max_plan_x = -1e12
     min_plan_y = 1e12; max_plan_y = -1e12
@@ -5462,13 +5817,16 @@ def run():
                 if bb_p.Max.Y > max_plan_y: max_plan_y = bb_p.Max.Y
 
     if min_plan_x < max_plan_x and min_plan_y < max_plan_y:
-        pad_x = 22.0 * s
-        pad_y = 22.0 * s
-        prancha_planta_geoms = draw_technical_sheet_frame(
-            min_plan_x - pad_x, min_plan_y - pad_y,
-            max_plan_x + pad_x, max_plan_y + pad_y,
+        f1_w = 594.5 * s
+        f1_h = 420.5 * s
+        f1_x0 = min(min_plan_x - 38.0 * s, 292895.0)
+        cy_plan = (min_plan_y + max_plan_y) / 2.0
+        f1_y0 = cy_plan - (f1_h / 2.0)
+        prancha_planta_geoms = draw_standard_a0_sheet(
+            f1_x0, f1_y0, 500.0,
             "PLANTA GERAL DE TERRAPLENAGEM & SISTEMA VIÁRIO",
-            "FOLHA 01/03", "1:1.000", s=s, is_longitudinal=False
+            "FOLHA 01/03", "1 / 500", s=s, is_planta=True, is_longitudinal=False,
+            volume_summary=global_vol_summary, draw_perimeter=True
         )
         planta_baixa_geoms.extend(prancha_planta_geoms)
 
