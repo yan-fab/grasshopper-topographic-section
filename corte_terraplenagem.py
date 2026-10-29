@@ -1097,13 +1097,29 @@ def generate_stroke_text(text_str, pt, height, justification=None, plane=None):
     return curves
 
 def make_text_geometry(text_str, pt, height, justification=None, s=1.0, plane=None):
-    """Generates clean, lightweight 2D vector curves for technical text (Stroke Vector Font Engine).
-    100% autonomous execution in Python, immune to null Viewport or DimStyle crashes in Rhino 8 / .NET Core.
+    """Generates clean, lightweight 2D vector curves for technical text (Stroke Vector Font Engine)
+    and native Rhino.Geometry.TextEntity objects for SelText selection and baking in Rhino 8.
     """
     if text_str is None: return []
     text_str = str(text_str)
     if not text_str: return []
-    return generate_stroke_text(text_str, pt, height, justification, plane)
+    curves = generate_stroke_text(text_str, pt, height, justification, plane)
+    try:
+        te = rg.TextEntity()
+        te.PlainText = text_str
+        if plane is not None:
+            te.Plane = plane
+        else:
+            te.Plane = rg.Plane(rg.Point3d(pt.X, pt.Y, pt.Z), rg.Vector3d.XAxis, rg.Vector3d.YAxis)
+        te.TextHeight = float(height)
+        if justification is not None:
+            te.Justification = justification
+        else:
+            te.Justification = rg.TextJustification.MiddleCenter
+        curves.append(te)
+    except:
+        pass
+    return curves
 
 make_text_entity = make_text_geometry
 
@@ -1414,6 +1430,208 @@ def draw_quadrant_badge(p_cen, txt_str, s=1.0, plane_ref=None):
 # NORMATIVE FUNCTIONS: 20M ROAD STATIONING, SLOPE TEETH, CONTOURS & CLEARANCE
 # (ABNT NBR 13.133, NBR 6492, DNIT & LEI FEDERAL 6.766/1979)
 # =============================================================================
+
+
+def draw_linear_graphic_scale(p_orig, s=1.0):
+    """Desenha escala gráfica linear de 0 a 20m com blocos alternados preto e branco."""
+    geoms = []
+    blocks = [0, 5, 10, 20]
+    h_bar = 1.6 * s
+    for k in range(len(blocks) - 1):
+        b0 = blocks[k] * s
+        b1 = blocks[k+1] * s
+        p0 = p_orig + rg.Vector3d(b0, 0, 0)
+        p1 = p_orig + rg.Vector3d(b1, 0, 0)
+        p2 = p_orig + rg.Vector3d(b1, h_bar, 0)
+        p3 = p_orig + rg.Vector3d(b0, h_bar, 0)
+        cor_b = System.Drawing.Color.Black if (k % 2 == 0) else System.Drawing.Color.White
+        m_b = make_box_background_mesh(p0, p1, p2, p3, cor_b)
+        if m_b: geoms.append(m_b)
+        geoms.append(rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve())
+        geoms.extend(make_text_geometry("{}m".format(blocks[k]), p0 - rg.Vector3d(0, 1.2*s, 0), 0.70*s, rg.TextJustification.MiddleCenter, s))
+    p_last = p_orig + rg.Vector3d(blocks[-1] * s, 0, 0)
+    geoms.extend(make_text_geometry("{}m".format(blocks[-1]), p_last - rg.Vector3d(0, 1.2*s, 0), 0.70*s, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("ESCALA GRÁFICA LINEAR", p_orig + rg.Vector3d((blocks[-1]*s)/2.0, h_bar + 2.0*s, 0), 0.75*s, rg.TextJustification.MiddleCenter, s))
+    return geoms
+
+def draw_technical_sheet_frame(min_x, min_y, max_x, max_y, sheet_title, sheet_num, scale_str, s=1.0, is_longitudinal=False):
+    """
+    Desenha a moldura regulamentar de prancha técnica (NBR 10068 / NBR 6492)
+    com margem de encadernação de 25mm, carimbo/selo oficial completo,
+    escala gráfica linear, notas gerais e tabela de convenções.
+    """
+    geoms = []
+    pad_l = 25.0 * s
+    pad_r = 10.0 * s
+    pad_t = 12.0 * s
+    pad_b = 10.0 * s
+
+    x0 = min_x - pad_l
+    y0 = min_y - pad_b
+    x1 = max_x + pad_r
+    y1 = max_y + pad_t
+
+    # 1. Moldura Externa e Interna (com margem de 25mm à esquerda)
+    m_ext = rg.Polyline([rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0), rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0), rg.Point3d(x0, y0, 0)]).ToPolylineCurve()
+    m_int = rg.Polyline([rg.Point3d(x0 + 1.5*s, y0 + 1.5*s, 0), rg.Point3d(x1 - 1.5*s, y0 + 1.5*s, 0), rg.Point3d(x1 - 1.5*s, y1 - 1.5*s, 0), rg.Point3d(x0 + 1.5*s, y1 - 1.5*s, 0), rg.Point3d(x0 + 1.5*s, y0 + 1.5*s, 0)]).ToPolylineCurve()
+    geoms.extend([m_ext, m_int])
+
+    # 2. Selo Técnico / Carimbo Oficial ABNT no Canto Inferior Direito
+    w_selo = 68.0 * s
+    h_selo = 38.0 * s
+    xs0 = x1 - 1.5*s - w_selo
+    ys0 = y0 + 1.5*s
+    xs1 = x1 - 1.5*s
+    ys1 = ys0 + h_selo
+
+    selo_box = rg.Polyline([rg.Point3d(xs0, ys0, 0), rg.Point3d(xs1, ys0, 0), rg.Point3d(xs1, ys1, 0), rg.Point3d(xs0, ys1, 0), rg.Point3d(xs0, ys0, 0)]).ToPolylineCurve()
+    geoms.append(selo_box)
+    bg_selo = make_box_background_mesh(rg.Point3d(xs0, ys0, 0), rg.Point3d(xs1, ys0, 0), rg.Point3d(xs1, ys1, 0), rg.Point3d(xs0, ys1, 0), System.Drawing.Color.FromArgb(250, 250, 250))
+    if bg_selo: geoms.append(bg_selo)
+
+    y_div1 = ys0 + 8.0 * s
+    y_div2 = ys0 + 16.0 * s
+    y_div3 = ys0 + 26.0 * s
+    for yd in [y_div1, y_div2, y_div3]:
+        geoms.append(rg.LineCurve(rg.Point3d(xs0, yd, 0), rg.Point3d(xs1, yd, 0)))
+
+    x_col_mid = xs0 + w_selo * 0.62
+    geoms.append(rg.LineCurve(rg.Point3d(x_col_mid, ys0, 0), rg.Point3d(x_col_mid, y_div2, 0)))
+
+    # Textos do Selo
+    geoms.extend(make_text_geometry("PROJETO EXECUTIVO DE TERRAPLENAGEM & VIÁRIO", rg.Point3d(xs0 + 2.0*s, ys1 - 2.8*s, 0), 1.15*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(sheet_title, rg.Point3d(xs0 + 2.0*s, ys1 - 5.8*s, 0), 1.45*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Imóvel: Chácara Santo Antonio - Cotia/SP | Matrícula nº 30.901", rg.Point3d(xs0 + 2.0*s, ys1 - 8.6*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Proprietária: Nicole Yukie Pisciottano | Área: 35.087,73 m²", rg.Point3d(xs0 + 2.0*s, ys1 - 10.8*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+
+    geoms.extend(make_text_geometry("Levantamento Topográfico Cadastral / RT:", rg.Point3d(xs0 + 2.0*s, y_div3 - 2.8*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Verônica Bueno Luz Camargo - TRT CFT2605882298", rg.Point3d(xs0 + 2.0*s, y_div3 - 5.2*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("Método: Seções Transversais da AGPTEA / NBR 6492 / DNIT", rg.Point3d(xs0 + 2.0*s, y_div3 - 7.6*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
+
+    geoms.extend(make_text_geometry("ESCALA:", rg.Point3d(xs0 + 2.0*s, y_div2 - 2.8*s, 0), 0.70*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(scale_str, rg.Point3d(xs0 + 2.0*s, y_div2 - 6.0*s, 0), 1.10*s, rg.TextJustification.BottomLeft, s))
+
+    geoms.extend(make_text_geometry("FOLHA:", rg.Point3d(x_col_mid + 2.0*s, y_div2 - 2.8*s, 0), 0.70*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(sheet_num, rg.Point3d(x_col_mid + 2.0*s, y_div2 - 6.0*s, 0), 1.40*s, rg.TextJustification.BottomLeft, s))
+
+    geoms.extend(make_text_geometry("DATA: OUT/2026 | SISTEMA: UTM SIRGAS 2000 FUSO 23S", rg.Point3d(xs0 + 2.0*s, ys0 + 2.8*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
+
+    # 3. Tabela de Convenções Técnicas (acima do selo)
+    w_leg = w_selo
+    h_leg = 36.0 * s
+    xl0 = xs0
+    yl0 = ys1 + 4.0 * s
+    xl1 = xs1
+    yl1 = yl0 + h_leg
+
+    leg_box = rg.Polyline([rg.Point3d(xl0, yl0, 0), rg.Point3d(xl1, yl0, 0), rg.Point3d(xl1, yl1, 0), rg.Point3d(xl0, yl1, 0), rg.Point3d(xl0, yl0, 0)]).ToPolylineCurve()
+    geoms.append(leg_box)
+    bg_leg = make_box_background_mesh(rg.Point3d(xl0, yl0, 0), rg.Point3d(xl1, yl0, 0), rg.Point3d(xl1, yl1, 0), rg.Point3d(xl0, yl1, 0), System.Drawing.Color.FromArgb(250, 250, 250))
+    if bg_leg: geoms.append(bg_leg)
+
+    geoms.extend(make_text_geometry("CONVENÇÕES TÉCNICAS & LEGENDA", rg.Point3d(xl0 + w_leg/2.0, yl1 - 3.2*s, 0), 1.05*s, rg.TextJustification.MiddleCenter, s))
+    geoms.append(rg.LineCurve(rg.Point3d(xl0, yl1 - 5.5*s, 0), rg.Point3d(xl1, yl1 - 5.5*s, 0)))
+
+    items_leg = [
+        ("TERRENO NATURAL (TN)", System.Drawing.Color.FromArgb(20, 20, 20), False),
+        ("GREIDE DE PROJETO", System.Drawing.Color.FromArgb(200, 30, 30), False),
+        ("ZONA DE CORTE (ESCAVAÇÃO)", System.Drawing.Color.FromArgb(230, 92, 0), True),
+        ("ZONA DE ATERRO (COMPENSAÇÃO)", System.Drawing.Color.FromArgb(46, 139, 87), True),
+        ("LINHA NEUTRA (COTA ZERO)", System.Drawing.Color.FromArgb(240, 180, 0), False),
+        ("FAIXA DE SEGURANÇA / DIVISA", System.Drawing.Color.FromArgb(180, 40, 200), False),
+        ("DENTES DE TALUDE (NBR 6492)", System.Drawing.Color.FromArgb(80, 80, 80), False),
+    ]
+    for idx_leg, (txt_l, cor_l, is_mesh) in enumerate(items_leg):
+        y_item = yl1 - 8.5*s - idx_leg * 4.2*s
+        p_sw_0 = rg.Point3d(xl0 + 3.0*s, y_item - 1.2*s, 0)
+        p_sw_1 = rg.Point3d(xl0 + 10.0*s, y_item - 1.2*s, 0)
+        p_sw_2 = rg.Point3d(xl0 + 10.0*s, y_item + 1.2*s, 0)
+        p_sw_3 = rg.Point3d(xl0 + 3.0*s, y_item + 1.2*s, 0)
+        if is_mesh:
+            m_sw = make_box_background_mesh(p_sw_0, p_sw_1, p_sw_2, p_sw_3, cor_l)
+            if m_sw: geoms.append(m_sw)
+            geoms.append(rg.Polyline([p_sw_0, p_sw_1, p_sw_2, p_sw_3, p_sw_0]).ToPolylineCurve())
+        else:
+            geoms.append(rg.LineCurve(rg.Point3d(xl0 + 3.0*s, y_item, 0), rg.Point3d(xl0 + 10.0*s, y_item, 0)))
+        geoms.extend(make_text_geometry(txt_l, rg.Point3d(xl0 + 12.0*s, y_item, 0), 0.78*s, rg.TextJustification.MiddleLeft, s))
+
+    # 4. Escala Gráfica Linear
+    p_sc_orig = rg.Point3d(xs0 - 32.0*s, ys0 + 4.0*s, 0)
+    geoms.extend(draw_linear_graphic_scale(p_sc_orig, s=s))
+
+    return geoms
+
+def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1.0):
+    """
+    Desenha a ficha técnica / carimbo executivo posicionado exatamente AO LADO da seção,
+    contendo nome da seção, estaca, extensão, área de corte, área de aterro, saldo e cotas.
+    """
+    geoms = []
+    w_card = 44.0 * s
+    h_card = 28.0 * s
+    x0 = base_x + total_ext + 4.5 * s
+    y0 = base_y
+    x1 = x0 + w_card
+    y1 = y0 + h_card
+
+    p0 = rg.Point3d(x0, y0, 0)
+    p1 = rg.Point3d(x1, y0, 0)
+    p2 = rg.Point3d(x1, y1, 0)
+    p3 = rg.Point3d(x0, y1, 0)
+    bg_m = make_box_background_mesh(p0, p1, p2, p3, System.Drawing.Color.FromArgb(252, 252, 252))
+    if bg_m: geoms.append(bg_m)
+    geoms.append(rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve())
+
+    y_hdr = y1 - 7.5 * s
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)))
+    y_corte = y_hdr - 6.5 * s
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_corte, 0), rg.Point3d(x1, y_corte, 0)))
+    y_aterro = y_corte - 6.5 * s
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_aterro, 0), rg.Point3d(x1, y_aterro, 0)))
+
+    tit_str = "SEÇÃO TRANSVERSAL {}".format(lbl)
+    geoms.extend(make_text_geometry(tit_str, rg.Point3d(x0 + 2.0*s, y1 - 3.2*s, 0), 1.25*s, rg.TextJustification.BottomLeft, s))
+    sub_str = "Extensão: {:.2f}m".format(total_ext).replace('.', ',')
+    if s_data.get('estaca_str'):
+        sub_str = "Estaca: {} | {}".format(s_data['estaca_str'], sub_str)
+    geoms.extend(make_text_geometry(sub_str, rg.Point3d(x0 + 2.0*s, y1 - 6.2*s, 0), 0.78*s, rg.TextJustification.BottomLeft, s))
+
+    area_corte = s_data.get('area_total_corte', 0.0)
+    h_corte = s_data.get('max_h_corte', 0.0)
+    txt_c1 = "ÁREA DE CORTE: {:.2f} m²".format(area_corte).replace('.', ',')
+    txt_c2 = "H. Máx Corte: {:.2f}m".format(h_corte).replace('.', ',')
+    p_sw_c0 = rg.Point3d(x0 + 2.0*s, y_hdr - 4.5*s, 0)
+    p_sw_c1 = rg.Point3d(x0 + 5.0*s, y_hdr - 4.5*s, 0)
+    p_sw_c2 = rg.Point3d(x0 + 5.0*s, y_hdr - 1.5*s, 0)
+    p_sw_c3 = rg.Point3d(x0 + 2.0*s, y_hdr - 1.5*s, 0)
+    m_sc = make_box_background_mesh(p_sw_c0, p_sw_c1, p_sw_c2, p_sw_c3, System.Drawing.Color.FromArgb(230, 92, 0))
+    if m_sc: geoms.append(m_sc)
+    geoms.extend(make_text_geometry(txt_c1, rg.Point3d(x0 + 6.5*s, y_hdr - 3.2*s, 0), 0.95*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_c2, rg.Point3d(x0 + 6.5*s, y_hdr - 5.5*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
+
+    area_aterro = s_data.get('area_total_aterro', 0.0)
+    h_aterro = s_data.get('max_h_aterro', 0.0)
+    txt_a1 = "ÁREA DE ATERRO: {:.2f} m²".format(area_aterro).replace('.', ',')
+    txt_a2 = "H. Máx Aterro: {:.2f}m".format(h_aterro).replace('.', ',')
+    p_sw_a0 = rg.Point3d(x0 + 2.0*s, y_corte - 4.5*s, 0)
+    p_sw_a1 = rg.Point3d(x0 + 5.0*s, y_corte - 4.5*s, 0)
+    p_sw_a2 = rg.Point3d(x0 + 5.0*s, y_corte - 1.5*s, 0)
+    p_sw_a3 = rg.Point3d(x0 + 2.0*s, y_corte - 1.5*s, 0)
+    m_sa = make_box_background_mesh(p_sw_a0, p_sw_a1, p_sw_a2, p_sw_a3, System.Drawing.Color.FromArgb(46, 139, 87))
+    if m_sa: geoms.append(m_sa)
+    geoms.extend(make_text_geometry(txt_a1, rg.Point3d(x0 + 6.5*s, y_corte - 3.2*s, 0), 0.95*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_a2, rg.Point3d(x0 + 6.5*s, y_corte - 5.5*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
+
+    saldo_sec = area_corte - area_aterro
+    if saldo_sec > 0.01:
+        txt_s = "SALDO LOCAL: +{:.2f} m² (Sobra de Corte)".format(saldo_sec).replace('.', ',')
+    elif saldo_sec < -0.01:
+        txt_s = "SALDO LOCAL: {:.2f} m² (Déficit de Aterro)".format(saldo_sec).replace('.', ',')
+    else:
+        txt_s = "SALDO LOCAL: 0,00 m² (Seção Compensada)"
+    geoms.extend(make_text_geometry(txt_s, rg.Point3d(x0 + 2.0*s, y_aterro - 4.0*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+
+    return geoms
 
 def draw_road_stationing_2d(crv, label_prefix="Est. ", step=20.0, s=1.0):
     """
@@ -3128,6 +3346,9 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
                 geoms_2d.append(rg.LineCurve(p_a_box_top, p_datum_conn))
                 geoms_2d.append(rg.Circle(p_datum_conn, 0.30 * s).ToNurbsCurve())
 
+        # Ficha Técnica Executiva posicionada exatamente AO LADO da seção (Nome, Estaca, Áreas de Corte/Aterro e Alturas)
+    side_card_geoms = draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=s)
+    geoms_2d.extend(side_card_geoms)
     return {
         'geoms_2d': geoms_2d,
         'poligonos_corte_2d': poligonos_corte_sec,
@@ -4387,6 +4608,21 @@ def run():
             desenho_completo_secoes_2d.extend(banner_geoms)
             desenho_secoes_t_only.extend(banner_geoms)
 
+    # 7.1.1 Enquadramento em Prancha Técnica Regulamentar A1/A0 para Seções Transversais (NBR 10068 / NBR 6492)
+    prancha_secoes_geoms = []
+    if num_secoes >= 1:
+        min_sec_x = orig_x - 10.0 * s
+        max_sec_x = orig_x + max_w_t + 54.0 * s
+        min_sec_y = sec_base_ys[-1] - 42.0 * s
+        max_sec_y = orig_y + 30.0 * s
+        prancha_secoes_geoms = draw_technical_sheet_frame(
+            min_sec_x, min_sec_y, max_sec_x, max_sec_y,
+            "SEÇÕES TRANSVERSAIS DE TERRAPLENAGEM (EIXOS A A J)",
+            "FOLHA 01/02", "1:200", s=s, is_longitudinal=False
+        )
+        desenho_completo_secoes_2d.extend(prancha_secoes_geoms)
+        desenho_secoes_t_only.extend(prancha_secoes_geoms)
+
     # 7.2 Column 2 Header and Rendering: PERFIS LONGITUDINAIS COM GUITARRA (EIXOS 1 A 5)
     if num_verticais >= 1:
         p_hdr_col2 = rg.Point3d(col2_x, orig_y + 16.0 * s, 0.0)
@@ -4462,9 +4698,25 @@ def run():
                 desenho_completo_secoes_2d.extend(banner_geoms_v)
                 desenho_secoes_v_only.extend(banner_geoms_v)
 
+        # Enquadramento em Prancha Técnica Regulamentar A1/A0 para Perfis Longitudinais Viários com Guitarra
+        if num_verticais >= 1 and sec_v_base_ys:
+            min_v_x = col2_x - 42.0 * s
+            max_v_x = col2_x + max_w_v + 15.0 * s
+            min_v_y = sec_v_base_ys[-1] - 52.0 * s
+            max_v_y = orig_y + 30.0 * s
+            prancha_long_geoms = draw_technical_sheet_frame(
+                min_v_x, min_v_y, max_v_x, max_v_y,
+                "PERFIS LONGITUDINAIS VIÁRIOS COM GUITARRA (EIXOS 1 A 5)",
+                "FOLHA 02/02", "H=1:1.000 / V=1:100", s=s, is_longitudinal=True
+            )
+            desenho_completo_secoes_2d.extend(prancha_long_geoms)
+            desenho_secoes_v_only.extend(prancha_long_geoms)
+
     # =========================================================================
     # 8. TECHNICAL PLAN VIEW (AXES, BUBBLES AND QUADRANTS)
     # =========================================================================
+    prancha_secoes_geoms = []
+    prancha_long_geoms = []
     planta_baixa_geoms = []
     estaqueamento_vias_geoms = []
     quads_2d_corte = []
@@ -5192,6 +5444,8 @@ def run():
     globals()['LinhaNeutra2D'] = linha_neutra_crvs
 
     linhas_estacas_crvs = [item['curve'] for item in estacas_normativas_info]
+    globals()['PranchaSecoesTransversais'] = prancha_secoes_geoms
+    globals()['PranchaPerfisLongitudinais'] = prancha_long_geoms
     globals()['LinhasEstacas20m'] = linhas_estacas_crvs
     globals()['Estacas20m'] = linhas_estacas_crvs
     globals()['SecoesEstacas20m'] = linhas_estacas_crvs
