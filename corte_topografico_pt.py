@@ -2959,6 +2959,414 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
     }
 
 
+def render_longitudinal_profile_with_guitarra(
+    s_data_v, lbl_v, base_x, base_y, s=1.0, ev=10.0, step_estaca=20.0,
+    cor_corte=None, cor_aterro=None, crv_aln_3d_v=None, axis_title_prefix="EIXO "
+):
+    """
+    Renders an executive 2D longitudinal roadway profile with vertical exaggeration Ev = 10.0
+    (Escalas H=1:1.000 / V=1:100) and the standard Brazilian civil engineering "guitarra"
+    (grade tabular inferior de dados DNIT / DER / NBR 6492) containing:
+    1. Declividades de cada rampa (%) e extensão horizontal dos trechos inclinados (m);
+    2. Curvas verticais de concordância parabólica nos PIVs (com PCV, PTV, Lv e flecha e);
+    3. Cota Vermelha (Greide Projetado) em cada estaca de 20m;
+    4. Cota do Terreno Natural em cada estaca de 20m;
+    5. Altura de Corte e Aterro em cada estaca;
+    6. Estaqueamento de 20 em 20 metros (Estaca 0, 1, 2, 3... e Estaca Final fracionária);
+    7. Hachura 2D de Corte (Laranja) e Aterro (Verde);
+    8. Marcações das interseções com as Seções Transversais (Seções A a J);
+    9. Sincronização espacial 3D com o modelo BIM.
+    """
+    clean_pts = s_data_v['clean_pts']
+    total_ext = s_data_v['total_ext']
+    get_proj_z = s_data_v['get_proj_z']
+    intersecs = s_data_v.get('intersecs', [])
+
+    geoms_2d = []
+    poligonos_corte_sec = []
+    poligonos_aterro_sec = []
+    quads_3d_corte_sec = []
+    quads_3d_aterro_sec = []
+    crv_gr_3d = None
+    poligonos_3d_corte_sec = []
+    poligonos_3d_aterro_sec = []
+
+    if cor_corte is None: cor_corte = System.Drawing.Color.FromArgb(245, 130, 32)
+    if cor_aterro is None: cor_aterro = System.Drawing.Color.FromArgb(46, 204, 113)
+
+    # 1. Datum e Elevações
+    z_tn_vals = [p[1].Z for p in clean_pts]
+    z_gr_vals = [get_proj_z(p[0]) for p in clean_pts]
+    all_z = z_tn_vals + z_gr_vals
+    z_min = min(all_z) if all_z else 0.0
+    z_max = max(all_z) if all_z else 10.0
+    z_datum = math.floor(z_min - 1.0)
+    delta_z = z_max - z_datum
+
+    def sample_tn_z(d_val):
+        d_c = max(0.0, min(total_ext, d_val))
+        for k in range(len(clean_pts) - 1):
+            d0 = clean_pts[k][0]
+            d1 = clean_pts[k+1][0]
+            if d0 <= d_c <= d1:
+                span = max(d1 - d0, 1e-4)
+                t = (d_c - d0) / span
+                return clean_pts[k][1].Z + t * (clean_pts[k+1][1].Z - clean_pts[k][1].Z)
+        return clean_pts[-1][1].Z if d_c >= clean_pts[-1][0] else clean_pts[0][1].Z
+
+    # 2. Tangentes de Greide, Declividades e PIVs
+    break_ds = [0.0]
+    for item_inter in intersecs:
+        d_inter = item_inter[0]
+        if 2.0 < d_inter < total_ext - 2.0:
+            break_ds.append(d_inter)
+    break_ds.append(total_ext)
+    break_ds = sorted(list(set([round(x, 2) for x in break_ds])))
+
+    tangents = []
+    for k in range(len(break_ds) - 1):
+        d0 = break_ds[k]
+        d1 = break_ds[k+1]
+        z0 = get_proj_z(d0)
+        z1 = get_proj_z(d1)
+        ext_t = max(d1 - d0, 0.1)
+        slope_pct = ((z1 - z0) / ext_t) * 100.0
+        tangents.append({
+            'd0': d0, 'd1': d1,
+            'z0': z0, 'z1': z1,
+            'ext': ext_t,
+            'slope': slope_pct
+        })
+
+    pivs = []
+    for k in range(len(tangents) - 1):
+        t1 = tangents[k]
+        t2 = tangents[k+1]
+        delta_i = t2['slope'] - t1['slope']
+        d_piv = t1['d1']
+        z_piv = t1['z1']
+        max_lv_allowed = min(t1['ext'], t2['ext']) * 0.75
+        lv = min(40.0 * s, max_lv_allowed)
+        if lv < 4.0: lv = max_lv_allowed
+        e = (lv * abs(delta_i)) / 800.0 if lv > 0 else 0.0
+        pivs.append({
+            'd': d_piv,
+            'z': z_piv,
+            'i1': t1['slope'],
+            'i2': t2['slope'],
+            'delta_i': delta_i,
+            'lv': lv,
+            'e': e,
+            'pcv_d': d_piv - lv / 2.0,
+            'ptv_d': d_piv + lv / 2.0,
+            'kind': "Cônava (Bacia)" if delta_i > 0 else "Convexa (Crista)"
+        })
+
+    # Função da cota do greide com concordâncias verticais parabólicas suaves nos PIVs
+    def get_parabolic_grade_z(d_val):
+        d_c = max(0.0, min(total_ext, d_val))
+        # Verifica se d_c está dentro de alguma curva vertical parabólica de PIV
+        for p in pivs:
+            if p['lv'] > 1.0 and p['pcv_d'] <= d_c <= p['ptv_d']:
+                x = d_c - p['pcv_d']
+                g1 = p['i1'] / 100.0
+                g2 = p['i2'] / 100.0
+                z_pcv = p['z'] - g1 * (p['lv'] / 2.0)
+                return z_pcv + g1 * x + ((g2 - g1) / (2.0 * p['lv'])) * (x ** 2)
+        return get_proj_z(d_c)
+
+    # 3. Estações / Estacas Normativas de 20 em 20 metros
+    stations = []
+    d_st = 0.0
+    st_idx = 0
+    while d_st <= total_ext + 1e-4:
+        z_tn_st = sample_tn_z(d_st)
+        z_gr_st = get_parabolic_grade_z(d_st)
+        diff_st = z_tn_st - z_gr_st
+        stations.append({
+            'idx': st_idx,
+            'd': d_st,
+            'label': "{}".format(st_idx),
+            'tag': "Est. {}".format(st_idx),
+            'z_tn': z_tn_st,
+            'z_gr': z_gr_st,
+            'corte': max(0.0, diff_st),
+            'aterro': max(0.0, -diff_st)
+        })
+        d_st += step_estaca
+        st_idx += 1
+
+    if total_ext - (d_st - step_estaca) > 0.5:
+        last_idx = int(total_ext // step_estaca)
+        rem = total_ext - (last_idx * step_estaca)
+        z_tn_st = sample_tn_z(total_ext)
+        z_gr_st = get_parabolic_grade_z(total_ext)
+        diff_st = z_tn_st - z_gr_st
+        lbl_fin = "{}+{:05.2f}".format(last_idx, rem).replace('.', ',')
+        stations.append({
+            'idx': last_idx,
+            'd': total_ext,
+            'label': lbl_fin,
+            'tag': "Est. {}".format(lbl_fin),
+            'z_tn': z_tn_st,
+            'z_gr': z_gr_st,
+            'corte': max(0.0, diff_st),
+            'aterro': max(0.0, -diff_st)
+        })
+
+    # =========================================================================
+    # 4. DESENHO DA GUITARRA (GRADE TABULAR INFERIOR DE DADOS)
+    # =========================================================================
+    w_hdr = 38.0 * s
+    h1 = 9.0 * s   # Declividades / Rampas
+    h2 = 8.0 * s   # Cota do Greide
+    h3 = 8.0 * s   # Cota do Terreno Natural
+    h4 = 8.0 * s   # Alturas Corte / Aterro
+    h5 = 8.0 * s   # Estaqueamento
+    h_guitarra = h1 + h2 + h3 + h4 + h5
+
+    y0 = base_y
+    y1 = y0 - h1
+    y2 = y1 - h2
+    y3 = y2 - h3
+    y4 = y3 - h4
+    y5 = y4 - h5
+
+    x_start = base_x - w_hdr
+    x_end = base_x + total_ext
+
+    # 4.1 Linhas horizontais da grade
+    for y_lev in [y0, y1, y2, y3, y4, y5]:
+        geoms_2d.append(rg.LineCurve(rg.Point3d(x_start, y_lev, 0.0), rg.Point3d(x_end, y_lev, 0.0)))
+
+    # 4.2 Bordas verticais da tabela
+    geoms_2d.append(rg.LineCurve(rg.Point3d(x_start, y0, 0.0), rg.Point3d(x_start, y5, 0.0)))
+    geoms_2d.append(rg.LineCurve(rg.Point3d(base_x, y0, 0.0), rg.Point3d(base_x, y5, 0.0)))
+    geoms_2d.append(rg.LineCurve(rg.Point3d(x_end, y0, 0.0), rg.Point3d(x_end, y5, 0.0)))
+
+    # 4.3 Títulos dos cabeçalhos à esquerda
+    header_rows = [
+        ("DECLIVIDADES / RAMPAS", (y0 + y1) / 2.0),
+        ("COTA DO GREIDE (PROJETO)", (y1 + y2) / 2.0),
+        ("COTA DO TERRENO NATURAL", (y2 + y3) / 2.0),
+        ("ALTURAS CORTE / ATERRO", (y3 + y4) / 2.0),
+        ("ESTAQUEAMENTO (20m)", (y4 + y5) / 2.0)
+    ]
+    for h_txt, h_y in header_rows:
+        p_hdr = rg.Point3d(base_x - (w_hdr / 2.0), h_y, 0.0)
+        geoms_2d.extend(make_text_geometry(h_txt, p_hdr, 0.85 * s, rg.TextJustification.MiddleCenter, s))
+
+    # 4.4 Colunas verticais em cada estaca de 20m e dados tabulados
+    pl_rot90 = rg.Plane(rg.Point3d.Origin, rg.Vector3d(0.0, 1.0, 0.0), rg.Vector3d(-1.0, 0.0, 0.0))
+
+    for st in stations:
+        x_st = base_x + st['d']
+        # Linha vertical divisória das estacas (da base da guitarra até a linha de cota do greide)
+        geoms_2d.append(rg.LineCurve(rg.Point3d(x_st, y1, 0.0), rg.Point3d(x_st, y5, 0.0)))
+
+        # Linha fina de chamada subindo do Datum até o Terreno Natural
+        y_tn_top = base_y + (st['z_tn'] - z_datum) * ev
+        geoms_2d.append(rg.LineCurve(rg.Point3d(x_st, y0, 0.0), rg.Point3d(x_st, y_tn_top, 0.0)))
+
+        # Faixa 2: Cota do Greide (Texto verticalizado a 90 graus)
+        p_gr = rg.Point3d(x_st, (y1 + y2) / 2.0, 0.0)
+        pl_gr = rg.Plane(p_gr, rg.Vector3d(0.0, 1.0, 0.0), rg.Vector3d(-1.0, 0.0, 0.0))
+        txt_gr = "{:.2f}".format(st['z_gr']).replace('.', ',')
+        geoms_2d.extend(make_text_geometry(txt_gr, p_gr, 0.80 * s, rg.TextJustification.MiddleCenter, s, plane=pl_gr))
+
+        # Faixa 3: Cota do Terreno Natural (Texto verticalizado a 90 graus)
+        p_tn = rg.Point3d(x_st, (y2 + y3) / 2.0, 0.0)
+        pl_tn = rg.Plane(p_tn, rg.Vector3d(0.0, 1.0, 0.0), rg.Vector3d(-1.0, 0.0, 0.0))
+        txt_tn = "{:.2f}".format(st['z_tn']).replace('.', ',')
+        geoms_2d.extend(make_text_geometry(txt_tn, p_tn, 0.80 * s, rg.TextJustification.MiddleCenter, s, plane=pl_tn))
+
+        # Faixa 4: Alturas de Corte / Aterro
+        p_alt = rg.Point3d(x_st, (y3 + y4) / 2.0, 0.0)
+        pl_alt = rg.Plane(p_alt, rg.Vector3d(0.0, 1.0, 0.0), rg.Vector3d(-1.0, 0.0, 0.0))
+        if st['corte'] > 0.01:
+            txt_alt = "+C: {:.2f}".format(st['corte']).replace('.', ',')
+        elif st['aterro'] > 0.01:
+            txt_alt = "-A: {:.2f}".format(st['aterro']).replace('.', ',')
+        else:
+            txt_alt = "0,00"
+        geoms_2d.extend(make_text_geometry(txt_alt, p_alt, 0.78 * s, rg.TextJustification.MiddleCenter, s, plane=pl_alt))
+
+        # Faixa 5: Estaqueamento
+        p_est = rg.Point3d(x_st, (y4 + y5) / 2.0 + 1.2 * s, 0.0)
+        geoms_2d.extend(make_text_geometry(st['label'], p_est, 0.85 * s, rg.TextJustification.MiddleCenter, s))
+        p_m = rg.Point3d(x_st, (y4 + y5) / 2.0 - 1.8 * s, 0.0)
+        geoms_2d.extend(make_text_geometry("{:.1f}m".format(st['d']).replace('.', ','), p_m, 0.65 * s, rg.TextJustification.MiddleCenter, s))
+
+    # 4.5 Faixa 1: Declividades, Rampas e Geometria dos Trechos Inclinados
+    for tg in tangents:
+        x_tg0 = base_x + tg['d0']
+        x_tg1 = base_x + tg['d1']
+        geoms_2d.append(rg.LineCurve(rg.Point3d(x_tg0, y0, 0.0), rg.Point3d(x_tg0, y1, 0.0)))
+        geoms_2d.append(rg.LineCurve(rg.Point3d(x_tg1, y0, 0.0), rg.Point3d(x_tg1, y1, 0.0)))
+
+        # Linha indicativa da rampa (diagonal ou horizontal)
+        if tg['slope'] > 0.2:
+            geoms_2d.append(rg.LineCurve(rg.Point3d(x_tg0 + 1.0 * s, y1 + 1.2 * s, 0.0), rg.Point3d(x_tg1 - 1.0 * s, y0 - 1.2 * s, 0.0)))
+        elif tg['slope'] < -0.2:
+            geoms_2d.append(rg.LineCurve(rg.Point3d(x_tg0 + 1.0 * s, y0 - 1.2 * s, 0.0), rg.Point3d(x_tg1 - 1.0 * s, y1 + 1.2 * s, 0.0)))
+        else:
+            geoms_2d.append(rg.LineCurve(rg.Point3d(x_tg0 + 1.0 * s, (y0 + y1) / 2.0, 0.0), rg.Point3d(x_tg1 - 1.0 * s, (y0 + y1) / 2.0, 0.0)))
+
+        # Rótulo da rampa
+        x_mid_tg = (x_tg0 + x_tg1) / 2.0
+        str_rampa = "i = {:+.2f}% | L = {:.1f}m".format(tg['slope'], tg['ext']).replace('.', ',')
+        p_txt_r = rg.Point3d(x_mid_tg, (y0 + y1) / 2.0, 0.0)
+        geoms_2d.extend(make_text_geometry(str_rampa, p_txt_r, 0.78 * s, rg.TextJustification.MiddleCenter, s))
+
+    # 4.6 Indicação de PIVs e Concordâncias Verticais
+    for p in pivs:
+        x_piv = base_x + p['d']
+        y_piv_top = base_y + (p['z'] - z_datum) * ev
+        # Triângulo indicador no PIV
+        tri_pts = [
+            rg.Point3d(x_piv - 1.2 * s, y_piv_top - 2.0 * s, 0.0),
+            rg.Point3d(x_piv + 1.2 * s, y_piv_top - 2.0 * s, 0.0),
+            rg.Point3d(x_piv, y_piv_top, 0.0),
+            rg.Point3d(x_piv - 1.2 * s, y_piv_top - 2.0 * s, 0.0)
+        ]
+        geoms_2d.append(rg.PolylineCurve(tri_pts))
+
+        # Texto descritivo do PIV
+        tag_piv = "PIV: Cota {:.2f}m | Lv={:.0f}m | e={:.2f}m [{}]".format(p['z'], p['lv'], p['e'], p['kind']).replace('.', ',')
+        p_tag_piv = rg.Point3d(x_piv, y_piv_top + 3.0 * s, 0.0)
+        geoms_2d.extend(make_text_geometry(tag_piv, p_tag_piv, 0.72 * s, rg.TextJustification.BottomCenter, s))
+
+    # =========================================================================
+    # 5. DESENHO DOS PERFIS (TN, GREIDE, HACHURAS DE CORTE/ATERRO)
+    # =========================================================================
+    n_samples = max(int(total_ext * 2), 60)
+    pts_tn_2d = []
+    pts_gr_2d = []
+
+    for i_pt in range(n_samples + 1):
+        d_val = (i_pt / float(n_samples)) * total_ext
+        x_2d = base_x + d_val
+        z_tn = sample_tn_z(d_val)
+        z_gr = get_parabolic_grade_z(d_val)
+        y_tn_2d = base_y + (z_tn - z_datum) * ev
+        y_gr_2d = base_y + (z_gr - z_datum) * ev
+        pts_tn_2d.append(rg.Point3d(x_2d, y_tn_2d, 0.0))
+        pts_gr_2d.append(rg.Point3d(x_2d, y_gr_2d, 0.0))
+
+    if len(pts_tn_2d) >= 2:
+        crv_tn_2d = rg.PolylineCurve(pts_tn_2d)
+        if crv_tn_2d and crv_tn_2d.IsValid:
+            geoms_2d.append(crv_tn_2d)
+
+    if len(pts_gr_2d) >= 2:
+        crv_gr_2d = rg.PolylineCurve(pts_gr_2d)
+        if crv_gr_2d and crv_gr_2d.IsValid:
+            geoms_2d.append(crv_gr_2d)
+
+    # 5.1 Preenchimento de Corte e Aterro em Malha 2D (Hachura)
+    for i_poly in range(n_samples):
+        p0_tn = pts_tn_2d[i_poly]
+        p1_tn = pts_tn_2d[i_poly + 1]
+        p0_gr = pts_gr_2d[i_poly]
+        p1_gr = pts_gr_2d[i_poly + 1]
+
+        diff0 = p0_tn.Y - p0_gr.Y
+        diff1 = p1_tn.Y - p1_gr.Y
+
+        if diff0 > 0.001 and diff1 > 0.001:
+            # Corte puro
+            m_c = rg.Mesh()
+            m_c.Vertices.Add(p0_tn.X, p0_tn.Y, 0.0)
+            m_c.Vertices.Add(p1_tn.X, p1_tn.Y, 0.0)
+            m_c.Vertices.Add(p1_gr.X, p1_gr.Y, 0.0)
+            m_c.Vertices.Add(p0_gr.X, p0_gr.Y, 0.0)
+            m_c.Faces.AddFace(0, 1, 2, 3)
+            for _ in range(4): m_c.VertexColors.Add(cor_corte)
+            geoms_2d.append(m_c)
+            poly_c = rg.PolylineCurve([p0_tn, p1_tn, p1_gr, p0_gr, p0_tn])
+            poligonos_corte_sec.append(poly_c)
+        elif diff0 < -0.001 and diff1 < -0.001:
+            # Aterro puro
+            m_a = rg.Mesh()
+            m_a.Vertices.Add(p0_gr.X, p0_gr.Y, 0.0)
+            m_a.Vertices.Add(p1_gr.X, p1_gr.Y, 0.0)
+            m_a.Vertices.Add(p1_tn.X, p1_tn.Y, 0.0)
+            m_a.Vertices.Add(p0_tn.X, p0_tn.Y, 0.0)
+            m_a.Faces.AddFace(0, 1, 2, 3)
+            for _ in range(4): m_a.VertexColors.Add(cor_aterro)
+            geoms_2d.append(m_a)
+            poly_a = rg.PolylineCurve([p0_gr, p1_gr, p1_tn, p0_tn, p0_gr])
+            poligonos_aterro_sec.append(poly_a)
+
+    # 5.2 Interseções com as Seções Transversais (Seções A a J)
+    for d_inter, idx_t, lbl_t in intersecs:
+        x_inter = base_x + d_inter
+        z_tn_inter = sample_tn_z(d_inter)
+        y_inter_top = base_y + (z_tn_inter - z_datum) * ev + 6.0 * s
+
+        # Linha vertical tracejada do cruzamento
+        geoms_2d.append(rg.LineCurve(rg.Point3d(x_inter, base_y, 0.0), rg.Point3d(x_inter, y_inter_top, 0.0)))
+        # Balão circular NBR no topo
+        p_bub = rg.Point3d(x_inter, y_inter_top + 2.5 * s, 0.0)
+        geoms_2d.append(rg.Circle(p_bub, 1.80 * s).ToNurbsCurve())
+        geoms_2d.extend(make_text_geometry(lbl_t, p_bub, 1.40 * s, rg.TextJustification.MiddleCenter, s))
+
+    # =========================================================================
+    # 6. TÍTULO, SUBTÍTULO E ETIQUETAS DO PERFIL
+    # =========================================================================
+    p_tit = rg.Point3d(x_start, base_y + delta_z * ev + 14.0 * s, 0.0)
+    tit_str = "PERFIL LONGITUDINAL - {} {} - {}".format(axis_title_prefix.strip(), lbl_v, lbl_v)
+    geoms_2d.extend(make_text_geometry(tit_str, p_tit, 1.80 * s, rg.TextJustification.BottomLeft, s))
+
+    sub_line1 = "Escalas: Horizontal 1:1.000 | Vertical 1:100 (Exagero Vertical: {:.0f}x) | Datum: +{:.2f}m".format(ev, z_datum).replace('.', ',')
+    p_sub1 = rg.Point3d(x_start, base_y + delta_z * ev + 11.2 * s, 0.0)
+    geoms_2d.extend(make_text_geometry(sub_line1, p_sub1, 0.90 * s, rg.TextJustification.BottomLeft, s))
+
+    sub_line2 = "Extensão: {:.2f}m | Estacas: Estaca 0 até {} | Área Corte: {:.2f}m² | Área Aterro: {:.2f}m²".format(
+        total_ext, stations[-1]['tag'], s_data_v.get('area_total_corte', 0.0), s_data_v.get('area_total_aterro', 0.0)
+    ).replace('.', ',')
+    p_sub2 = rg.Point3d(x_start, base_y + delta_z * ev + 8.6 * s, 0.0)
+    geoms_2d.extend(make_text_geometry(sub_line2, p_sub2, 0.85 * s, rg.TextJustification.BottomLeft, s))
+
+    # Rótulo do Datum
+    p_datum_lbl = rg.Point3d(base_x - 1.0 * s, base_y + 1.2 * s, 0.0)
+    geoms_2d.extend(make_text_geometry("DATUM = +{:.2f} m".format(z_datum).replace('.', ','), p_datum_lbl, 0.85 * s, rg.TextJustification.BottomRight, s))
+
+    # Sincronização espacial 3D
+    if crv_aln_3d_v is not None:
+        p_s3d = crv_aln_3d_v.PointAtStart
+        p_e3d = crv_aln_3d_v.PointAtEnd
+        dx_3d = p_e3d.X - p_s3d.X
+        dy_3d = p_e3d.Y - p_s3d.Y
+        L_3d = math.hypot(dx_3d, dy_3d)
+        ux_3d = dx_3d / max(L_3d, 1e-4)
+        uy_3d = dy_3d / max(L_3d, 1e-4)
+        pts_gr_3d = []
+        for i_pt in range(n_samples + 1):
+            d_val = (i_pt / float(n_samples)) * total_ext
+            z_val = get_parabolic_grade_z(d_val)
+            pts_gr_3d.append(rg.Point3d(p_s3d.X + ux_3d * d_val, p_s3d.Y + uy_3d * d_val, z_val))
+        if len(pts_gr_3d) >= 2:
+            crv_temp = rg.PolylineCurve(pts_gr_3d)
+            if crv_temp and crv_temp.IsValid:
+                crv_gr_3d = crv_temp
+
+    return {
+        'geoms_2d': geoms_2d,
+        'poligonos_corte_2d': poligonos_corte_sec,
+        'poligonos_aterro_2d': poligonos_aterro_sec,
+        'quads_3d_corte': quads_3d_corte_sec,
+        'quads_3d_aterro': quads_3d_aterro_sec,
+        'crv_gr_3d': crv_gr_3d,
+        'crv_tn_3d': s_data_v.get('crv_3d'),
+        'poligonos_3d_corte': poligonos_3d_corte_sec,
+        'poligonos_3d_aterro': poligonos_3d_aterro_sec,
+        'stations': stations,
+        'tangents': tangents,
+        'pivs': pivs,
+        'total_height': (delta_z * ev) + h_guitarra + 25.0 * s
+    }
+
 def run():
     doc = Rhino.RhinoDoc.ActiveDoc
     tol = doc.ModelAbsoluteTolerance if doc else 0.001
@@ -2989,6 +3397,7 @@ def run():
     raw_homogeneizacao = get_input(['HomogenizationFactor', 'CompactionFactor', 'ShrinkageFactor', 'FatorHomogeneizacao', 'FatorContracao', 'Fh'], 1.15)
     raw_modo_estacas = get_input(['StationingMode', 'ModoEstacas', 'EstaqueamentoNormativo', 'Estacas20m', 'Normative20m', 'UsarEstacas20m', 'Modo20m'])
     raw_passo_estacas = get_input(['StationInterval', 'PassoEstacas', 'IntervaloEstacas', 'DistanciaEstacas', 'Passo'], 20.0)
+    raw_exagero_v    = get_input(['VerticalExaggeration', 'ExageroVertical', 'EscalaVertical', 'Exagero', 'Ev'], 10.0)
 
     try:
         if raw_inclinacao is not None:
@@ -3023,6 +3432,11 @@ def run():
         passo_estacas = float(raw_passo_estacas) if raw_passo_estacas is not None else 20.0
         if passo_estacas <= 1.0: passo_estacas = 20.0
     except: passo_estacas = 20.0
+
+    try:
+        ev_long = float(raw_exagero_v) if raw_exagero_v is not None else 10.0
+        if ev_long <= 0.1: ev_long = 1.0
+    except: ev_long = 10.0
 
     geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
     if not geoms_terreno:
@@ -3420,11 +3834,16 @@ def run():
     sec_base_ys = [orig_y - i * espacamento_y for i in range(num_secoes)]
     max_w_t = max([t['total_ext'] for t in sec_terrain_info] or [120.0])
 
-    # Espaçamento vertical da Coluna 2 (Longitudinais)
-    max_h_above_v = max(sec_v_heights_above) if sec_v_heights_above else (20.0 * s)
-    max_h_below_v = max(sec_v_heights_below) if sec_v_heights_below else (12.0 * s)
-    espacamento_y_v = max_h_below_v + banner_space + gap_livre + max_h_above_v
-    sec_v_base_ys = [orig_y - j * espacamento_y_v for j in range(num_verticais)]
+    # Espaçamento vertical da Coluna 2: Perfis Longitudinais Viários com Guitarra (H=1:1.000 / V=1:100 - Ev=10x)
+    h_guitarra_est = 41.0 * s
+    sec_v_base_ys = []
+    y_cursor_v = orig_y - 20.0 * s
+    for j in range(num_verticais):
+        t_info_j = sec_v_terrain_info[j]
+        h_prof_j = (t_info_j['sec_h'] + 2.0) * ev_long + 20.0 * s
+        datum_y_j = y_cursor_v - h_prof_j
+        sec_v_base_ys.append(datum_y_j)
+        y_cursor_v = datum_y_j - h_guitarra_est - 45.0 * s
     max_w_v = max([t['total_ext'] for t in sec_v_terrain_info] or [120.0])
 
     # Posição X da Coluna 2 (à direita da Coluna 1 com folga ampla de visualização)
@@ -3785,12 +4204,12 @@ def run():
             desenho_completo_secoes_2d.extend(banner_geoms)
             desenho_secoes_t_only.extend(banner_geoms)
 
-    # 7.2 Column 2 Header and Rendering: LONGITUDINAL SECTIONS (1, 2, 3...)
+    # 7.2 Column 2 Header and Rendering: PERFIS LONGITUDINAIS COM GUITARRA (EIXOS 1 A 5)
     if num_verticais >= 1:
-        p_hdr_col2 = rg.Point3d(col2_x, orig_y + max_h_above_v + 14.5 * s, 0.0)
-        t_hdr2 = make_text_geometry("SEÇÕES LONGITUDINAIS (1 - 1, 2 - 2...)", p_hdr_col2, 2.0 * s, rg.TextJustification.BottomLeft, s)
-        p_sub_hdr2 = rg.Point3d(col2_x, orig_y + max_h_above_v + 12.0 * s, 0.0)
-        sub_hdr2 = make_text_geometry("Perfis Longitudinais | Visualização e Edição de Greide", p_sub_hdr2, 0.90 * s, rg.TextJustification.BottomLeft, s)
+        p_hdr_col2 = rg.Point3d(col2_x, orig_y + 16.0 * s, 0.0)
+        t_hdr2 = make_text_geometry("PERFIS LONGITUDINAIS VIÁRIOS COM GUITARRA (EIXOS 1 A 5)", p_hdr_col2, 2.2 * s, rg.TextJustification.BottomLeft, s)
+        p_sub_hdr2 = rg.Point3d(col2_x, orig_y + 13.0 * s, 0.0)
+        sub_hdr2 = make_text_geometry("Escalas: H=1:1.000 / V=1:100 (Exagero: 10x) | Grade Técnica Normativa com Cota TN, Greide, Alturas, Estacas e PIVs", p_sub_hdr2, 0.95 * s, rg.TextJustification.BottomLeft, s)
         desenho_completo_secoes_2d.extend(t_hdr2)
         desenho_completo_secoes_2d.extend(sub_hdr2)
         desenho_secoes_v_only.extend(t_hdr2)
@@ -3802,9 +4221,9 @@ def run():
             base_y_v = sec_v_base_ys[idx_v]
             crv_aln_3d_v = lista_verticais[idx_v]
 
-            res_sec_v = render_single_section_2d_and_3d(
-                s_data_v, lbl_v, base_x_v, base_y_v, s, modo_cotas, cor_corte, cor_aterro,
-                crv_aln_3d=crv_aln_3d_v, is_longitudinal=True, axis_title_prefix="SEÇÃO "
+            res_sec_v = render_longitudinal_profile_with_guitarra(
+                s_data_v, lbl_v, base_x_v, base_y_v, s, ev=ev_long, step_estaca=passo_estacas,
+                cor_corte=cor_corte, cor_aterro=cor_aterro, crv_aln_3d_v=crv_aln_3d_v, axis_title_prefix="EIXO "
             )
 
             desenho_completo_secoes_2d.extend(res_sec_v['geoms_2d'])
@@ -4298,6 +4717,10 @@ def run():
             "-----------------------------------------------------------------------------------------",
             "3. RESUMO DAS SEÇÕES LONGITUDINAIS (EIXOS {} A {}):".format(labels_v[0], labels_v[-1]),
             "-----------------------------------------------------------------------------------------",
+            "   - Padrão Gráfico e Escalas Normativas : Horizontal 1:1.000 / Vertical 1:100 (Exagero: {:.0f}x)".format(ev_long),
+            "   - Grade Técnica Inferior (Guitarra)  : Cotas TN, Cota Vermelha, Alturas de Terraplenagem e Estacas",
+            "   - Concordâncias Verticais (PIVs)     : Curvas parabólicas de transição suave calculadas",
+            "-----------------------------------------------------------------------------------------",
             "{:<10} | {:<12} | {:<14} | {:<14} | {:<12} | {:<12}".format("EIXO", "EXTENSÃO", "ÁREA CORTE", "ÁREA ATERRO", "H. MÁX CORTE", "H. MÁX ATERRO"),
             "-----------------------------------------------------------------------------------------"
         ])
@@ -4310,7 +4733,7 @@ def run():
 
     relatorio.extend([
         "-----------------------------------------------------------------------------------------",
-        "3. BALANÇO DE MASSAS & DIAGRAMA DE BRÜCKNER (COMPENSAÇÃO LONGITUDINAL):",
+        "4. BALANÇO DE MASSAS & DIAGRAMA DE BRÜCKNER (COMPENSAÇÃO LONGITUDINAL):",
     ])
     for item_fl in fluxo_transporte:
         i_seg = fluxo_transporte.index(item_fl)
@@ -4413,6 +4836,10 @@ def run():
     globals()['RotulosEstacas20m'] = [item['label'] for item in estacas_normativas_info]
     globals()['NormativeStationLines'] = linhas_estacas_crvs
     globals()['NormativeStations20m'] = linhas_estacas_crvs
+    globals()['PerfisLongitudinais2D'] = desenho_secoes_v_only
+    globals()['PranchaLongitudinal'] = desenho_secoes_v_only
+    globals()['LongitudinalProfiles'] = desenho_secoes_v_only
+    globals()['Guitarra2D'] = desenho_secoes_v_only
     globals()['Viario3D'] = [m for m in [m_3d_asfalto, m_3d_calcada] if m and getattr(m, 'IsValid', False)]
     globals()['Roadway3D'] = globals()['Viario3D']
     globals()['Asfalto3D'] = m_3d_asfalto
