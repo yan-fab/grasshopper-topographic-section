@@ -3844,6 +3844,7 @@ def run():
         datum_y_j = y_cursor_v - h_prof_j
         sec_v_base_ys.append(datum_y_j)
         y_cursor_v = datum_y_j - h_guitarra_est - 45.0 * s
+    espacamento_y_v = (sec_v_base_ys[0] - sec_v_base_ys[1]) if len(sec_v_base_ys) >= 2 else (100.0 * s)
     max_w_v = max([t['total_ext'] for t in sec_v_terrain_info] or [120.0])
 
     # Posição X da Coluna 2 (à direita da Coluna 1 com folga ampla de visualização)
@@ -4267,10 +4268,11 @@ def run():
                     nota_tv = ""
 
                 next_sec_v = sec_v_data_list[idx_v + 1]
+                next_base_y_v = sec_v_base_ys[idx_v + 1] if (idx_v + 1) < len(sec_v_base_ys) else (base_y_v - espacamento_y_v)
                 next_datum_v = math.floor(next_sec_v['z_min'] - 2.0)
-                next_h_top_v = (next_sec_v['z_max'] - next_datum_v) + 16.0 * s
-                y_bot_current_v = base_y_v - 12.0 * s
-                y_top_next_v = (base_y_v - espacamento_y_v) + next_h_top_v
+                next_h_top_v = (next_sec_v['z_max'] - next_datum_v) * ev_long + 16.0 * s
+                y_bot_current_v = base_y_v - 41.0 * s
+                y_top_next_v = next_base_y_v + next_h_top_v
                 y_banner_v = (y_bot_current_v + y_top_next_v) / 2.0
                 x_banner_v = base_x_v + s_data_v['total_ext'] / 2.0
 
