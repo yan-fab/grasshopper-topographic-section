@@ -260,6 +260,9 @@ def create_colored_mesh(quads_pts, color):
         cross = rg.Vector3d.CrossProduct(v1 - v0, v2 - v0)
         if cross.Length < 1e-6:
             return False
+        if abs(v0.Z) < 1e-3 and abs(v1.Z) < 1e-3 and abs(v2.Z) < 1e-3:
+            if cross.Z < 0.0:
+                v1, v2 = v2, v1
         idx = m.Vertices.Count
         m.Vertices.Add(v0)
         m.Vertices.Add(v1)
@@ -512,7 +515,7 @@ def sanitize_site_boundary(raw_limite, raw_projeto=None, tol=0.001):
     n_samples = max(int(length / 1.0), 40)
     pts_2d = []
     for i_pt in range(n_samples + 1):
-        t_pt = best_c.Domain.Min + (i_pt / float(n_samples)) * (best_c.Domain.Max - best_c.Domain.Min)
+        t_pt = best_c.Domain.T0 + (i_pt / float(n_samples)) * (best_c.Domain.T1 - best_c.Domain.T0)
         p_ev = best_c.PointAt(t_pt)
         pts_2d.append((p_ev.X, p_ev.Y))
     if pts_2d and pts_2d[0] != pts_2d[-1]:
@@ -676,7 +679,7 @@ def sanitize_road_polygons(raw_viario, tol=0.001):
         n_samples = max(int(length / 1.0), 30)
         pts_2d = []
         for i_pt in range(n_samples + 1):
-            t_pt = c.Domain.Min + (i_pt / float(n_samples)) * (c.Domain.Max - c.Domain.Min)
+            t_pt = c.Domain.T0 + (i_pt / float(n_samples)) * (c.Domain.T1 - c.Domain.T0)
             p_ev = c.PointAt(t_pt)
             pts_2d.append((p_ev.X, p_ev.Y))
 
@@ -1907,20 +1910,16 @@ def draw_technical_sheet_frame(min_x, min_y, max_x, max_y, sheet_title, sheet_nu
 
 def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1.0, max_x_allowed=None):
     """
-    Desenha a ficha técnica / carimbo executivo posicionado com precisão milimétrica
-    ao lado da seção ou abaixo dela, compactado para caber sem colisão no layout de 2 colunas A0.
+    Desenha a ficha técnica / carimbo executivo da seção transversal.
+    Posicionada com precisão milimétrica sob a linha de datum da seção (X entre base_x + 2m e base_x + 27m),
+    garantindo que o card NUNCA ultrapasse a largura da seção, eliminando colisões com colunas adjacentes e carimbo A0.
     """
     geoms = []
-    w_card = 18.0 * s
-    h_card = 20.0 * s
+    w_card = 25.0 * s
+    h_card = 9.2 * s
 
-    x0 = base_x + total_ext + 2.5 * s
-    y0 = base_y
-    # Verificação de segurança: se o card colidiria com o carimbo da folha (max_x_allowed)
-    if max_x_allowed is not None and (x0 + w_card > max_x_allowed):
-        # Posiciona dentro dos limites da seção sob a cota do datum com recuo seguro
-        x0 = max(base_x + 2.0 * s, max_x_allowed - w_card - 2.0 * s)
-        y0 = base_y - 12.0 * s
+    x0 = base_x + 2.0 * s
+    y0 = base_y - 10.5 * s
     x1 = x0 + w_card
     y1 = y0 + h_card
 
@@ -1932,41 +1931,37 @@ def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1
     if bg_m: geoms.append(bg_m)
     geoms.append(rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve())
 
-    y_hdr = y1 - 5.5 * s
+    y_hdr = y1 - 2.8 * s
     geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)))
-    y_corte = y_hdr - 4.8 * s
-    geoms.append(rg.LineCurve(rg.Point3d(x0, y_corte, 0), rg.Point3d(x1, y_corte, 0)))
-    y_aterro = y_corte - 4.8 * s
-    geoms.append(rg.LineCurve(rg.Point3d(x0, y_aterro, 0), rg.Point3d(x1, y_aterro, 0)))
 
     tit_str = "SEÇÃO {}".format(lbl)
-    geoms.extend(make_text_geometry(tit_str, rg.Point3d(x0 + 1.5*s, y1 - 2.5*s, 0), 1.15*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(tit_str, rg.Point3d(x0 + 1.2*s, y1 - 2.1*s, 0), 1.15*s, rg.TextJustification.BottomLeft, s))
     sub_str = "Ext: {:.1f}m".format(total_ext).replace('.', ',')
     if s_data.get('estaca_str'):
         sub_str = "Est. {} | {}".format(s_data['estaca_str'], sub_str)
-    geoms.extend(make_text_geometry(sub_str, rg.Point3d(x0 + 1.5*s, y1 - 4.6*s, 0), 0.72*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(sub_str, rg.Point3d(x0 + 8.5*s, y1 - 2.1*s, 0), 0.72*s, rg.TextJustification.BottomLeft, s))
 
     area_corte = s_data.get('area_total_corte', 0.0)
     h_corte = s_data.get('max_h_corte', 0.0)
     txt_c1 = "CORTE: {:.2f} m²".format(area_corte).replace('.', ',')
-    p_sw_c0 = rg.Point3d(x0 + 1.5*s, y_hdr - 3.8*s, 0)
-    p_sw_c1 = rg.Point3d(x0 + 4.0*s, y_hdr - 3.8*s, 0)
-    p_sw_c2 = rg.Point3d(x0 + 4.0*s, y_hdr - 1.2*s, 0)
-    p_sw_c3 = rg.Point3d(x0 + 1.5*s, y_hdr - 1.2*s, 0)
-    m_sc = make_box_background_mesh(p_sw_c0, p_sw_c1, p_sw_c2, p_sw_c3, System.Drawing.Color.FromArgb(230, 92, 0))
+    p_sw_c0 = rg.Point3d(x0 + 1.2*s, y_hdr - 2.4*s, 0)
+    p_sw_c1 = rg.Point3d(x0 + 2.8*s, y_hdr - 2.4*s, 0)
+    p_sw_c2 = rg.Point3d(x0 + 2.8*s, y_hdr - 0.8*s, 0)
+    p_sw_c3 = rg.Point3d(x0 + 1.2*s, y_hdr - 0.8*s, 0)
+    m_sc = make_box_background_mesh(p_sw_c0, p_sw_c1, p_sw_c2, p_sw_c3, System.Drawing.Color.FromArgb(245, 130, 32))
     if m_sc: geoms.append(m_sc)
-    geoms.extend(make_text_geometry(txt_c1, rg.Point3d(x0 + 5.0*s, y_hdr - 2.8*s, 0), 0.85*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_c1, rg.Point3d(x0 + 3.5*s, y_hdr - 1.9*s, 0), 0.85*s, rg.TextJustification.BottomLeft, s))
 
     area_aterro = s_data.get('area_total_aterro', 0.0)
     h_aterro = s_data.get('max_h_aterro', 0.0)
     txt_a1 = "ATERRO: {:.2f} m²".format(area_aterro).replace('.', ',')
-    p_sw_a0 = rg.Point3d(x0 + 1.5*s, y_corte - 3.8*s, 0)
-    p_sw_a1 = rg.Point3d(x0 + 4.0*s, y_corte - 3.8*s, 0)
-    p_sw_a2 = rg.Point3d(x0 + 4.0*s, y_corte - 1.2*s, 0)
-    p_sw_a3 = rg.Point3d(x0 + 1.5*s, y_corte - 1.2*s, 0)
-    m_sa = make_box_background_mesh(p_sw_a0, p_sw_a1, p_sw_a2, p_sw_a3, System.Drawing.Color.FromArgb(46, 139, 87))
+    p_sw_a0 = rg.Point3d(x0 + 1.2*s, y_hdr - 4.9*s, 0)
+    p_sw_a1 = rg.Point3d(x0 + 2.8*s, y_hdr - 4.9*s, 0)
+    p_sw_a2 = rg.Point3d(x0 + 2.8*s, y_hdr - 3.3*s, 0)
+    p_sw_a3 = rg.Point3d(x0 + 1.2*s, y_hdr - 3.3*s, 0)
+    m_sa = make_box_background_mesh(p_sw_a0, p_sw_a1, p_sw_a2, p_sw_a3, System.Drawing.Color.FromArgb(46, 204, 113))
     if m_sa: geoms.append(m_sa)
-    geoms.extend(make_text_geometry(txt_a1, rg.Point3d(x0 + 5.0*s, y_corte - 2.8*s, 0), 0.85*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_a1, rg.Point3d(x0 + 3.5*s, y_hdr - 4.4*s, 0), 0.85*s, rg.TextJustification.BottomLeft, s))
 
     saldo_sec = area_corte - area_aterro
     if saldo_sec > 0.01:
@@ -1975,19 +1970,14 @@ def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1
         txt_s = "SALDO: {:.2f} m² (Aterro)".format(saldo_sec).replace('.', ',')
     else:
         txt_s = "SALDO: 0,00 m² (Equilíbrio)"
-    geoms.extend(make_text_geometry(txt_s, rg.Point3d(x0 + 1.5*s, y_aterro - 3.0*s, 0), 0.78*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt_s, rg.Point3d(x0 + 1.2*s, y_hdr - 6.8*s, 0), 0.78*s, rg.TextJustification.BottomLeft, s))
 
     max_h_sec = max(h_corte, h_aterro)
     if max_h_sec > 4.5:
-        y_alert = y0 - 3.5 * s
-        bg_al = make_box_background_mesh(rg.Point3d(x0, y_alert, 0), rg.Point3d(x1, y_alert, 0), rg.Point3d(x1, y0, 0), rg.Point3d(x0, y0, 0), System.Drawing.Color.FromArgb(255, 230, 230))
-        if bg_al: geoms.append(bg_al)
-        geoms.append(rg.Polyline([rg.Point3d(x0, y_alert, 0), rg.Point3d(x1, y_alert, 0), rg.Point3d(x1, y0, 0), rg.Point3d(x0, y0, 0), rg.Point3d(x0, y_alert, 0)]).ToPolylineCurve())
         txt_geot = "ALERTA NBR 11682: H={:.2f}m > 4,5m (CONTENÇÃO)".format(max_h_sec).replace('.', ',')
-        geoms.extend(make_text_geometry(txt_geot, rg.Point3d(x0 + 1.0*s, y_alert + 1.2*s, 0), 0.65*s, rg.TextJustification.BottomLeft, s))
+        geoms.extend(make_text_geometry(txt_geot, rg.Point3d(x0 + 12.0*s, y_hdr - 6.8*s, 0), 0.65*s, rg.TextJustification.BottomLeft, s))
 
     return geoms
-
 
 def draw_retaining_wall_and_ditch_2d(p_slope, p_bnd, boundary_crv, s=1.0):
     """
@@ -2175,7 +2165,7 @@ def calculate_boundary_clearance(outer_slope_pts, boundary_crv, s=1.0):
                     l_oc = oc.GetLength()
                     n_tags = max(int(l_oc / 120.0), 2)
                     for it in range(n_tags):
-                        t_tag = oc.Domain.Min + ((it + 0.5) / float(n_tags)) * (oc.Domain.Max - oc.Domain.Min)
+                        t_tag = oc.Domain.T0 + ((it + 0.5) / float(n_tags)) * (oc.Domain.T1 - oc.Domain.T0)
                         pt_tag = oc.PointAt(t_tag)
                         txt_faixa = "FAIXA DE SEGURANÇA NÃO EDIFICÁVEL (RECUO = 3,00m - LEI 6.766 / NBR 11682)"
                         geoms.extend(make_text_geometry(txt_faixa, pt_tag + rg.Vector3d(0, 1.2*s, 0), 0.75*s, rg.TextJustification.MiddleCenter, s))
@@ -2283,7 +2273,7 @@ def generate_project_contours(mesh_proj, z_step=1.0, z_master_step=5.0, s=1.0):
                 is_master = (abs(z_round % int(z_master_step)) < 0.05) or (abs(z_mid % float(z_master_step)) < 0.08)
                 if is_master:
                     crvs_5m.append(crv)
-                    t_mid = (crv.Domain.Min + crv.Domain.Max) / 2.0
+                    t_mid = (crv.Domain.T0 + crv.Domain.T1) / 2.0
                     p_mid = crv.PointAt(t_mid)
                     txt_cota = "+{:.0f}".format(z_mid)
                     tan = crv.TangentAt(t_mid)
@@ -2311,8 +2301,9 @@ def draw_section_vertical_axis_marker(base_x, base_y, d_ax, sec_h, sec_datum_z, 
     geoms = []
     x_ax = base_x + d_ax
     y_datum = base_y
-    y_top_line = base_y + sec_h + 6.0 * s
-    y_bubble = base_y + sec_h + 8.2 * s
+    y_local = base_y + (max(z_terrain, z_proj) - sec_datum_z)
+    y_top_line = y_local + 2.5 * s
+    y_bubble = y_local + 4.2 * s
 
     # 1. Linha vertical fina de eixo
     p_bot = rg.Point3d(x_ax, y_datum, 0.0)
@@ -2460,12 +2451,12 @@ def calculate_axis_distance(crv_a, crv_b):
     try:
         ca_xy = rg.Curve.ProjectToPlane(crv_a, rg.Plane.WorldXY) or crv_a
         cb_xy = rg.Curve.ProjectToPlane(crv_b, rg.Plane.WorldXY) or crv_b
-        t_mid_a = ca_xy.Domain.Min + 0.5 * (ca_xy.Domain.Max - ca_xy.Domain.Min)
+        t_mid_a = ca_xy.Domain.T0 + 0.5 * (ca_xy.Domain.T1 - ca_xy.Domain.T0)
         p_mid_a = ca_xy.PointAt(t_mid_a)
         rc, t_b = cb_xy.ClosestPoint(p_mid_a)
         d1 = p_mid_a.DistanceTo(cb_xy.PointAt(t_b)) if rc else None
 
-        t_mid_b = cb_xy.Domain.Min + 0.5 * (cb_xy.Domain.Max - cb_xy.Domain.Min)
+        t_mid_b = cb_xy.Domain.T0 + 0.5 * (cb_xy.Domain.T1 - cb_xy.Domain.T0)
         p_mid_b = cb_xy.PointAt(t_mid_b)
         rc2, t_a = ca_xy.ClosestPoint(p_mid_b)
         d2 = p_mid_b.DistanceTo(ca_xy.PointAt(t_a)) if rc2 else None
@@ -3613,8 +3604,16 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
 
     # Linha e Rótulo de DATUM
     p_d_ini = rg.Point3d(base_x, base_y, 0.0)
-    p_d_fim = rg.Point3d(base_x + total_ext, base_y, 0.0)
+    max_draw_w = 86.0 * s
+    draw_ext = min(total_ext, max_draw_w)
+    p_d_fim = rg.Point3d(base_x + draw_ext, base_y, 0.0)
     geoms_2d.append(rg.LineCurve(p_d_ini, p_d_fim))
+    # Símbolo normativo de quebra de desenho NBR 6492 caso a seção exceda a largura útil
+    if total_ext > draw_ext + 0.1:
+        xb = base_x + draw_ext
+        geoms_2d.append(rg.LineCurve(rg.Point3d(xb - 0.8*s, base_y - 2.0*s, 0.0), rg.Point3d(xb + 0.8*s, base_y + 2.0*s, 0.0)))
+        geoms_2d.append(rg.LineCurve(rg.Point3d(xb - 0.4*s, base_y - 2.0*s, 0.0), rg.Point3d(xb + 1.2*s, base_y + 2.0*s, 0.0)))
+
 
     lbl_datum = "DATUM +{:.2f}".format(sec_datum_z).replace('.', ',')
     p_datum_txt = rg.Point3d(base_x - 1.2 * s, base_y, 0.0)
@@ -3622,7 +3621,7 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
     geoms_2d.extend(datum_crvs)
 
     # Perfil Natural 2D
-    pts_tn_2d = [rg.Point3d(base_x + d, base_y + (pt.Z - sec_datum_z), 0.0) for d, pt in clean_pts]
+    pts_tn_2d = [rg.Point3d(base_x + min(d, draw_ext), base_y + (pt.Z - sec_datum_z), 0.0) for d, pt in clean_pts if d <= draw_ext + 1.0]
     crv_tn_2d = rg.PolylineCurve(pts_tn_2d) if len(pts_tn_2d) >= 2 else None
     if crv_tn_2d and crv_tn_2d.IsValid: geoms_2d.append(crv_tn_2d)
 
@@ -3632,7 +3631,7 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
     if crv_solo: geoms_2d.append(crv_solo)
 
     # 2D Proposed Grade
-    pts_gr_2d = [rg.Point3d(base_x + d, base_y + (get_proj_z(d) - sec_datum_z), 0.0) for d in s_data['estacas_finais']]
+    pts_gr_2d = [rg.Point3d(base_x + min(d, draw_ext), base_y + (get_proj_z(d) - sec_datum_z), 0.0) for d in s_data['estacas_finais'] if d <= draw_ext + 1.0]
     crv_gr_2d = rg.PolylineCurve(pts_gr_2d) if len(pts_gr_2d) >= 2 else None
     if crv_gr_2d and crv_gr_2d.IsValid: geoms_2d.append(crv_gr_2d)
 
@@ -3729,16 +3728,16 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
 
         # 1. Extension lines at road corridor boundary
         p_in_bot = rg.Point3d(x_in, base_y, 0.0)
-        p_in_top = rg.Point3d(x_in, base_y + sec_h + 4.5 * s, 0.0)
+        p_in_top = rg.Point3d(x_in, y_eixo + 2.0 * s, 0.0)
         p_out_bot = rg.Point3d(x_out, base_y, 0.0)
-        p_out_top = rg.Point3d(x_out, base_y + sec_h + 4.5 * s, 0.0)
+        p_out_top = rg.Point3d(x_out, y_eixo + 2.0 * s, 0.0)
         geoms_2d.append(rg.LineCurve(p_in_bot, p_in_top))
         geoms_2d.append(rg.LineCurve(p_out_bot, p_out_top))
 
         # 2. Road callout card
         lbl_v1 = "ROADWAY / VIÁRIO CARROÇÁVEL"
         lbl_v2 = "Corredor: {:.2f}m | Pista: {:.2f}m | Abaulamento: 2,0%".format(w, w_pista).replace('.', ',')
-        card_geoms = make_callout_card(x_mid, base_y + sec_h + 2.5 * s, lbl_v1, lbl_v2, s, is_corte=True)
+        card_geoms = make_callout_card(x_mid, y_eixo + 2.8 * s, lbl_v1, lbl_v2, s, is_corte=True)
         geoms_2d.extend(card_geoms)
 
         # 3. NBR Level marker on road centerline
@@ -4103,26 +4102,32 @@ def render_longitudinal_profile_with_guitarra(
         diff1 = p1_tn.Y - p1_gr.Y
 
         if diff0 > 0.001 and diff1 > 0.001:
-            # Corte puro
+            # Corte puro (orientacao anti-horaria para normal +Z)
             m_c = rg.Mesh()
-            m_c.Vertices.Add(p0_tn.X, p0_tn.Y, 0.0)
-            m_c.Vertices.Add(p1_tn.X, p1_tn.Y, 0.0)
-            m_c.Vertices.Add(p1_gr.X, p1_gr.Y, 0.0)
             m_c.Vertices.Add(p0_gr.X, p0_gr.Y, 0.0)
+            m_c.Vertices.Add(p1_gr.X, p1_gr.Y, 0.0)
+            m_c.Vertices.Add(p1_tn.X, p1_tn.Y, 0.0)
+            m_c.Vertices.Add(p0_tn.X, p0_tn.Y, 0.0)
             m_c.Faces.AddFace(0, 1, 2, 3)
             for _ in range(4): m_c.VertexColors.Add(cor_corte)
+            try: m_c.Normals.ComputeNormals()
+            except: pass
+            m_c.Compact()
             geoms_2d.append(m_c)
             poly_c = rg.PolylineCurve([p0_tn, p1_tn, p1_gr, p0_gr, p0_tn])
             poligonos_corte_sec.append(poly_c)
         elif diff0 < -0.001 and diff1 < -0.001:
-            # Aterro puro
+            # Aterro puro (orientacao anti-horaria para normal +Z)
             m_a = rg.Mesh()
-            m_a.Vertices.Add(p0_gr.X, p0_gr.Y, 0.0)
-            m_a.Vertices.Add(p1_gr.X, p1_gr.Y, 0.0)
-            m_a.Vertices.Add(p1_tn.X, p1_tn.Y, 0.0)
             m_a.Vertices.Add(p0_tn.X, p0_tn.Y, 0.0)
+            m_a.Vertices.Add(p1_tn.X, p1_tn.Y, 0.0)
+            m_a.Vertices.Add(p1_gr.X, p1_gr.Y, 0.0)
+            m_a.Vertices.Add(p0_gr.X, p0_gr.Y, 0.0)
             m_a.Faces.AddFace(0, 1, 2, 3)
             for _ in range(4): m_a.VertexColors.Add(cor_aterro)
+            try: m_a.Normals.ComputeNormals()
+            except: pass
+            m_a.Compact()
             geoms_2d.append(m_a)
             poly_a = rg.PolylineCurve([p0_gr, p1_gr, p1_tn, p0_tn, p0_gr])
             poligonos_aterro_sec.append(poly_a)
@@ -4277,6 +4282,9 @@ def run():
     }
     espacamento_y_v = 240.0 * s
     pitch_v = 240.0 * s
+    prancha_planta_geoms = []
+    prancha_long_geoms = []
+    prancha_secoes_geoms = []
 
     geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
     if not geoms_terreno:
@@ -4561,6 +4569,36 @@ def run():
         for j in range(len(lista_verticais_alinhadas) - 1):
             d_v = calculate_axis_distance(lista_verticais_alinhadas[j], lista_verticais_alinhadas[j+1])
             distancias_verticais.append(max(d_v, 0.1))
+    else:
+        # Auto-geração inteligente dos 5 Eixos Longitudinais (1 a 5) caso o usuário não tenha passado verticais manuais
+        v_proj_vals = []
+        for c in lista_alinhadas:
+            p0, p1 = c.PointAtStart, c.PointAtEnd
+            v_proj_vals.append(p0.X * u_long_down.X + p0.Y * u_long_down.Y)
+            v_proj_vals.append(p1.X * u_long_down.X + p1.Y * u_long_down.Y)
+        if v_proj_vals:
+            v_min_aln = min(v_proj_vals) - 4.0 * s
+            v_max_aln = max(v_proj_vals) + 4.0 * s
+            n_auto_v = 5
+            u_step_v = (u_max_aligned - u_min_aligned) / float(n_auto_v + 1)
+            for i_auto in range(1, n_auto_v + 1):
+                w_coord = u_min_aligned + i_auto * u_step_v
+                p_ref_v = rg.Point3d(w_coord * u_corte.X, w_coord * u_corte.Y, 0.0)
+                clipped_interval_v = None
+                if boundary_info is not None:
+                    clipped_interval_v = find_ray_polygon_interval(
+                        (p_ref_v.X, p_ref_v.Y), (u_long_down.X, u_long_down.Y), boundary_info['pts_2d']
+                    )
+                if clipped_interval_v is not None and (clipped_interval_v[1] - clipped_interval_v[0]) > 1.0:
+                    v_ini_s, v_fim_s = clipped_interval_v
+                else:
+                    v_ini_s, v_fim_s = v_min_aln, v_max_aln
+                p_ini_v = rg.Point3d(p_ref_v.X + v_ini_s * u_long_down.X, p_ref_v.Y + v_ini_s * u_long_down.Y, 0.0)
+                p_fim_v = rg.Point3d(p_ref_v.X + v_fim_s * u_long_down.X, p_ref_v.Y + v_fim_s * u_long_down.Y, 0.0)
+                lista_verticais_alinhadas.append(rg.LineCurve(p_ini_v, p_fim_v))
+            for j in range(len(lista_verticais_alinhadas) - 1):
+                d_v = calculate_axis_distance(lista_verticais_alinhadas[j], lista_verticais_alinhadas[j+1])
+                distancias_verticais.append(max(d_v, 0.1))
 
     lista_verticais = lista_verticais_alinhadas
 
@@ -4591,7 +4629,7 @@ def run():
                 ct_xy = rg.Curve.ProjectToPlane(ct, rg.Plane.WorldXY) or ct
                 cv_xy = rg.Curve.ProjectToPlane(cv, rg.Plane.WorldXY) or cv
                 ev = rg.Intersect.Intersection.CurveCurve(ct_xy, cv_xy, tol * 10, tol * 10)
-                if ev and ev.Count > 0:
+                if ev and (getattr(ev, 'Count', len(ev)) > 0):
                     pt_inter = ev[0].PointA
                     d_t = (pt_inter.X - p_start_i.X) * u_sec_i.X + (pt_inter.Y - p_start_i.Y) * u_sec_i.Y
                     p_start_j = cv.PointAtStart
@@ -4659,14 +4697,14 @@ def run():
     banner_space = 14.0 * s
 
     # 2.1 Organizacao das Secoes Transversais em 2 Colunas na Folha 03/03 (237.80 x 168.20 m a 1:200)
-    # Coluna 1 (Secoes A a E): base_x = orig_x + 8.0*s
-    # Coluna 2 (Secoes F a J): base_x = orig_x + 104.0*s
-    # Altura do carimbo oficial e legenda: X = orig_x + 200.8*s a 235.8*s
+    # Coluna 1 (Secoes A a E): base_x = orig_x + 6.0*s, largura maxima = 86.0*s
+    # Coluna 2 (Secoes F a J): base_x = orig_x + 104.0*s, largura maxima = 86.0*s
+    # Carimbo oficial e Legenda: X = orig_x + 200.8*s a 235.8*s (folga de 10.8m)
     num_half = (num_secoes + 1) // 2 if num_secoes > 5 else num_secoes
     sec_base_xs = []
     sec_base_ys = []
-    y_start_sec = orig_y - 28.0 * s
-    pitch_sec_y = 28.0 * s
+    y_start_sec = orig_y - 23.0 * s
+    pitch_sec_y = 31.0 * s
 
     for i in range(num_secoes):
         if num_secoes <= 5:
@@ -4675,42 +4713,62 @@ def run():
         else:
             col_i = 0 if i < num_half else 1
             row_i = i if i < num_half else (i - num_half)
-        bx = orig_x + (8.0 * s if col_i == 0 else 104.0 * s)
+        bx = orig_x + (6.0 * s if col_i == 0 else 104.0 * s)
         by = y_start_sec - row_i * pitch_sec_y
         sec_base_xs.append(bx)
         sec_base_ys.append(by)
 
     espacamento_y = pitch_sec_y
-    max_w_t = max([t['total_ext'] for t in sec_terrain_info] or [120.0])
+    max_w_t = 86.0 * s
 
-    # 2.2 Organizacao dos Perfis Longitudinais das Vias em 2 Colunas na Folha 02/03 (H=1:1.000 / V=1:100)
+    # 2.2 Organizacao dos Perfis Longitudinais das Vias em 2 Colunas na Folha 02/03 (H=1:1.000 / V=1:100 ou V=1:200)
     # Folha 02 A0 (1189 x 841 m). Posicionada a direita da Folha 03 com folga de 260m
-    # Coluna 1 (Eixos 1, 2, 3): base_x = folha2_orig_x + 45.0*s
-    # Coluna 2 (Eixos 4, 5):    base_x = folha2_orig_x + 520.0*s
-    # Carimbo oficial e Legenda: X = folha2_orig_x + 1004.0*s a 1179.0*s
     folha2_orig_x = orig_x + 260.0 * s
     folha2_orig_y = orig_y - 841.0 * s
     h_guitarra_est = 41.0 * s
-    pitch_v = 240.0 * s
-    espacamento_y_v = pitch_v
+
+    # Deteccao automatica de relevo acidentado (DNIT / DER-SP)
+    # Se delta_z * ev > 220m (como no terreno com desnivel de 44m), adapta ev_long para 5.0 (V=1:200)
+    max_dz_all_v = 0.0
+    for t_v in sec_v_terrain_info:
+        dz_t = t_v.get('sec_h', 0.0)
+        if dz_t > max_dz_all_v: max_dz_all_v = dz_t
+    if max_dz_all_v * ev_long > 220.0:
+        ev_long = 5.0
 
     num_half_v = (num_verticais + 1) // 2 if num_verticais > 3 else num_verticais
     sec_v_base_xs = []
     sec_v_base_ys = []
-    y_start_v = orig_y - 180.0 * s
+
+    # Altura util vertical da prancha A0 a 1:1000 = 821.0m
+    y_top_sheet_v = orig_y - 10.0 * s
+    n_rows_col1 = num_half_v
+    n_rows_col2 = num_verticais - num_half_v
+    slot_h_col1 = 820.0 * s / max(n_rows_col1, 1)
+    slot_h_col2 = 820.0 * s / max(n_rows_col2, 1) if n_rows_col2 > 0 else 820.0 * s
 
     for j in range(num_verticais):
         if num_verticais <= 3:
             col_j = 0
             row_j = j
+            slot_h = slot_h_col1
         else:
             col_j = 0 if j < num_half_v else 1
             row_j = j if j < num_half_v else (j - num_half_v)
+            slot_h = slot_h_col1 if col_j == 0 else slot_h_col2
+
         bx_v = folha2_orig_x + (45.0 * s if col_j == 0 else 520.0 * s)
-        by_v = y_start_v - row_j * pitch_v
+        t_info_j = sec_v_terrain_info[j] if j < len(sec_v_terrain_info) else {}
+        dz_j = t_info_j.get('sec_h', 20.0)
+        h_above_datum = (dz_j * ev_long) + 16.0 * s
+        y_top_slot = y_top_sheet_v - row_j * slot_h - 16.0 * s
+        by_v = y_top_slot - h_above_datum
+
         sec_v_base_xs.append(bx_v)
         sec_v_base_ys.append(by_v)
 
+    pitch_v = slot_h_col1
+    espacamento_y_v = pitch_v
     col2_x = folha2_orig_x + 45.0 * s
     max_w_v = max([t['total_ext'] for t in sec_v_terrain_info] or [120.0])
 
@@ -5178,10 +5236,11 @@ def run():
         if num_verticais >= 1 and sec_v_base_ys:
             f2_x0 = folha2_orig_x
             f2_y0 = folha2_orig_y
+            scale_label_f2 = "H=1:1.000 / V=1:{:.0f}".format(1000.0 / ev_long)
             prancha_long_geoms = draw_standard_a0_sheet(
                 f2_x0, f2_y0, 1000.0,
                 "PERFIS LONGITUDINAIS DAS VIAS COM GUITARRA (EIXOS 1 A 5)",
-                "FOLHA 02/03", "H=1:1.000 / V=1:100", s=s, is_planta=False, is_longitudinal=True,
+                "FOLHA 02/03", scale_label_f2, s=s, is_planta=False, is_longitudinal=True,
                 volume_summary=global_vol_summary
             )
             desenho_completo_secoes_2d.extend(prancha_long_geoms)
@@ -5527,6 +5586,10 @@ def run():
         if m_part and getattr(m_part, 'IsValid', False):
             mesh_terreno_projetado.Append(m_part)
     if mesh_terreno_projetado.Faces.Count > 0:
+        try:
+            mesh_terreno_projetado.Weld(rg.RhinoMath.ToRadians(25.0))
+        except:
+            pass
         mesh_terreno_projetado.Compact()
         try:
             mesh_terreno_projetado.Normals.ComputeNormals()
@@ -5651,7 +5714,7 @@ def run():
         pts_3d_r = []
         n_pts_r = max(int(r_crv.GetLength() / 1.0), 30)
         for i_pt in range(n_pts_r + 1):
-            t_crv = r_crv.Domain.Min + (i_pt / float(n_pts_r)) * (r_crv.Domain.Max - r_crv.Domain.Min)
+            t_crv = r_crv.Domain.T0 + (i_pt / float(n_pts_r)) * (r_crv.Domain.T1 - r_crv.Domain.T0)
             pt_xy = r_crv.PointAt(t_crv)
             best_dist = 1e9
             best_z = 0.0
@@ -5685,7 +5748,7 @@ def run():
                             pts_cb = []
                             n_cb = max(int(c_cb.GetLength() / 1.0), 20)
                             for i_cb in range(n_cb + 1):
-                                t_cb = c_cb.Domain.Min + (i_cb / float(n_cb)) * (c_cb.Domain.Max - c_cb.Domain.Min)
+                                t_cb = c_cb.Domain.T0 + (i_cb / float(n_cb)) * (c_cb.Domain.T1 - c_cb.Domain.T0)
                                 p_cb = c_cb.PointAt(t_cb)
                                 best_dist_cb = 1e9; best_z_cb = 0.0
                                 for idx_s, c_aln in enumerate(lista_alinhadas):
@@ -5713,7 +5776,7 @@ def run():
         pts_3d_b = []
         n_pts_b = max(int(b_crv.GetLength() / 1.0), 40)
         for i_pt in range(n_pts_b + 1):
-            t_crv = b_crv.Domain.Min + (i_pt / float(n_pts_b)) * (b_crv.Domain.Max - b_crv.Domain.Min)
+            t_crv = b_crv.Domain.T0 + (i_pt / float(n_pts_b)) * (b_crv.Domain.T1 - b_crv.Domain.T0)
             pt_xy = b_crv.PointAt(t_crv)
             best_dist = 1e9
             best_z = 0.0
@@ -5743,7 +5806,7 @@ def run():
                 pts_b = []
                 n_b = max(int(c_b.GetLength() / 2.0), 30)
                 for i_pt in range(n_b + 1):
-                    tb = c_b.Domain.Min + (i_pt / float(n_b)) * (c_b.Domain.Max - c_b.Domain.Min)
+                    tb = c_b.Domain.T0 + (i_pt / float(n_b)) * (c_b.Domain.T1 - c_b.Domain.T0)
                     pt_xy = c_b.PointAt(tb)
                     best_dist = 1e9
                     best_z = 0.0
