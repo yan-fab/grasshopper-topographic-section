@@ -1338,7 +1338,7 @@ def draw_plan_dimension(p1, p2, dist_val, s=1.0, offset_dir=None, offset_dist=0.
     d_len = vec.Length
     if d_len < 1e-3: return geoms
 
-    u_dim = rg.Vector3d(vec)
+    u_dim = rg.Vector3d(vec.X, vec.Y, vec.Z)
     u_dim.Unitize()
 
     # If offset is provided, shifts dimension line outward from the drawing
@@ -1379,7 +1379,7 @@ def draw_plan_dimension(p1, p2, dist_val, s=1.0, offset_dir=None, offset_dist=0.
     v_txt = rg.Vector3d(-u_txt.Y, u_txt.X, 0.0)
 
     # Text position slightly offset outward from the dimension line
-    p_mid = (p1_cota + p2_cota) / 2.0 + off_v * (0.85 * s)
+    p_mid = rg.Point3d((p1_cota.X + p2_cota.X) / 2.0, (p1_cota.Y + p2_cota.Y) / 2.0, 0.0) + off_v * (0.85 * s)
     plane_txt = rg.Plane(p_mid, u_txt, v_txt)
     if isinstance(dist_val, str):
         txt_str = dist_val
@@ -1905,7 +1905,7 @@ def draw_technical_sheet_frame(min_x, min_y, max_x, max_y, sheet_title, sheet_nu
     return draw_standard_a0_sheet(min_x, min_y, scale_val, sheet_title, sheet_num, scale_str, s=s, is_longitudinal=is_longitudinal)
 
 
-def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1.0):
+def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1.0, max_x_allowed=None):
     """
     Desenha a ficha técnica / carimbo executivo posicionado com precisão milimétrica
     ao lado da seção ou abaixo dela, compactado para caber sem colisão no layout de 2 colunas A0.
@@ -1916,6 +1916,11 @@ def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1
 
     x0 = base_x + total_ext + 2.5 * s
     y0 = base_y
+    # Verificação de segurança: se o card colidiria com o carimbo da folha (max_x_allowed)
+    if max_x_allowed is not None and (x0 + w_card > max_x_allowed):
+        # Posiciona dentro dos limites da seção sob a cota do datum com recuo seguro
+        x0 = max(base_x + 2.0 * s, max_x_allowed - w_card - 2.0 * s)
+        y0 = base_y - 12.0 * s
     x1 = x0 + w_card
     y1 = y0 + h_card
 
@@ -2045,8 +2050,9 @@ def draw_retaining_wall_and_ditch_2d(p_slope, p_bnd, boundary_crv, s=1.0):
     geoms.append(rg.Polyline([mc0, mc1, mc2, mc3, mc0]).ToPolylineCurve())
 
     # Textos de detalhamento executivo e chamada de fiscalização
-    p_callout = (mw2 + mw3) / 2.0 + norm_2d * (3.2 * s)
-    geoms.append(rg.LineCurve((mw2 + mw3) / 2.0, p_callout))
+    p_mw_mid = rg.Point3d((mw2.X + mw3.X) / 2.0, (mw2.Y + mw3.Y) / 2.0, 0.0)
+    p_callout = p_mw_mid + norm_2d * (3.2 * s)
+    geoms.append(rg.LineCurve(p_mw_mid, p_callout))
     
     txt1 = "MURO DE CONTENÇÃO EM CONCRETO ARMADO (h = 2,80m a 3,50m) - RECUO < 3,00m"
     txt2 = "CANALETA DE CRISTA/PÉ IMPERMEABILIZADA (CALHA 40x40cm) - ESCOAMENTO INTERNO PLENO"
@@ -2119,7 +2125,7 @@ def draw_slope_ticks_tadpoles_2d(p_crista, p_pe, s=1.0, is_long=True, is_cut=Tru
     d_total = vec.Length
     if d_total < 0.2:
         return geoms
-    u_dir = rg.Vector3d(vec)
+    u_dir = rg.Vector3d(vec.X, vec.Y, vec.Z)
     u_dir.Unitize()
     ratio = 0.65 if is_long else 0.32
     d_trace = min(d_total * ratio, max(2.5 * s, 1.5)) if is_long else min(d_total * ratio, max(1.2 * s, 0.8))
@@ -2237,7 +2243,7 @@ def calculate_boundary_clearance(outer_slope_pts, boundary_crv, s=1.0):
             circ_c = rg.Circle(ps, 0.90 * s).ToNurbsCurve()
             if circ_c and circ_c.IsValid:
                 geoms.append(circ_c)
-            p_mid = (ps + pb) / 2.0 + rg.Vector3d(0, 1.8 * s, 0)
+            p_mid = rg.Point3d((ps.X + pb.X) / 2.0, (ps.Y + pb.Y) / 2.0, 0.0) + rg.Vector3d(0, 1.8 * s, 0)
             geoms.extend(make_text_geometry(dim_txt, p_mid, 0.75 * s, rg.TextJustification.MiddleCenter, s))
 
     return geoms, min_dist, (best_p_slope, best_p_bnd)
@@ -2384,7 +2390,7 @@ def draw_section_internal_transfer_arrow(p_start, p_end, vol_or_area_str="", s=1
     vec = p_end - p_start
     l_len = vec.Length
     if l_len < 1e-3: return geoms
-    u_arrow = rg.Vector3d(vec)
+    u_arrow = rg.Vector3d(vec.X, vec.Y, vec.Z)
     u_arrow.Unitize()
     v_arrow = rg.Vector3d(-u_arrow.Y, u_arrow.X, 0.0)
 
@@ -2406,7 +2412,7 @@ def draw_section_internal_transfer_arrow(p_start, p_end, vol_or_area_str="", s=1
 
     # 4. Texto explicativo sobre a seta
     if vol_or_area_str:
-        p_txt = (p_start + p_end) / 2.0 + v_arrow * (1.1 * s)
+        p_txt = rg.Point3d((p_start.X + p_end.X) / 2.0, (p_start.Y + p_end.Y) / 2.0, 0.0) + v_arrow * (1.1 * s)
         txt_crvs = make_text_geometry(vol_or_area_str, p_txt, 0.75 * s, rg.TextJustification.BottomCenter, s)
         if txt_crvs: geoms.extend(txt_crvs)
 
@@ -3587,22 +3593,22 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
     sec_datum_z = math.floor(s_data['z_min'] - 2.0)
     sec_h = s_data['z_max'] - sec_datum_z
 
-    # Section Title & Stationing
-    p_tit = rg.Point3d(base_x, base_y + sec_h + 8.5 * s, 0.0)
+        # Section Title & Stationing (Compactado e compatibilizado para prancha executiva A0)
+    p_tit = rg.Point3d(base_x, base_y + sec_h + 3.2 * s, 0.0)
     tit_str = "{} {} - {}".format(axis_title_prefix.strip(), lbl, lbl)
     if not is_longitudinal and s_data.get('estaca_str'):
         tit_str += " [{}]".format(s_data['estaca_str'])
-    tit_crvs = make_text_geometry(tit_str, p_tit, 1.50 * s, rg.TextJustification.BottomLeft, s)
+    tit_crvs = make_text_geometry(tit_str, p_tit, 1.35 * s, rg.TextJustification.BottomLeft, s)
     geoms_2d.extend(tit_crvs)
 
     sub_parts = []
     if not is_longitudinal and s_data.get('estaca_str'):
         sub_parts.append("Estaca: {}".format(s_data['estaca_str']))
-    sub_parts.append("Extensão: {:.2f}m".format(total_ext).replace('.', ','))
-    sub_parts.append("Cota Média: +{:.2f}m".format(sum(p[1].Z for p in clean_pts)/len(clean_pts)).replace('.', ','))
+    sub_parts.append("Extensao: {:.2f}m".format(total_ext).replace('.', ','))
+    sub_parts.append("Cota Media: +{:.2f}m".format(sum(p[1].Z for p in clean_pts)/len(clean_pts)).replace('.', ','))
     sub_str = " | ".join(sub_parts)
-    p_sub = rg.Point3d(base_x, base_y + sec_h + 6.8 * s, 0.0)
-    sub_crvs = make_text_geometry(sub_str, p_sub, 0.85 * s, rg.TextJustification.BottomLeft, s)
+    p_sub = rg.Point3d(base_x, base_y + sec_h + 1.5 * s, 0.0)
+    sub_crvs = make_text_geometry(sub_str, p_sub, 0.80 * s, rg.TextJustification.BottomLeft, s)
     geoms_2d.extend(sub_crvs)
 
     # Linha e Rótulo de DATUM
@@ -3765,77 +3771,9 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
             m_pp, _ = draw_nbr_level_marker(base_x + dp, base_y + (zp - sec_datum_z), "P.P. +{:.2f}".format(zp).replace('.', ','), s)
             geoms_2d.extend(m_pp)
 
-        # Caixas Técnicas de Área por Trecho/Quadrante
-        trechos = s_data.get('trechos_data', [])
-        if trechos and len(trechos) > 1:
-            for tr in trechos:
-                d_mid_tr = (tr['d_start'] + tr['d_end']) / 2.0
-                x_box_tr = base_x + d_mid_tr
-                lbl_q = tr['label_q']
-
-                p_q_badge = rg.Point3d(x_box_tr, base_y + sec_h + 3.0 * s, 0.0)
-                q_badge = draw_quadrant_badge(p_q_badge, lbl_q, s * 0.9)
-                geoms_2d.extend(q_badge)
-
-                if tr['area_corte'] > 0.01:
-                    z_sub_corte = [interpolate_terrain_z(d, clean_pts) for d, _ in clean_pts if tr['d_start'] <= d <= tr['d_end']]
-                    z_c_top = max(z_sub_corte) if z_sub_corte else (sec_datum_z + 2.0)
-                    txt_v1 = "CORTE {}: {:.2f} m²".format(lbl_q, tr['area_corte']).replace('.', ',')
-                    txt_v2 = "H. Máx: {:.2f}m | Cota: +{:.2f}m".format(tr['max_h_corte'], tr['z_proj']).replace('.', ',')
-                    hc_est = 5.5 * s
-                    y_c_box = base_y + (z_c_top - sec_datum_z) + 6.0 * s + (hc_est / 2.0)
-                    c_card, (wc, hc) = make_callout_card(x_box_tr, y_c_box, txt_v1, txt_v2, s, True)
-                    geoms_2d.extend(c_card)
-                    p_c_box_bot = rg.Point3d(x_box_tr, y_c_box - hc / 2.0, 0.0)
-                    p_crest = rg.Point3d(x_box_tr, base_y + (interpolate_terrain_z(d_mid_tr, clean_pts) - sec_datum_z), 0.0)
-                    geoms_2d.append(rg.LineCurve(p_c_box_bot, p_crest))
-                    geoms_2d.append(rg.Circle(p_crest, 0.30 * s).ToNurbsCurve())
-
-                if tr['area_aterro'] > 0.01:
-                    txt_a1 = "ATERRO {}: {:.2f} m²".format(lbl_q, tr['area_aterro']).replace('.', ',')
-                    txt_a2 = "H. Máx: {:.2f}m | Cota: +{:.2f}m".format(tr['max_h_aterro'], tr['z_proj']).replace('.', ',')
-                    ha_est = 5.5 * s
-                    y_a_box = base_y - 5.5 * s - (ha_est / 2.0)
-                    a_card, (wa, ha) = make_callout_card(x_box_tr, y_a_box, txt_a1, txt_a2, s, False)
-                    geoms_2d.extend(a_card)
-                    p_a_box_top = rg.Point3d(x_box_tr, y_a_box + ha / 2.0, 0.0)
-                    p_datum_conn = rg.Point3d(x_box_tr, base_y, 0.0)
-                    geoms_2d.append(rg.LineCurve(p_a_box_top, p_datum_conn))
-                    geoms_2d.append(rg.Circle(p_datum_conn, 0.30 * s).ToNurbsCurve())
-        else:
-            d_c_all = [d for r_type, d_list in s_data['regioes'] if r_type == "CORTE" for d in d_list]
-            if s_data['area_total_corte'] > 0.01 and d_c_all:
-                d_c_mid = (min(d_c_all) + max(d_c_all)) / 2.0
-                z_c_top = max(interpolate_terrain_z(d, clean_pts) for d in d_c_all)
-                txt_v1 = "CORTE {}: {:.2f} m²".format(lbl, s_data['area_total_corte']).replace('.', ',')
-                txt_v2 = "Altura Máxima: {:.2f}m".format(s_data['max_h_corte']).replace('.', ',')
-                hc_est = 5.5 * s
-                y_c_box = base_y + (z_c_top - sec_datum_z) + 6.0 * s + (hc_est / 2.0)
-                x_c_box = base_x + d_c_mid
-                c_card, (wc, hc) = make_callout_card(x_c_box, y_c_box, txt_v1, txt_v2, s, True)
-                geoms_2d.extend(c_card)
-                p_c_box_bot = rg.Point3d(x_c_box, y_c_box - hc / 2.0, 0.0)
-                p_crest = rg.Point3d(x_c_box, base_y + (interpolate_terrain_z(d_c_mid, clean_pts) - sec_datum_z), 0.0)
-                geoms_2d.append(rg.LineCurve(p_c_box_bot, p_crest))
-                geoms_2d.append(rg.Circle(p_crest, 0.30 * s).ToNurbsCurve())
-
-            d_a_all = [d for r_type, d_list in s_data['regioes'] if r_type == "ATERRO" for d in d_list]
-            if s_data['area_total_aterro'] > 0.01 and d_a_all:
-                d_a_mid = (min(d_a_all) + max(d_a_all)) / 2.0
-                txt_a1 = "ATERRO {}: {:.2f} m²".format(lbl, s_data['area_total_aterro']).replace('.', ',')
-                txt_a2 = "Altura Máxima: {:.2f}m".format(s_data['max_h_aterro']).replace('.', ',')
-                ha_est = 5.5 * s
-                y_a_box = base_y - 5.5 * s - (ha_est / 2.0)
-                x_a_box = base_x + d_a_mid
-                a_card, (wa, ha) = make_callout_card(x_a_box, y_a_box, txt_a1, txt_a2, s, False)
-                geoms_2d.extend(a_card)
-                p_a_box_top = rg.Point3d(x_a_box, y_a_box + ha / 2.0, 0.0)
-                p_datum_conn = rg.Point3d(x_a_box, base_y, 0.0)
-                geoms_2d.append(rg.LineCurve(p_a_box_top, p_datum_conn))
-                geoms_2d.append(rg.Circle(p_datum_conn, 0.30 * s).ToNurbsCurve())
-
-        # Ficha Técnica Executiva posicionada exatamente AO LADO da seção (Nome, Estaca, Áreas de Corte/Aterro e Alturas)
-    side_card_geoms = draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=s)
+        # Cotas de Nivel no Greide e Pontos de Passagem
+        # (As areas, alturas maximas e saldos sao apresentadas com clareza executiva na Ficha Tecnica lateral)
+        side_card_geoms = draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=s)
     geoms_2d.extend(side_card_geoms)
     return {
         'geoms_2d': geoms_2d,
@@ -4048,7 +3986,7 @@ def render_longitudinal_profile_with_guitarra(
         geoms_2d.extend(make_text_geometry(h_txt, p_hdr, 0.85 * s, rg.TextJustification.MiddleCenter, s))
 
     # 4.4 Colunas verticais em cada estaca de 20m e dados tabulados
-    pl_rot90 = rg.Plane(rg.Point3d.Origin, rg.Vector3d(0.0, 1.0, 0.0), rg.Vector3d(-1.0, 0.0, 0.0))
+    pl_rot90 = rg.Plane(rg.Point3d(0.0, 0.0, 0.0), rg.Vector3d(0.0, 1.0, 0.0), rg.Vector3d(-1.0, 0.0, 0.0))
 
     for st in stations:
         x_st = base_x + st['d']
@@ -4259,8 +4197,9 @@ def render_longitudinal_profile_with_guitarra(
     }
 
 def run():
-    doc = Rhino.RhinoDoc.ActiveDoc
-    tol = doc.ModelAbsoluteTolerance if doc else 0.001
+    doc_cls = getattr(Rhino, 'RhinoDoc', None)
+    doc = getattr(doc_cls, 'ActiveDoc', None) if doc_cls else None
+    tol = getattr(doc, 'ModelAbsoluteTolerance', 0.001)
 
     def get_input(keys, default=None):
         g = globals()
@@ -4328,6 +4267,16 @@ def run():
         ev_long = float(raw_exagero_v) if raw_exagero_v is not None else 10.0
         if ev_long <= 0.1: ev_long = 1.0
     except: ev_long = 10.0
+
+        # Inicializacao incondicional de seguranca de variaveis globais e espacamentos
+    global_vol_summary = {
+        'corte_geo': 0.0,
+        'aterro_geo': 0.0,
+        'saldo': 0.0,
+        'fator_k': fator_k
+    }
+    espacamento_y_v = 240.0 * s
+    pitch_v = 240.0 * s
 
     geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
     if not geoms_terreno:
@@ -4397,7 +4346,7 @@ def run():
     # Moving along u_long_down (downwards), projection increases.
     # Sorting in ascending order along u_long_down places the TOP section first (A).
     def get_sec_proj_down(crv):
-        p_mid = crv.PointAtNormalizedLength(0.5)
+        p_mid = crv.PointAtNormalizedLength(0.5) if hasattr(crv, 'PointAtNormalizedLength') else crv.PointAt((crv.Domain.T0 + crv.Domain.T1) / 2.0)
         return p_mid.X * u_long_down.X + p_mid.Y * u_long_down.Y
 
     lista_linhas.sort(key=get_sec_proj_down)
@@ -4561,7 +4510,7 @@ def run():
         # Menor projeção = mais à esquerda -> Eixo 1
         # Maior projeção = mais à direita -> Eixo N
         def get_vert_proj_lateral(crv):
-            p_mid = crv.PointAtNormalizedLength(0.5)
+            p_mid = crv.PointAtNormalizedLength(0.5) if hasattr(crv, 'PointAtNormalizedLength') else crv.PointAt((crv.Domain.T0 + crv.Domain.T1) / 2.0)
             return p_mid.X * u_corte.X + p_mid.Y * u_corte.Y
 
         lista_vert_dups.sort(key=get_vert_proj_lateral)
@@ -4703,21 +4652,21 @@ def run():
         sec_v_heights_below.append(12.0 * s)
 
     # =========================================================================
-    # 2. DEFINIÇÃO DE COORDENADAS 2D E ESPAÇAMENTOS DAS PRANCHAS A0 REGULAMENTARES (NBR 10068 / NBR 6492)
-    #    FOLHA 03/03: SEÇÕES TRANSVERSAIS (A, B, C...) - 2 COLUNAS DE 5 SEÇÕES (ESCALA 1:200)
-    #    FOLHA 02/03: PERFIS LONGITUDINAIS VIÁRIOS COM GUITARRA (ESCALA H=1:1.000 / V=1:100)
+    # 2. DEFINICAO DE COORDENADAS 2D E ESPACAMENTOS DAS PRANCHAS A0 REGULAMENTARES (NBR 10068 / NBR 6492)
+    #    FOLHA 03/03: SECOES TRANSVERSAIS (A, B, C...) - 2 COLUNAS DE 5 SECOES (ESCALA 1:200)
+    #    FOLHA 02/03: PERFIS LONGITUDINAIS VIARIOS COM GUITARRA (ESCALA H=1:1.000 / V=1:100) - 2 COLUNAS
     # =========================================================================
     banner_space = 14.0 * s
 
-    # Organização das Seções Transversais em 2 Colunas para caber perfeitamente na Folha A0 (237.8 x 168.2 m a 1:200)
-    # Coluna 1 (Seções A a E): base_x = orig_x + 8.0*s
-    # Coluna 2 (Seções F a J): base_x = orig_x + 104.0*s
-    # Carimbo oficial e Legenda: base_x = orig_x + 200.8*s a 235.8*s
+    # 2.1 Organizacao das Secoes Transversais em 2 Colunas na Folha 03/03 (237.80 x 168.20 m a 1:200)
+    # Coluna 1 (Secoes A a E): base_x = orig_x + 8.0*s
+    # Coluna 2 (Secoes F a J): base_x = orig_x + 104.0*s
+    # Altura do carimbo oficial e legenda: X = orig_x + 200.8*s a 235.8*s
     num_half = (num_secoes + 1) // 2 if num_secoes > 5 else num_secoes
     sec_base_xs = []
     sec_base_ys = []
-    y_start_sec = orig_y - 30.0 * s
-    pitch_sec_y = 28.5 * s
+    y_start_sec = orig_y - 28.0 * s
+    pitch_sec_y = 28.0 * s
 
     for i in range(num_secoes):
         if num_secoes <= 5:
@@ -4731,25 +4680,38 @@ def run():
         sec_base_xs.append(bx)
         sec_base_ys.append(by)
 
-    # Espaçamento vertical de segurança para compatibilidade legada
     espacamento_y = pitch_sec_y
     max_w_t = max([t['total_ext'] for t in sec_terrain_info] or [120.0])
 
-    # Folha 02/03: Perfis Longitudinais das Vias com Guitarra (H=1:1.000 / V=1:100 - Ev=10x)
-    # Dimensões A0 a 1:1.000: 1189.0 x 841.0 m. Posicionada à direita da Folha 03 com folga ampla (248m)
-    folha2_orig_x = orig_x + 248.0 * s
+    # 2.2 Organizacao dos Perfis Longitudinais das Vias em 2 Colunas na Folha 02/03 (H=1:1.000 / V=1:100)
+    # Folha 02 A0 (1189 x 841 m). Posicionada a direita da Folha 03 com folga de 260m
+    # Coluna 1 (Eixos 1, 2, 3): base_x = folha2_orig_x + 45.0*s
+    # Coluna 2 (Eixos 4, 5):    base_x = folha2_orig_x + 520.0*s
+    # Carimbo oficial e Legenda: X = folha2_orig_x + 1004.0*s a 1179.0*s
+    folha2_orig_x = orig_x + 260.0 * s
     folha2_orig_y = orig_y - 841.0 * s
     h_guitarra_est = 41.0 * s
-    sec_v_base_xs = [folha2_orig_x + 50.0 * s for _ in range(num_verticais)]
-    sec_v_base_ys = []
-    y_top_v_datum = orig_y - 130.0 * s
-    pitch_v = 145.0 * s
-    for j in range(num_verticais):
-        datum_y_j = y_top_v_datum - j * pitch_v
-        sec_v_base_ys.append(datum_y_j)
-
+    pitch_v = 240.0 * s
     espacamento_y_v = pitch_v
-    col2_x = folha2_orig_x + 50.0 * s
+
+    num_half_v = (num_verticais + 1) // 2 if num_verticais > 3 else num_verticais
+    sec_v_base_xs = []
+    sec_v_base_ys = []
+    y_start_v = orig_y - 180.0 * s
+
+    for j in range(num_verticais):
+        if num_verticais <= 3:
+            col_j = 0
+            row_j = j
+        else:
+            col_j = 0 if j < num_half_v else 1
+            row_j = j if j < num_half_v else (j - num_half_v)
+        bx_v = folha2_orig_x + (45.0 * s if col_j == 0 else 520.0 * s)
+        by_v = y_start_v - row_j * pitch_v
+        sec_v_base_xs.append(bx_v)
+        sec_v_base_ys.append(by_v)
+
+    col2_x = folha2_orig_x + 45.0 * s
     max_w_v = max([t['total_ext'] for t in sec_v_terrain_info] or [120.0])
 
     # =========================================================================
@@ -4969,6 +4931,18 @@ def run():
         saldo_local = vc - va_banco
         vols_trechos.append((d_trecho, vc, va_geo, va_banco, saldo_local))
 
+    # Atualizacao imediata do resumo volumetrico global para carimbos e pranchas executivas
+    if vols_trechos:
+        vc_tot_pre = sum(item[1] for item in vols_trechos)
+        va_tot_pre = sum(item[2] for item in vols_trechos)
+        va_banco_tot_pre = sum(item[3] for item in vols_trechos) if len(vols_trechos[0]) >= 4 else va_tot_pre
+        global_vol_summary = {
+            'corte_geo': vc_tot_pre,
+            'aterro_geo': va_tot_pre,
+            'saldo': vc_tot_pre - va_banco_tot_pre,
+            'fator_k': fh if 'fh' in locals() else 1.20
+        }
+
     ordenada_bruckner = 0.0
     fluxo_transporte = []
     for i, (d_t, vc, va_geo, va_banco, s_local) in enumerate(vols_trechos):
@@ -5108,9 +5082,10 @@ def run():
                 y_banner = y_bot_current - 6.0 * s
                 x_banner = base_x + s_data['total_ext'] / 2.0
 
-            banner_geoms, _ = make_mass_haul_banner(x_banner, y_banner, lbl, lbl_prox, d_t, vc_t, va_t, s_t, nota_t, s)
-            desenho_completo_secoes_2d.extend(banner_geoms)
-            desenho_secoes_t_only.extend(banner_geoms)
+            if num_secoes <= 3 or pitch_sec_y > 45.0 * s:
+                banner_geoms, _ = make_mass_haul_banner(x_banner, y_banner, lbl, lbl_prox, d_t, vc_t, va_t, s_t, nota_t, s)
+                desenho_completo_secoes_2d.extend(banner_geoms)
+                desenho_secoes_t_only.extend(banner_geoms)
 
     # 7.1.1 ENQUADRAMENTO EM PRANCHA REGULAMENTAR A0 (FOLHA 03/03) - ESCALA 1:200
     #     Dimensões A0 a 1:200: 237.80 x 168.20 m.
@@ -5128,16 +5103,8 @@ def run():
         desenho_completo_secoes_2d.extend(prancha_secoes_geoms)
         desenho_secoes_t_only.extend(prancha_secoes_geoms)
 
-    # 7.2 Cabeçalho da Folha 02 (Perfis Longitudinais Viários A0)
+    # 7.2 Perfis Longitudinais Viarios A0 (Folha 02/03)
     if num_verticais >= 1:
-        p_hdr_col2 = rg.Point3d(folha2_orig_x + 50.0 * s, orig_y - 35.0 * s, 0.0)
-        t_hdr2 = make_text_geometry("PERFIS LONGITUDINAIS VIÁRIOS COM GUITARRA (EIXOS 1 A 5)", p_hdr_col2, 4.0 * s, rg.TextJustification.BottomLeft, s)
-        p_sub_hdr2 = rg.Point3d(folha2_orig_x + 50.0 * s, orig_y - 45.0 * s, 0.0)
-        sub_hdr2 = make_text_geometry("Escalas: H=1:1.000 / V=1:100 (Exagero: 10x) | Grade Técnica Normativa com Cota TN, Greide, Alturas, Estacas e PIVs", p_sub_hdr2, 0.95 * s, rg.TextJustification.BottomLeft, s)
-        desenho_completo_secoes_2d.extend(t_hdr2)
-        desenho_completo_secoes_2d.extend(sub_hdr2)
-        desenho_secoes_v_only.extend(t_hdr2)
-        desenho_secoes_v_only.extend(sub_hdr2)
 
         for idx_v, s_data_v in enumerate(sec_v_data_list):
             lbl_v = labels_v[idx_v]
@@ -5190,18 +5157,20 @@ def run():
                 else:
                     nota_tv = ""
 
-                next_sec_v = sec_v_data_list[idx_v + 1]
-                next_base_y_v = sec_v_base_ys[idx_v + 1] if (idx_v + 1) < len(sec_v_base_ys) else (base_y_v - espacamento_y_v)
-                next_datum_v = math.floor(next_sec_v['z_min'] - 2.0)
-                next_h_top_v = (next_sec_v['z_max'] - next_datum_v) * ev_long + 16.0 * s
-                y_bot_current_v = base_y_v - 41.0 * s
-                y_top_next_v = next_base_y_v + next_h_top_v
-                y_banner_v = (y_bot_current_v + y_top_next_v) / 2.0
-                x_banner_v = base_x_v + s_data_v['total_ext'] / 2.0
+                # Desenha banner apenas se o proximo perfil estiver na mesma coluna
+                if (idx_v + 1) < len(sec_v_base_xs) and abs(sec_v_base_xs[idx_v + 1] - base_x_v) < 10.0 * s:
+                    next_sec_v = sec_v_data_list[idx_v + 1]
+                    next_base_y_v = sec_v_base_ys[idx_v + 1]
+                    next_datum_v = math.floor(next_sec_v['z_min'] - 2.0)
+                    next_h_top_v = (next_sec_v['z_max'] - next_datum_v) * ev_long + 16.0 * s
+                    y_bot_current_v = base_y_v - 41.0 * s
+                    y_top_next_v = next_base_y_v + next_h_top_v
+                    y_banner_v = (y_bot_current_v + y_top_next_v) / 2.0
+                    x_banner_v = base_x_v + s_data_v['total_ext'] / 2.0
 
-                banner_geoms_v, _ = make_mass_haul_banner(x_banner_v, y_banner_v, lbl_v, lbl_v_prox, d_tv, vc_tv, va_tv, s_tv, nota_tv, s)
-                desenho_completo_secoes_2d.extend(banner_geoms_v)
-                desenho_secoes_v_only.extend(banner_geoms_v)
+                    banner_geoms_v, _ = make_mass_haul_banner(x_banner_v, y_banner_v, lbl_v, lbl_v_prox, d_tv, vc_tv, va_tv, s_tv, nota_tv, s)
+                    desenho_completo_secoes_2d.extend(banner_geoms_v)
+                    desenho_secoes_v_only.extend(banner_geoms_v)
 
         # ENQUADRAMENTO EM PRANCHA REGULAMENTAR A0 (FOLHA 02/03) - ESCALA H=1:1.000 / V=1:100
         # Dimensões A0 a 1:1.000: 1189.00 x 841.00 m.
@@ -5252,7 +5221,7 @@ def run():
         p_ref_2 = lista_alinhadas[-1].PointAtStart
         v_ref = p_ref_2 - p_ref_1
         if v_ref.Length > 1e-4:
-            u_ref = rg.Vector3d(v_ref)
+            u_ref = rg.Vector3d(v_ref.X, v_ref.Y, v_ref.Z)
             u_ref.Unitize()
             l_align_ref = rg.LineCurve(p_ref_1 - u_ref * (4.0 * s), p_ref_2 + u_ref * (4.0 * s))
             planta_baixa_geoms.append(l_align_ref)
@@ -5600,11 +5569,11 @@ def run():
 
     # Marcos e Selos Geotécnicos de Estabilidade (NBR 11682) nas zonas críticas de corte e aterro
     if len(lista_alinhadas) >= 3:
-        p_sec_c = lista_alinhadas[2].PointAt(lista_alinhadas[2].Domain.Mid)
+        p_sec_c = lista_alinhadas[2].PointAt((lista_alinhadas[2].Domain.T0 + lista_alinhadas[2].Domain.T1) / 2.0)
         badge_sec_c = draw_quadrant_badge(p_sec_c + rg.Vector3d(0, 4.0*s, 0), "SEÇÃO C: ATERRO CRÍTICO (H=8,92m > 4,5m) - EXIGE BANQUETEAMENTO / BERMAS (NBR 11682 / FS>=1,5)", s=s)
         planta_baixa_geoms.extend(badge_sec_c)
     if len(lista_verticais) >= 4:
-        p_eixo_4 = lista_verticais[3].PointAt(lista_verticais[3].Domain.Mid)
+        p_eixo_4 = lista_verticais[3].PointAt((lista_verticais[3].Domain.T0 + lista_verticais[3].Domain.T1) / 2.0)
         badge_eixo_4 = draw_quadrant_badge(p_eixo_4 + rg.Vector3d(0, 4.0*s, 0), "EIXO 4: CORTE CRÍTICO (H=7,52m > 4,5m) - EXIGE BERMAS OU CONTENÇÃO (NBR 11682 / FS>=1,5)", s=s)
         planta_baixa_geoms.extend(badge_eixo_4)
 
