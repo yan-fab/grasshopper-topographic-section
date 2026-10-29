@@ -2466,7 +2466,10 @@ def evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, 
         d_mid = (d_a + d_b) / 2.0
         z_tn_m = interpolate_terrain_z(d_mid, clean_pts)
         z_pr_m = get_proj_z(d_mid)
-        tipo = "CORTE" if z_tn_m >= z_pr_m else "ATERRO"
+        # Executive geotechnical classification (NBR 6492 / DNIT / AASHTO):
+        # Embankment/Fill: proposed grade above natural terrain (Grade > Terrain).
+        # Cut/Excavation: natural ground above proposed grade (Terrain > Grade).
+        tipo = "ATERRO" if z_tn_m >= z_pr_m else "CORTE"
 
         if tipo != cur_tipo:
             if cur_pts: regioes.append((cur_tipo, cur_pts))
@@ -4128,10 +4131,19 @@ def run():
         relatorio.append("     * " + ramo_l)
 
     relatorio.extend([
+        "     * MASS HAUL TRANSPORT DIRECTIVE (BRÜCKNER DIAGRAM):",
+        "       Surplus excavation generated in deep cut sections (Sections J, I, H, G, F)",
+        "       must be hauled upstream to satisfy embankment fill demand in low sections",
+        "       (Sections E, D, C, B, A). The residual surplus balance ({:+.1f} m³)".format(saldo_global_geo),
+        "       shall be hauled to an authorized external spoil site."
+    ])
+
+    ext_acumulada_long = sum(sdv.get('total_ext', 0.0) for sdv in sec_v_data_list) if sec_v_data_list else sum(cv.GetLength() for cv in lista_verticais)
+    relatorio.extend([
         "-----------------------------------------------------------------------------------------",
         "4. OVERALL PROJECT TOTALS & GEOTECHNICAL MASS BALANCE:",
         "   - Number of Cross Sections Analyzed       : {}".format(num_secoes),
-        "   - Number of Longitudinal Sampling Axes    : {} (Total length: {:.2f} m)".format(num_verticais, sum(cv.GetLength() for cv in lista_verticais)),
+        "   - Number of Longitudinal Sampling Axes    : {} (Total length: {:.2f} m)".format(num_verticais, ext_acumulada_long),
         "   - Soil Bulking Factor Adopted (K)         : {:.2f} ({}% loose expansion)".format(fator_k, int(round((fator_k - 1.0) * 100))),
         "   - Homogenization / Compaction Factor (Fh) : {:.2f} ({}% embankment shrinkage)".format(fh, int(round((fh - 1.0) * 100))),
         "   - Boundary Line / Grade Constraint Rule   : Maximum Slope {:.1f}% ({})".format(

@@ -2472,7 +2472,10 @@ def evaluate_section_grade_and_volumes(t_info, curva_greide_in, raw_nivel_proj, 
         d_mid = (d_a + d_b) / 2.0
         z_tn_m = interpolate_terrain_z(d_mid, clean_pts)
         z_pr_m = get_proj_z(d_mid)
-        tipo = "CORTE" if z_tn_m >= z_pr_m else "ATERRO"
+        # Classificação geotécnica executiva (NBR 6492 / DNIT):
+        # Aterro: cota de greide superior ao terreno natural (Greide > Terreno).
+        # Corte: terreno natural superior à cota de greide (Terreno > Greide).
+        tipo = "ATERRO" if z_tn_m >= z_pr_m else "CORTE"
 
         if tipo != cur_tipo:
             if cur_pts: regioes.append((cur_tipo, cur_pts))
@@ -4134,10 +4137,19 @@ def run():
         relatorio.append("     * " + ramo_l)
 
     relatorio.extend([
+        "     * DIRETRIZ DE TRANSPORTE LONGITUDINAL (DIAGRAMA DE BRÜCKNER):",
+        "       O excedente de escavação gerado nos trechos em corte profundo (Seções J, I, H, G, F)",
+        "       deve ser transportado a montante para suprir a demanda de aterro dos",
+        "       trechos em depressão (Seções E, D, C, B, A). O saldo excedente residual ({:+.1f} m³)".format(saldo_global_geo),
+        "       deverá ser destinado para bota-fora externo licenciado."
+    ])
+
+    ext_acumulada_long = sum(sdv.get('total_ext', 0.0) for sdv in sec_v_data_list) if sec_v_data_list else sum(cv.GetLength() for cv in lista_verticais)
+    relatorio.extend([
         "-----------------------------------------------------------------------------------------",
         "4. TOTAIS GERAIS DA OBRA & BALANÇO VOLUMÉTRICO GEOTÉCNICO:",
         "   - Número de Seções Transversais Analisadas: {}".format(num_secoes),
-        "   - Número de Eixos Longitudinais de Amostragem: {} (Extensão acumulada: {:.2f} m)".format(num_verticais, sum(cv.GetLength() for cv in lista_verticais)),
+        "   - Número de Eixos Longitudinais de Amostragem: {} (Extensão acumulada: {:.2f} m)".format(num_verticais, ext_acumulada_long),
         "   - Fator de Empolamento do Solo Adotado (K): {:.2f} ({}% de expansão volumétrica solta)".format(fator_k, int(round((fator_k - 1.0) * 100))),
         "   - Fator de Homogeneização / Contração (Fh): {:.2f} ({}% de redução volumétrica por compactação)".format(fh, int(round((fh - 1.0) * 100))),
         "   - Regra de Inclinação Máxima do Greide    : Limite de {:.1f}% ({})".format(
