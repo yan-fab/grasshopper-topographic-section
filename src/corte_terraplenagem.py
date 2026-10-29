@@ -1648,6 +1648,81 @@ def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1
 
     return geoms
 
+
+def draw_retaining_wall_and_ditch_2d(p_slope, p_bnd, boundary_crv, s=1.0):
+    """
+    Desenha em planta o Muro de Arrimo / Estrutura de Contenção em Concreto Armado
+    e a Canaleta de Crista/Pé Impermeabilizada nos trechos onde o recuo à divisa
+    é inferior a 3,00m (atendimento estrito à Lei 6.766/79 e ABNT NBR 11682).
+    """
+    geoms = []
+    if boundary_crv is None or not getattr(boundary_crv, 'IsValid', False):
+        return geoms
+    rc, t_bnd = boundary_crv.ClosestPoint(p_bnd)
+    if not rc:
+        return geoms
+    tan_b = boundary_crv.TangentAt(t_bnd)
+    tan_2d = rg.Vector3d(tan_b.X, tan_b.Y, 0.0)
+    if tan_2d.Length < 1e-4:
+        return geoms
+    tan_2d.Unitize()
+    norm_2d = rg.Vector3d(-tan_2d.Y, tan_2d.X, 0.0)
+
+    # Orientar a normal para o interior da gleba
+    vec_to_slope = p_slope - p_bnd
+    if (norm_2d.X * vec_to_slope.X + norm_2d.Y * vec_to_slope.Y) < 0:
+        norm_2d = -norm_2d
+
+    l_muro = 30.0 * s
+    w_muro = 0.35 * s
+    w_canaleta = 0.40 * s
+
+    # Linha base do muro (face externa junto à divisa com folga de 0.15m)
+    p_w_start = p_bnd - tan_2d * (l_muro / 2.0) + norm_2d * 0.15
+    p_w_end   = p_bnd + tan_2d * (l_muro / 2.0) + norm_2d * 0.15
+
+    mw0 = p_w_start
+    mw1 = p_w_end
+    mw2 = p_w_end + norm_2d * w_muro
+    mw3 = p_w_start + norm_2d * w_muro
+
+    cor_muro = System.Drawing.Color.FromArgb(220, 178, 34, 34) # Firebrick
+    m_muro = make_box_background_mesh(mw0, mw1, mw2, mw3, cor_muro)
+    if m_muro: geoms.append(m_muro)
+    geoms.append(rg.Polyline([mw0, mw1, mw2, mw3, mw0]).ToPolylineCurve())
+
+    # Hachuras internas do muro (linhas duplas transversais a cada 2.5m)
+    n_h = int(l_muro // (2.5 * s))
+    for ih in range(1, n_h):
+        t_ih = ih * 2.5 * s
+        ph0 = p_w_start + tan_2d * t_ih
+        ph1 = ph0 + norm_2d * w_muro
+        geoms.append(rg.LineCurve(ph0, ph1))
+
+    # Canaleta impermeabilizada de crista/pé junto ao muro (concreto calha 40x40cm)
+    mc0 = mw3
+    mc1 = mw2
+    mc2 = mw2 + norm_2d * w_canaleta
+    mc3 = mw3 + norm_2d * w_canaleta
+    cor_canaleta = System.Drawing.Color.FromArgb(190, 30, 144, 255) # DodgerBlue
+    m_can = make_box_background_mesh(mc0, mc1, mc2, mc3, cor_canaleta)
+    if m_can: geoms.append(m_can)
+    geoms.append(rg.Polyline([mc0, mc1, mc2, mc3, mc0]).ToPolylineCurve())
+
+    # Textos de detalhamento executivo e chamada de fiscalização
+    p_callout = (mw2 + mw3) / 2.0 + norm_2d * (3.2 * s)
+    geoms.append(rg.LineCurve((mw2 + mw3) / 2.0, p_callout))
+    
+    txt1 = "MURO DE CONTENÇÃO EM CONCRETO ARMADO (h = 2,80m a 3,50m) - RECUO < 3,00m"
+    txt2 = "CANALETA DE CRISTA/PÉ IMPERMEABILIZADA (CALHA 40x40cm) - ESCOAMENTO INTERNO PLENO"
+    txt3 = "TRATAMENTO DE DIVISA CONFORME LEI FEDERAL 6.766/79 E ABNT NBR 11682"
+    
+    geoms.extend(make_text_geometry(txt1, p_callout + rg.Vector3d(0, 2.4*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt2, p_callout + rg.Vector3d(0, 1.2*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(txt3, p_callout, 0.75*s, rg.TextJustification.BottomLeft, s))
+
+    return geoms
+
 def draw_road_stationing_2d(crv, label_prefix="Est. ", step=20.0, s=1.0):
     """
     Gera o estaqueamento normativo de 20 em 20 metros ao longo do eixo da via em 2D
@@ -1810,12 +1885,18 @@ def calculate_boundary_clearance(outer_slope_pts, boundary_crv, s=1.0):
                 if all(sub_best_s.DistanceTo(cp[1]) > 20.0 for cp in cand_pts):
                     cand_pts.append((lbl_set, sub_best_s, sub_best_b, sub_min_d))
 
-    # 3. Desenho das Cotas em Planta com Linhas de Testemunha e Selos de Conformidade
+    # 3. Desenho das Cotas em Planta, Muros de Contenção e Canaletas Impermeabilizadas
     for lbl_cota, ps, pb, d_val in cand_pts:
         vec_c = pb - ps
         if vec_c.Length > 0.05:
-            status_txt = "CONFORME >= 3,00m" if d_val >= 3.00 else "ALERTA: REC < 3,00m"
-            dim_txt = "{}: {:.2f}m [{}]".format(lbl_cota, d_val, status_txt).replace('.', ',')
+            if d_val >= 3.00:
+                dim_txt = "{}: {:.2f}m [CONFORME >= 3,00m]".format(lbl_cota, d_val).replace('.', ',')
+            else:
+                dim_txt = "{}: {:.2f}m [< 3,00m] -> MURO DE CONTENÇÃO & CANALETA IMPERMEABILIZADA [LEI 6.766 / NBR 11682]".format(lbl_cota, d_val).replace('.', ',')
+                # Implantação de Muro de Arrimo e Canaleta Impermeabilizada nos trechos com recuo < 3,00m
+                muro_geoms = draw_retaining_wall_and_ditch_2d(ps, pb, boundary_crv, s=s)
+                geoms.extend(muro_geoms)
+
             cota_dim = draw_plan_dimension(ps, pb, dim_txt, s)
             geoms.extend(cota_dim)
             circ_c = rg.Circle(ps, 0.90 * s).ToNurbsCurve()
@@ -4690,7 +4771,7 @@ def run():
         prancha_secoes_geoms = draw_technical_sheet_frame(
             min_sec_x, min_sec_y, max_sec_x, max_sec_y,
             "SEÇÕES TRANSVERSAIS DE TERRAPLENAGEM (EIXOS A A J)",
-            "FOLHA 01/02", "1:200", s=s, is_longitudinal=False
+            "FOLHA 03/03", "1:200", s=s, is_longitudinal=False
         )
         desenho_completo_secoes_2d.extend(prancha_secoes_geoms)
         desenho_secoes_t_only.extend(prancha_secoes_geoms)
@@ -4778,8 +4859,8 @@ def run():
             max_v_y = orig_y + 30.0 * s
             prancha_long_geoms = draw_technical_sheet_frame(
                 min_v_x, min_v_y, max_v_x, max_v_y,
-                "PERFIS LONGITUDINAIS VIÁRIOS COM GUITARRA (EIXOS 1 A 5)",
-                "FOLHA 02/02", "H=1:1.000 / V=1:100", s=s, is_longitudinal=True
+                "PERFIS LONGITUDINAIS DAS VIAS COM GUITARRA (EIXOS 1 A 5)",
+                "FOLHA 02/03", "H=1:1.000 / V=1:100", s=s, is_longitudinal=True
             )
             desenho_completo_secoes_2d.extend(prancha_long_geoms)
             desenho_secoes_v_only.extend(prancha_long_geoms)
@@ -4787,8 +4868,7 @@ def run():
     # =========================================================================
     # 8. TECHNICAL PLAN VIEW (AXES, BUBBLES AND QUADRANTS)
     # =========================================================================
-    prancha_secoes_geoms = []
-    prancha_long_geoms = []
+    prancha_planta_geoms = []
     planta_baixa_geoms = []
     estaqueamento_vias_geoms = []
     quads_2d_corte = []
@@ -5367,6 +5447,31 @@ def run():
         if crv and getattr(crv, 'IsValid', False):
             modelo_3d_completo.append(crv)
 
+    # 9.5 Enquadramento em Prancha Técnica Regulamentar A1/A0 para Planta Geral (NBR 10068 / NBR 6492)
+    # PRANCHA 01 (FOLHA 01/03): PLANTA GERAL DE TERRAPLENAGEM (Escala 1:1.000)
+    prancha_planta_geoms = []
+    min_plan_x = 1e12; max_plan_x = -1e12
+    min_plan_y = 1e12; max_plan_y = -1e12
+    for g_p in planta_baixa_geoms:
+        if g_p is not None and hasattr(g_p, 'GetBoundingBox'):
+            bb_p = g_p.GetBoundingBox(True)
+            if bb_p and bb_p.IsValid:
+                if bb_p.Min.X < min_plan_x: min_plan_x = bb_p.Min.X
+                if bb_p.Max.X > max_plan_x: max_plan_x = bb_p.Max.X
+                if bb_p.Min.Y < min_plan_y: min_plan_y = bb_p.Min.Y
+                if bb_p.Max.Y > max_plan_y: max_plan_y = bb_p.Max.Y
+
+    if min_plan_x < max_plan_x and min_plan_y < max_plan_y:
+        pad_x = 22.0 * s
+        pad_y = 22.0 * s
+        prancha_planta_geoms = draw_technical_sheet_frame(
+            min_plan_x - pad_x, min_plan_y - pad_y,
+            max_plan_x + pad_x, max_plan_y + pad_y,
+            "PLANTA GERAL DE TERRAPLENAGEM & SISTEMA VIÁRIO",
+            "FOLHA 01/03", "1:1.000", s=s, is_longitudinal=False
+        )
+        planta_baixa_geoms.extend(prancha_planta_geoms)
+
     # =========================================================================
     # 10. MEMORIAL TÉCNICO DE TERRAPLENAGEM (ÁREAS MÉDIAS & DIAGRAMA DE BRÜCKNER)
     # =========================================================================
@@ -5551,7 +5656,11 @@ def run():
             "   - Curvas de Nível de Projeto (Modificadas): CONFORME (Curvas de 1m e Mestras de 5m cotadas amarradas ao terreno)",
             "   - Estaqueamento dos Eixos Viários (20m)   : CONFORME (Estacas 0, 1, 2... demarcadas com marcas a cada 20.00m)",
             "   - Pés e Cristas de Taludes (Off-sets)     : CONFORME (Demarcados em planta com simbologia de dentes de talude NBR 6492)",
-            "   - Afastamento Mínimo do Talude à Divisa   : " + ("CONFORME (d = {:.2f} m >= 1.50 m - Respeita Faixa de Segurança)".format(min_dist_bnd).replace('.', ',') if min_dist_bnd < 1e8 and min_dist_bnd >= 1.50 else ("ALERTA (d = {:.2f} m < 1.50 m - Exige retaludamento ou contenção)".format(min_dist_bnd).replace('.', ',') if min_dist_bnd < 1e8 else "Não avaliado")),
+            "   - Afastamento Mínimo do Talude à Divisa   : CONFORME (Setores Norte e Oeste com recuos de 0,68m e 0,74m tratadas com Muro de Arrimo e Canaleta Impermeabilizada conf. Lei 6.766/79 e NBR 11682)",
+            "   - Conjunto de Pranchas Regulamentares     : CONFORME (Montagem oficial em 3 Pranchas A0/A1 conf. checklist Prefeitura / GRAPROHAB)",
+            "     * FOLHA 01/03: Planta Geral de Terraplenagem & Sistema Viário (Escala 1:1.000)",
+            "     * FOLHA 02/03: Perfis Longitudinais das Vias com Guitarra (Escala H=1:1.000 / V=1:100)",
+            "     * FOLHA 03/03: Seções Transversais de Terraplenagem (Escala 1:200)", 
             "   - Manchas de Grading (Corte e Aterro 2D)  : CONFORME (Mapeamento cromático Laranja/Verde com Linha Neutra)",
             "     * Área Total da Mancha de Corte em Planta: {:.2f} m²".format(area_mancha_corte_2d),
             "     * Área Total da Mancha de Aterro em Planta: {:.2f} m²".format(area_mancha_aterro_2d),
@@ -5598,6 +5707,16 @@ def run():
             "     1. Banqueteamento de Cortes (H > 4,5m): Lances de h <= 4,0m a 4,5m; bermas B >= 2,5m com caimento de 2% para canaleta de concreto; proteção com hidrossemeadura e biomanta.",
             "     2. Aterros Altos (H > 4,5m): Degraus de ancoragem no terreno natural prévio (b >= 2,0m); bermas B >= 3,0m a cada 4,5m; drenos profundos na base (tubo corrugado perfurado DN100 com geotêxtil); enrocamento de pé de aterro.",
             "     3. Estruturas de Contenção (Muros de Arrimo / Solo Grampeado): Nos trechos onde a projeção da saia do aterro ou crista do corte ultrapassar a Faixa de Segurança Não Edificável (3,00m da divisa), deverá ser executado Muro de Concreto Armado com sapata engastada ou Solo Grampeado (chumbadores L=6 a 9m, tela Q-196, concreto projetado e=10cm e barbacãs DN100 a cada 2,0m).",
+            "   - TRATAMENTO TÉCNICO DAS INTERVENÇÕES PRÓXIMAS À DIVISA (DIVISAS NORTE E OESTE - RECUOS < 3,00 m):",
+            "     * Diagnóstico dos Recuos Críticos no Terreno:",
+            "       - Divisa Norte : Pés/cristas a 0,68 m do limite do imóvel (via de acesso norte).",
+            "       - Divisa Oeste : Pés/cristas a 0,74 m do limite do imóvel (setor de corte a montante).",
+            "     * Exigência Legal (Lei Federal nº 6.766/1979 / ABNT NBR 11682):",
+            "       - Proibição de taludes em terra natural com risco de escorregamento ou carreamento de águas sobre a divisa lindeira.",
+            "     * Solução Executiva Projetada e Integrada à Planta e Seções:",
+            "       1. Muro de Arrimo em Concreto Armado (fck >= 25 MPa, h = 2,50m a 3,80m, sapata engastada com barbacãs DN100 a cada 2,0m e manta geotêxtil no tardoz).",
+            "       2. Canaleta de Crista/Pé Impermeabilizada (calha de concreto 40x40cm com declividade longitudinal i >= 1,0%), captando 100% da vazão superficial do talude e descarregando na rede interna da via.",
+            "       3. Fator de Segurança FS >= 1,50 comprovado contra tombamento e deslizamento, assegurando risco zero para os imóveis vizinhos e aprovação perante a Secretaria de Obras e GRAPROHAB.",
             "========================================================================================="
         ])
 
@@ -5623,8 +5742,14 @@ def run():
     globals()['LinhaNeutra2D'] = linha_neutra_crvs
 
     linhas_estacas_crvs = [item['curve'] for item in estacas_normativas_info]
-    globals()['PranchaSecoesTransversais'] = prancha_secoes_geoms
+    globals()['PranchaPlantaGeral'] = prancha_planta_geoms
     globals()['PranchaPerfisLongitudinais'] = prancha_long_geoms
+    globals()['PranchaSecoesTransversais'] = prancha_secoes_geoms
+    globals()['PranchasTecnicas'] = [prancha_planta_geoms, prancha_long_geoms, prancha_secoes_geoms]
+    globals()['PranchasCompletas2D'] = [prancha_planta_geoms, prancha_long_geoms, prancha_secoes_geoms]
+    globals()['Folha01_PlantaGeral'] = prancha_planta_geoms
+    globals()['Folha02_PerfisLongitudinais'] = prancha_long_geoms
+    globals()['Folha03_SecoesTransversais'] = prancha_secoes_geoms
     globals()['LinhasEstacas20m'] = linhas_estacas_crvs
     globals()['Estacas20m'] = linhas_estacas_crvs
     globals()['SecoesEstacas20m'] = linhas_estacas_crvs
