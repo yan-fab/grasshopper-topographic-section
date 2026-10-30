@@ -50,6 +50,7 @@ SAÍDAS (OUTPUTS):
 ===============================================================================
 """
 
+import sys
 import math
 import Rhino
 import Rhino.Geometry as rg
@@ -174,6 +175,207 @@ def to_list(val):
         out.append(v)
     _flatten(val)
     return out
+
+
+class CategorizedGeomList(list):
+    """
+    Subclass of Python list carrying categorized graphic elements:
+    - perfil: topographic profiles, grade curves, datum lines, cut/fill meshes, axis lines
+    - tabela: table frames, dividers, cells, summary cards, guitarras, carimbos
+    - textos: text entities and stroke font annotations
+    - moldura: sheet borders, margins, fold marks
+    Behaves 100% as a normal Python list, maintaining complete backward compatibility.
+    """
+    def __init__(self, all_geoms=None, perfil=None, tabela=None, textos=None, moldura=None):
+        super(CategorizedGeomList, self).__init__(all_geoms or [])
+        self.perfil = list(perfil) if perfil else []
+        self.tabela = list(tabela) if tabela else []
+        self.textos = list(textos) if textos else []
+        self.moldura = list(moldura) if moldura else []
+
+def to_gh_data_tree(path_to_items_dict):
+    """
+    Converts a dictionary {(path_tuple): [geometries]} to a native Grasshopper DataTree
+    when running inside Grasshopper. If Grasshopper is not loaded (e.g. testing in pure Python),
+    returns a clean list of lists.
+    """
+    try:
+        from Grasshopper import DataTree
+        from Grasshopper.Kernel.Data import GH_Path
+        tree = DataTree[object]()
+        for path_tuple, items in sorted(path_to_items_dict.items()):
+            p = GH_Path(*path_tuple) if isinstance(path_tuple, tuple) else GH_Path(path_tuple)
+            for it in items:
+                if it is not None:
+                    tree.Add(it, p)
+        return tree
+    except:
+        return [items for _, items in sorted(path_to_items_dict.items())]
+
+def get_or_create_layer(doc, layer_name, color=None):
+    if not hasattr(doc, 'Layers') or doc.Layers is None:
+        return -1
+    parts = [p.strip() for p in layer_name.split("::") if p.strip()]
+    parent_id = getattr(System, 'Guid', None).Empty if hasattr(System, 'Guid') else None
+    final_index = -1
+    current_path = ""
+    for part in parts:
+        current_path = current_path + "::" + part if current_path else part
+        idx = -1
+        if hasattr(doc.Layers, 'FindByFullPath'):
+            try: idx = doc.Layers.FindByFullPath(current_path, -1)
+            except: pass
+        if idx < 0 and hasattr(doc.Layers, 'FindName'):
+            try:
+                l = doc.Layers.FindName(part)
+                if l is not None: idx = l.Index
+            except: pass
+        if idx >= 0:
+            final_index = idx
+            if hasattr(doc.Layers[idx], 'Id'): parent_id = doc.Layers[idx].Id
+        else:
+            try:
+                layer_cls = getattr(getattr(Rhino, 'DocObjects', None), 'Layer', None) or getattr(sys.modules.get('rhino3dm'), 'Layer', None)
+                if layer_cls:
+                    nl = layer_cls()
+                    nl.Name = part
+                    if parent_id is not None and hasattr(nl, 'ParentLayerId'):
+                        nl.ParentLayerId = parent_id
+                    if color and hasattr(nl, 'Color'):
+                        nl.Color = color
+                    final_index = doc.Layers.Add(nl)
+                    if final_index >= 0 and hasattr(doc.Layers[final_index], 'Id'):
+                        parent_id = doc.Layers[final_index].Id
+            except:
+                pass
+    return final_index
+
+def get_or_create_group(doc, group_name):
+    if not hasattr(doc, 'Groups') or doc.Groups is None:
+        return -1
+    try:
+        if hasattr(doc.Groups, 'FindName'):
+            found = doc.Groups.FindName(group_name)
+            if isinstance(found, int) and found >= 0:
+                return found
+            elif found is not None and hasattr(found, 'Index') and found.Index >= 0:
+                return found.Index
+    except:
+        pass
+    try:
+        idx = doc.Groups.Add(group_name)
+        if isinstance(idx, int) and idx >= 0:
+            return idx
+    except:
+        pass
+    try:
+        grp_cls = getattr(getattr(Rhino, 'DocObjects', None), 'Group', None) or getattr(sys.modules.get('rhino3dm'), 'Group', None)
+        if grp_cls:
+            g_obj = grp_cls()
+            if hasattr(g_obj, 'Name'):
+                g_obj.Name = group_name
+            doc.Groups.Add(g_obj)
+            return len(doc.Groups) - 1
+    except:
+        pass
+    return -1
+
+def bake_to_rhino_document(doc, bake_items, group_mode=0):
+    """
+    Bakes categorized objects into the active Rhino document.
+    group_mode:
+        0 = Group per specific element (perfil, tabela, texto) [Default - ideal for moving elements independently]
+        1 = Group per complete unit (secao, perfil, prancha)
+        2 = Hierarchical (both specific element group AND parent complete group)
+    """
+    if doc is None or not hasattr(doc, 'Objects'):
+        return 0, 0, "RhinoDoc.ActiveDoc indisponível."
+
+    layer_map = {}
+    for item in bake_items:
+        lay_path = item.get('layer_name', 'PROJETO_LEGAL')
+        if lay_path not in layer_map:
+            layer_map[lay_path] = get_or_create_layer(doc, lay_path, item.get('color'))
+
+    group_map = {}
+    total_objects = 0
+    groups_created = 0
+
+    for item in bake_items:
+        g_name = item.get('group_name')
+        p_name = item.get('parent_group')
+        geoms = item.get('geoms', [])
+        if not geoms:
+            continue
+
+        target_group_names = []
+        if group_mode == 0:
+            if g_name: target_group_names.append(g_name)
+        elif group_mode == 1:
+            target_group_names.append(p_name or g_name)
+        else:
+            if g_name: target_group_names.append(g_name)
+            if p_name and p_name != g_name: target_group_names.append(p_name)
+
+        group_indices = []
+        for gn in target_group_names:
+            if gn not in group_map:
+                g_idx = get_or_create_group(doc, gn)
+                group_map[gn] = g_idx
+                if g_idx >= 0: groups_created += 1
+            else:
+                g_idx = group_map[gn]
+            if g_idx >= 0:
+                group_indices.append(g_idx)
+
+        lay_idx = layer_map.get(item.get('layer_name', 'PROJETO_LEGAL'), -1)
+        col = item.get('color')
+
+        for g in geoms:
+            if g is None or not getattr(g, 'IsValid', True):
+                continue
+            attr = getattr(getattr(Rhino, 'DocObjects', None), 'ObjectAttributes', None)
+            if attr is None:
+                attr = getattr(sys.modules.get('rhino3dm'), 'ObjectAttributes', None)
+            attr_inst = attr() if attr else None
+
+            if attr_inst is not None:
+                if lay_idx >= 0 and hasattr(attr_inst, 'LayerIndex'):
+                    attr_inst.LayerIndex = lay_idx
+                if col is not None and hasattr(attr_inst, 'ObjectColor'):
+                    attr_inst.ObjectColor = col
+                    if hasattr(getattr(Rhino, 'DocObjects', None), 'ObjectColorSource'):
+                        attr_inst.ColorSource = getattr(Rhino, 'DocObjects', None).ObjectColorSource.ColorFromObject
+                for gid in group_indices:
+                    if hasattr(attr_inst, 'AddToGroup'):
+                        attr_inst.AddToGroup(gid)
+
+            try:
+                if hasattr(doc.Objects, 'Add'):
+                    if attr_inst is not None:
+                        guid = doc.Objects.Add(g, attr_inst)
+                    else:
+                        guid = doc.Objects.Add(g)
+                    if guid: total_objects += 1
+                elif isinstance(g, rg.Curve) and hasattr(doc.Objects, 'AddCurve'):
+                    guid = doc.Objects.AddCurve(g, attr_inst) if attr_inst else doc.Objects.AddCurve(g)
+                    if guid: total_objects += 1
+                elif isinstance(g, rg.Mesh) and hasattr(doc.Objects, 'AddMesh'):
+                    guid = doc.Objects.AddMesh(g, attr_inst) if attr_inst else doc.Objects.AddMesh(g)
+                    if guid: total_objects += 1
+            except:
+                pass
+
+    try:
+        if hasattr(doc, 'Views') and hasattr(doc.Views, 'Redraw'):
+            doc.Views.Redraw()
+    except:
+        pass
+
+    msg = "✔ BAKE EXECUTIVO CONCLUÍDO COM SUCESSO! {} objetos gravados em {} grupos nomeados no Rhino.".format(
+        total_objects, len(group_map)
+    )
+    return total_objects, len(group_map), msg
 
 def parse_seletor(val):
     if val is None: return 1
@@ -1122,6 +1324,9 @@ def make_text_geometry(text_str, pt, height, justification=None, s=1.0, plane=No
         curves.append(te)
     except:
         pass
+    for c in curves:
+        try: c.__is_text__ = True
+        except: pass
     return curves
 
 make_text_entity = make_text_geometry
@@ -1227,10 +1432,10 @@ def make_callout_card(center_x, center_y, title_text, sub_text, s=1.0, is_corte=
     pt_t2 = rg.Point3d(center_x, y_t2, 0.0)
     te2_crvs = make_text_geometry(sub_text, pt_t2, txt_h2, rg.TextJustification.MiddleCenter, s)
 
-    geoms = [bg_mesh, box_crv, div_crv]
-    if te1_crvs: geoms.extend(te1_crvs)
-    if te2_crvs: geoms.extend(te2_crvs)
-    return geoms, (w_box, h_box)
+    tabela_lines = [bg_mesh, box_crv, div_crv]
+    card_texts = (te1_crvs or []) + (te2_crvs or [])
+    all_callout = CategorizedGeomList([g for g in tabela_lines if g is not None] + card_texts, tabela=[g for g in tabela_lines if g is not None], textos=card_texts)
+    return all_callout, (w_box, h_box)
 
 def interpolate_terrain_z(d_val, clean_pts=None):
     if clean_pts is None:
@@ -1712,7 +1917,9 @@ def draw_official_a0_carimbo(xs0, ys0, sc, sheet_title, sheet_num, scale_str, vo
     geoms.extend(make_text_geometry("Prenotação nº: ____________", rg.Point3d(x_ap2 + 3.0*sc, y_div_mid - 36.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
     geoms.extend(make_text_geometry("Registro: R-____ / 30.901", rg.Point3d(x_ap2 + 3.0*sc, ys0 + 8.0*sc, 0), 1.3*sc, rg.TextJustification.BottomLeft, s))
 
-    return geoms
+    t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
+    t_texts = [g for g in geoms if g not in t_lines]
+    return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
 
 def draw_perimeter_table_a0(x0, y0, sc, s=1.0):
     """
@@ -1771,7 +1978,9 @@ def draw_perimeter_table_a0(x0, y0, sc, s=1.0):
     # Linha de resumo no rodapé
     geoms.extend(make_text_geometry("Área Total: 35.087,731 m²     |     Perímetro Total: 799,964 m", rg.Point3d((x0 + x1)/2.0, y0 + 3.0*sc, 0), 2.2*sc, rg.TextJustification.MiddleCenter, s))
 
-    return geoms
+    t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
+    t_texts = [g for g in geoms if g not in t_lines]
+    return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
 
 def draw_a0_legend_box(x0, y0, w, h, sc, legend_type="planta", s=1.0):
     """
@@ -1820,7 +2029,9 @@ def draw_a0_legend_box(x0, y0, w, h, sc, legend_type="planta", s=1.0):
             geoms.append(rg.LineCurve(rg.Point3d(px0, y_item, 0), rg.Point3d(px1, y_item, 0)))
         geoms.extend(make_text_geometry(txt_l, rg.Point3d(x0 + 19.0*sc, y_item, 0), 1.5*sc, rg.TextJustification.MiddleLeft, s))
 
-    return geoms
+    t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
+    t_texts = [g for g in geoms if g not in t_lines]
+    return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
 
 def draw_standard_a0_sheet(x0, y0, sheet_scale, sheet_title, sheet_num, scale_str,
                            s=1.0, is_planta=False, is_longitudinal=False,
@@ -1896,7 +2107,18 @@ def draw_standard_a0_sheet(x0, y0, sheet_scale, sheet_title, sheet_num, scale_st
     sub_info = "Escala: {} | Sistema: UTM SIRGAS 2000 Fuso 23S | Município: Vargem Grande Paulista-SP | Matrícula: 30.901".format(scale_str)
     geoms.extend(make_text_geometry(sub_info, p_top_sub, 2.0*sc, rg.TextJustification.BottomLeft, s))
 
-    return geoms
+    m_list = [geoms[0], geoms[1]] if len(geoms) >= 2 else []
+    t_list = []
+    x_list = []
+    for g in geoms:
+        if isinstance(g, CategorizedGeomList):
+            t_list.extend(g.tabela)
+            x_list.extend(g.textos)
+        elif getattr(g, '__is_text__', False) or isinstance(g, getattr(rg, 'TextEntity', type(None))):
+            x_list.append(g)
+        elif g not in m_list:
+            t_list.append(g)
+    return CategorizedGeomList(geoms, moldura=m_list, tabela=t_list, textos=x_list)
 
 def draw_technical_sheet_frame(min_x, min_y, max_x, max_y, sheet_title, sheet_num, scale_str, s=1.0, is_longitudinal=False):
     """
@@ -1919,7 +2141,7 @@ def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1
     h_card = 9.2 * s
 
     x0 = base_x + 2.0 * s
-    y0 = base_y - 10.5 * s
+    y0 = base_y + sec_h + 3.0 * s
     x1 = x0 + w_card
     y1 = y0 + h_card
 
@@ -1977,7 +2199,11 @@ def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1
         txt_geot = "ALERTA NBR 11682: H={:.2f}m > 4,5m (CONTENÇÃO)".format(max_h_sec).replace('.', ',')
         geoms.extend(make_text_geometry(txt_geot, rg.Point3d(x0 + 12.0*s, y_hdr - 6.8*s, 0), 0.65*s, rg.TextJustification.BottomLeft, s))
 
-    return geoms
+    card_tabela = [bg_m, rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve(), rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0))]
+    if m_sc: card_tabela.append(m_sc)
+    if m_sa: card_tabela.append(m_sa)
+    card_textos = [g for g in geoms if g not in card_tabela]
+    return CategorizedGeomList(geoms, tabela=card_tabela, textos=card_textos)
 
 def draw_retaining_wall_and_ditch_2d(p_slope, p_bnd, boundary_crv, s=1.0):
     """
@@ -2407,7 +2633,9 @@ def draw_section_internal_transfer_arrow(p_start, p_end, vol_or_area_str="", s=1
         txt_crvs = make_text_geometry(vol_or_area_str, p_txt, 0.75 * s, rg.TextJustification.BottomCenter, s)
         if txt_crvs: geoms.extend(txt_crvs)
 
-    return geoms
+    t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
+    t_texts = [g for g in geoms if g not in t_lines]
+    return CategorizedGeomList(geoms, perfil=t_lines, textos=t_texts)
 
 def parse_nivel_projeto(raw_nivel_proj, idx_s, num_secoes, num_trechos):
     """
@@ -3604,7 +3832,7 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
 
     # Linha e Rótulo de DATUM
     p_d_ini = rg.Point3d(base_x, base_y, 0.0)
-    max_draw_w = 86.0 * s
+    max_draw_w = 200.0 * s
     draw_ext = min(total_ext, max_draw_w)
     p_d_fim = rg.Point3d(base_x + draw_ext, base_y, 0.0)
     geoms_2d.append(rg.LineCurve(p_d_ini, p_d_fim))
@@ -3774,8 +4002,28 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
         # (As areas, alturas maximas e saldos sao apresentadas com clareza executiva na Ficha Tecnica lateral)
         side_card_geoms = draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=s)
     geoms_2d.extend(side_card_geoms)
+    sec_perfis = []
+    sec_tabelas = []
+    sec_textos = []
+    for g in geoms_2d:
+        if isinstance(g, CategorizedGeomList):
+            sec_perfis.extend(g.perfil)
+            sec_tabelas.extend(g.tabela)
+            sec_textos.extend(g.textos)
+        elif getattr(g, '__is_text__', False) or isinstance(g, getattr(rg, 'TextEntity', type(None))):
+            sec_textos.append(g)
+        elif g in side_card_geoms or (isinstance(side_card_geoms, CategorizedGeomList) and g in side_card_geoms):
+            sec_tabelas.append(g)
+        else:
+            sec_perfis.append(g)
+
+    cat_geoms_2d = CategorizedGeomList(geoms_2d, perfil=sec_perfis, tabela=sec_tabelas, textos=sec_textos)
+
     return {
-        'geoms_2d': geoms_2d,
+        'geoms_2d': cat_geoms_2d,
+        'perfil_geoms': sec_perfis,
+        'tabela_geoms': sec_tabelas,
+        'texto_geoms': sec_textos,
         'poligonos_corte_2d': poligonos_corte_sec,
         'poligonos_aterro_2d': poligonos_aterro_sec,
         'quads_3d_corte': quads_3d_corte_sec,
@@ -4152,7 +4400,7 @@ def render_longitudinal_profile_with_guitarra(
     tit_str = "PERFIL LONGITUDINAL - {} {} - {}".format(axis_title_prefix.strip(), lbl_v, lbl_v)
     geoms_2d.extend(make_text_geometry(tit_str, p_tit, 1.80 * s, rg.TextJustification.BottomLeft, s))
 
-    sub_line1 = "Escalas: Horizontal 1:1.000 | Vertical 1:100 (Exagero Vertical: {:.0f}x) | Datum: +{:.2f}m".format(ev, z_datum).replace('.', ',')
+    sub_line1 = "Escalas: Horizontal 1:1.000 | Vertical 1:{:.0f} (Exagero Vertical: {:.1f}x) | Datum: +{:.2f}m".format(1000.0 / max(ev, 0.1), ev, z_datum).replace('.', ',')
     p_sub1 = rg.Point3d(x_start, base_y + delta_z * ev + 11.2 * s, 0.0)
     geoms_2d.extend(make_text_geometry(sub_line1, p_sub1, 0.90 * s, rg.TextJustification.BottomLeft, s))
 
@@ -4185,8 +4433,43 @@ def render_longitudinal_profile_with_guitarra(
             if crv_temp and crv_temp.IsValid:
                 crv_gr_3d = crv_temp
 
+    v_perfis = []
+    v_tabelas = []
+    v_textos = []
+    guitarra_lines = [
+        rg.LineCurve(rg.Point3d(x_start, y0, 0.0), rg.Point3d(x_end, y0, 0.0)),
+        rg.LineCurve(rg.Point3d(x_start, y1, 0.0), rg.Point3d(x_end, y1, 0.0)),
+        rg.LineCurve(rg.Point3d(x_start, y2, 0.0), rg.Point3d(x_end, y2, 0.0)),
+        rg.LineCurve(rg.Point3d(x_start, y3, 0.0), rg.Point3d(x_end, y3, 0.0)),
+        rg.LineCurve(rg.Point3d(x_start, y4, 0.0), rg.Point3d(x_end, y4, 0.0)),
+        rg.LineCurve(rg.Point3d(x_start, y5, 0.0), rg.Point3d(x_end, y5, 0.0)),
+        rg.LineCurve(rg.Point3d(x_start, y0, 0.0), rg.Point3d(x_start, y5, 0.0)),
+        rg.LineCurve(rg.Point3d(base_x, y0, 0.0), rg.Point3d(base_x, y5, 0.0)),
+        rg.LineCurve(rg.Point3d(x_end, y0, 0.0), rg.Point3d(x_end, y5, 0.0))
+    ]
+    for g in geoms_2d:
+        if isinstance(g, CategorizedGeomList):
+            v_perfis.extend(g.perfil)
+            v_tabelas.extend(g.tabela)
+            v_textos.extend(g.textos)
+        elif getattr(g, '__is_text__', False) or isinstance(g, getattr(rg, 'TextEntity', type(None))):
+            v_textos.append(g)
+        elif isinstance(g, rg.Mesh):
+            v_perfis.append(g)
+        else:
+            bb = g.GetBoundingBox(True) if hasattr(g, 'GetBoundingBox') else g.GetBoundingBox()
+            if bb.IsValid and bb.Max.Y <= y0 + 0.1 * s and bb.Min.Y >= y5 - 0.1 * s:
+                v_tabelas.append(g)
+            else:
+                v_perfis.append(g)
+
+    cat_v_geoms = CategorizedGeomList(geoms_2d, perfil=v_perfis, tabela=v_tabelas, textos=v_textos)
+
     return {
-        'geoms_2d': geoms_2d,
+        'geoms_2d': cat_v_geoms,
+        'perfil_geoms': v_perfis,
+        'tabela_geoms': v_tabelas,
+        'texto_geoms': v_textos,
         'poligonos_corte_2d': poligonos_corte_sec,
         'poligonos_aterro_2d': poligonos_aterro_sec,
         'quads_3d_corte': quads_3d_corte_sec,
@@ -4233,6 +4516,8 @@ def run():
     raw_modo_estacas = get_input(['StationingMode', 'ModoEstacas', 'EstaqueamentoNormativo', 'Estacas20m', 'Normative20m', 'UsarEstacas20m', 'Modo20m'])
     raw_passo_estacas = get_input(['StationInterval', 'PassoEstacas', 'IntervaloEstacas', 'DistanciaEstacas', 'Passo'], 20.0)
     raw_exagero_v    = get_input(['VerticalExaggeration', 'ExageroVertical', 'EscalaVertical', 'Exagero', 'Ev'], 10.0)
+    raw_bake         = get_input(['Bake', 'GravarRhino', 'Gravar', 'SalvarRhino', 'ExecutarBake', 'BakeRhino'], False)
+    raw_group_mode   = get_input(['GroupMode', 'ModoAgrupamento', 'ModoGrupo', 'TipoGrupo'], 0)
 
     try:
         if raw_inclinacao is not None:
@@ -4285,6 +4570,17 @@ def run():
     prancha_planta_geoms = []
     prancha_long_geoms = []
     prancha_secoes_geoms = []
+    res_secoes = []
+    res_perfis_v = []
+    sec_data_list = []
+    res_secoes_info = []
+    sec_v_data_list = []
+    sec_terrain_info = []
+    sec_v_terrain_info = []
+    sec_base_xs = []
+    sec_base_ys = []
+    sec_v_base_xs = []
+    sec_v_base_ys = []
 
     geoms_terreno = [to_rhino_geom(item) for item in to_list(raw_terreno) if to_rhino_geom(item) is not None]
     if not geoms_terreno:
@@ -4696,15 +4992,19 @@ def run():
     # =========================================================================
     banner_space = 14.0 * s
 
-    # 2.1 Organizacao das Secoes Transversais em 2 Colunas na Folha 03/03 (237.80 x 168.20 m a 1:200)
-    # Coluna 1 (Secoes A a E): base_x = orig_x + 6.0*s, largura maxima = 86.0*s
-    # Coluna 2 (Secoes F a J): base_x = orig_x + 104.0*s, largura maxima = 86.0*s
-    # Carimbo oficial e Legenda: X = orig_x + 200.8*s a 235.8*s (folga de 10.8m)
+    # 2.1 Organizacao das Secoes Transversais na Folha 03/03 (Escala 1:500 - Formato ISO A0: 594.50 x 420.50 m)
+    # Compatibilizada rigorosamente com a prancha de referencia "ESC 1-500-A0.PDF".
+    # Coluna 1 (Secoes A a E): base_x = orig_x + 30.0*s
+    # Coluna 2 (Secoes F a J): base_x = orig_x + 235.0*s
+    # Carimbo Oficial & Legenda: X = orig_x + 490.0*s a 580.0*s (Margem de seguranca garantida > 75m)
     num_half = (num_secoes + 1) // 2 if num_secoes > 5 else num_secoes
     sec_base_xs = []
     sec_base_ys = []
-    y_start_sec = orig_y - 23.0 * s
-    pitch_sec_y = 31.0 * s
+
+    # Altura util vertical da prancha A0 a 1:500: 420.50m
+    max_sec_h_found = max([t.get('sec_h', 25.0) for t in sec_terrain_info] or [25.0])
+    pitch_sec_y = max(max_sec_h_found + 18.0 * s, 48.0 * s)
+    y_start_sec = orig_y - 32.0 * s
 
     for i in range(num_secoes):
         if num_secoes <= 5:
@@ -4713,13 +5013,13 @@ def run():
         else:
             col_i = 0 if i < num_half else 1
             row_i = i if i < num_half else (i - num_half)
-        bx = orig_x + (6.0 * s if col_i == 0 else 104.0 * s)
+        bx = orig_x + (30.0 * s if col_i == 0 else 235.0 * s)
         by = y_start_sec - row_i * pitch_sec_y
         sec_base_xs.append(bx)
         sec_base_ys.append(by)
 
     espacamento_y = pitch_sec_y
-    max_w_t = 86.0 * s
+    max_w_t = max([t.get('total_ext', 100.0) for t in sec_terrain_info] or [180.0])
 
     # 2.2 Organizacao dos Perfis Longitudinais das Vias em 2 Colunas na Folha 02/03 (H=1:1.000 / V=1:100 ou V=1:200)
     # Folha 02 A0 (1189 x 841 m). Posicionada a direita da Folha 03 com folga de 260m
@@ -4736,38 +5036,56 @@ def run():
     if max_dz_all_v * ev_long > 220.0:
         ev_long = 5.0
 
+    # Selecao do Exagero Vertical normativo que CABE no slot da prancha (DNIT / DER-SP)
+    # Altura do slot = altura util A0 1:1.000 dividida pelo numero de linhas da coluna.
+    max_dz_all_v = max([t.get('sec_h', 20.0) for t in sec_v_terrain_info] or [20.0]) + 3.0
+    _n_rows_fit = ((num_verticais + 1) // 2 if num_verticais > 3 else num_verticais) or 1
+    _slot_fit = ((orig_y - 12.0 * s) - (folha2_orig_y + 15.0 * s)) / float(_n_rows_fit)
+    _h_fixed = (41.0 + 16.0 + 30.0) * s  # guitarra + titulos + folga
+    _ev_ok = 1.0
+    for _ev_c in [10.0, 5.0, 4.0, 2.5, 2.0, 1.0]:
+        if _ev_c <= ev_long + 1e-6 and max_dz_all_v * _ev_c + _h_fixed <= _slot_fit:
+            _ev_ok = _ev_c
+            break
+    ev_long = _ev_ok
+
     num_half_v = (num_verticais + 1) // 2 if num_verticais > 3 else num_verticais
     sec_v_base_xs = []
     sec_v_base_ys = []
 
-    # Altura util vertical da prancha A0 a 1:1000 = 821.0m
-    y_top_sheet_v = orig_y - 10.0 * s
-    n_rows_col1 = num_half_v
-    n_rows_col2 = num_verticais - num_half_v
-    slot_h_col1 = 820.0 * s / max(n_rows_col1, 1)
-    slot_h_col2 = 820.0 * s / max(n_rows_col2, 1) if n_rows_col2 > 0 else 820.0 * s
+    # Limites rigorosos da prancha A0 a 1:1.000 (1189 x 841m)
+    y_sheet_ceil = orig_y - 12.0 * s
+    y_sheet_floor = folha2_orig_y + 15.0 * s
+    slot_h_v = (y_sheet_ceil - y_sheet_floor) / max(num_half_v, 1)
 
     for j in range(num_verticais):
         if num_verticais <= 3:
             col_j = 0
             row_j = j
-            slot_h = slot_h_col1
         else:
             col_j = 0 if j < num_half_v else 1
             row_j = j if j < num_half_v else (j - num_half_v)
-            slot_h = slot_h_col1 if col_j == 0 else slot_h_col2
 
         bx_v = folha2_orig_x + (45.0 * s if col_j == 0 else 520.0 * s)
         t_info_j = sec_v_terrain_info[j] if j < len(sec_v_terrain_info) else {}
-        dz_j = t_info_j.get('sec_h', 20.0)
-        h_above_datum = (dz_j * ev_long) + 16.0 * s
-        y_top_slot = y_top_sheet_v - row_j * slot_h - 16.0 * s
-        by_v = y_top_slot - h_above_datum
+        dz_j = max(t_info_j.get('sec_h', 20.0), 10.0)
+        h_profile = (dz_j * ev_long) + 16.0 * s
+        h_guitar = 41.0 * s
+
+        # Posicionamento com ancoragem de teto do slot
+        y_slot_top = y_sheet_ceil - row_j * slot_h_v - 12.0 * s
+        by_v = y_slot_top - h_profile
+
+        # Clamping de segurança estrito: NENHUM perfil pode romper o topo ou base da folha
+        if by_v + h_profile > y_sheet_ceil:
+            by_v = y_sheet_ceil - h_profile
+        if by_v - h_guitar < y_sheet_floor:
+            by_v = y_sheet_floor + h_guitar
 
         sec_v_base_xs.append(bx_v)
         sec_v_base_ys.append(by_v)
 
-    pitch_v = slot_h_col1
+    pitch_v = slot_h_v
     espacamento_y_v = pitch_v
     col2_x = folha2_orig_x + 45.0 * s
     max_w_v = max([t['total_ext'] for t in sec_v_terrain_info] or [120.0])
@@ -5085,6 +5403,7 @@ def run():
             s_data, lbl, base_x, base_y, s, modo_cotas, cor_corte, cor_aterro,
             crv_aln_3d=crv_aln_3d, is_longitudinal=False, axis_title_prefix="SEÇÃO "
         )
+        res_secoes_info.append(res_sec)
 
         desenho_completo_secoes_2d.extend(res_sec['geoms_2d'])
         desenho_secoes_t_only.extend(res_sec['geoms_2d'])
@@ -5151,11 +5470,11 @@ def run():
     prancha_secoes_geoms = []
     if num_secoes >= 1:
         f3_x0 = orig_x
-        f3_y0 = orig_y - 168.2 * s
+        f3_y0 = orig_y - 420.5 * s
         prancha_secoes_geoms = draw_standard_a0_sheet(
-            f3_x0, f3_y0, 200.0,
+            f3_x0, f3_y0, 500.0,
             "SEÇÕES TRANSVERSAIS DE TERRAPLENAGEM (EIXOS A A J)",
-            "FOLHA 03/03", "1 / 200", s=s, is_planta=False, is_longitudinal=False,
+            "FOLHA 03/03", "1 / 500", s=s, is_planta=False, is_longitudinal=False,
             volume_summary=global_vol_summary
         )
         desenho_completo_secoes_2d.extend(prancha_secoes_geoms)
@@ -5174,6 +5493,34 @@ def run():
                 s_data_v, lbl_v, base_x_v, base_y_v, s, ev=ev_long, step_estaca=passo_estacas,
                 cor_corte=cor_corte, cor_aterro=cor_aterro, crv_aln_3d_v=crv_aln_3d_v, axis_title_prefix="EIXO "
             )
+            res_perfis_v.append(res_sec_v)
+
+            # Encaixe pos-render: translada o perfil inteiro (geometria, guitarra, textos
+            # e poligonos) para dentro do seu slot, garantindo ZERO extrapolacao da folha.
+            try:
+                _row_v = idx_v if (num_verticais <= 3 or idx_v < num_half_v) else (idx_v - num_half_v)
+                _slot_top = y_sheet_ceil - _row_v * slot_h_v
+                _slot_bot = _slot_top - slot_h_v
+                _ymin = 1e12; _ymax = -1e12
+                for _g in res_sec_v['geoms_2d']:
+                    try:
+                        _bb = _g.GetBoundingBox(True)
+                        if _bb.IsValid:
+                            _ymin = min(_ymin, _bb.Min.Y); _ymax = max(_ymax, _bb.Max.Y)
+                    except: pass
+                _dy = 0.0
+                if _ymax > _slot_top: _dy = _slot_top - _ymax
+                if _ymin + _dy < _slot_bot: _dy = _slot_bot - _ymin
+                if abs(_dy) > 1e-6:
+                    _xf = rg.Transform.Translation(0.0, _dy, 0.0)
+                    _seen = set()
+                    for _g in list(res_sec_v['geoms_2d']) + list(res_sec_v['poligonos_corte_2d']) + list(res_sec_v['poligonos_aterro_2d']):
+                        if id(_g) in _seen: continue
+                        _seen.add(id(_g))
+                        try: _g.Transform(_xf)
+                        except: pass
+                    sec_v_base_ys[idx_v] = base_y_v + _dy
+            except: pass
 
             desenho_completo_secoes_2d.extend(res_sec_v['geoms_2d'])
             desenho_secoes_v_only.extend(res_sec_v['geoms_2d'])
@@ -6182,6 +6529,106 @@ def run():
     globals()['g'] = mesh_terreno_projetado
     globals()['h'] = m_3d_corte_sec
     globals()['i'] = m_3d_aterro_sec
+
+    # =========================================================================
+    # 10. AGRUPAMENTO CATEGORIZADO DE ELEMENTOS GRÁFICOS (TEXTOS, TABELAS, PERFIS)
+    #     E INTEGRAÇÃO COM SISTEMA DE BAKE EXECUTIVO DO RHINO
+    # =========================================================================
+    all_textos_2d = []
+    all_tabelas_2d = []
+    all_perfis_2d = []
+
+    tree_secoes_dict = {}
+    tree_long_dict = {}
+    tree_pranchas_dict = {}
+    bake_items = []
+
+    # 10.1 Seções Transversais (Folha 03/03)
+    for idx_s, r_sec in enumerate(res_secoes_info):
+        lbl = labels_t[idx_s] if idx_s < len(labels_t) else str(idx_s)
+        p_geoms = r_sec.get('perfil_geoms', [])
+        t_geoms = r_sec.get('tabela_geoms', [])
+        x_geoms = r_sec.get('texto_geoms', [])
+
+        all_perfis_2d.extend(p_geoms)
+        all_tabelas_2d.extend(t_geoms)
+        all_textos_2d.extend(x_geoms)
+
+        tree_secoes_dict[(idx_s, 0)] = p_geoms
+        tree_secoes_dict[(idx_s, 1)] = t_geoms
+        tree_secoes_dict[(idx_s, 2)] = x_geoms
+
+        sec_parent = "SECAO_{}_COMPLETA".format(lbl)
+        bake_items.append({'group_name': "SECAO_{}_PERFIL_TOPOGRAFICO".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::PERFIS", 'geoms': p_geoms})
+        bake_items.append({'group_name': "SECAO_{}_TABELA_RESUMO".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::TABELAS", 'geoms': t_geoms})
+        bake_items.append({'group_name': "SECAO_{}_TEXTOS_COTAS".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::TEXTOS", 'geoms': x_geoms})
+
+    # 10.2 Perfis Longitudinais (Folha 02/03)
+    for idx_v, r_lng in enumerate(res_perfis_v):
+        lbl_v = labels_v[idx_v] if idx_v < len(labels_v) else str(idx_v)
+        p_geoms_v = r_lng.get('perfil_geoms', [])
+        t_geoms_v = r_lng.get('tabela_geoms', [])
+        x_geoms_v = r_lng.get('texto_geoms', [])
+
+        all_perfis_2d.extend(p_geoms_v)
+        all_tabelas_2d.extend(t_geoms_v)
+        all_textos_2d.extend(x_geoms_v)
+
+        tree_long_dict[(idx_v, 0)] = p_geoms_v
+        tree_long_dict[(idx_v, 1)] = t_geoms_v
+        tree_long_dict[(idx_v, 2)] = x_geoms_v
+
+        lng_parent = "PERFIL_LONGITUDINAL_{}_COMPLETO".format(lbl_v)
+        bake_items.append({'group_name': "PERFIL_{}_TOPOGRAFIA".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::GEOMETRIA", 'geoms': p_geoms_v})
+        bake_items.append({'group_name': "PERFIL_{}_GUITARRA".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::GUITARRA", 'geoms': t_geoms_v})
+        bake_items.append({'group_name': "PERFIL_{}_TEXTOS_DADOS".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::TEXTOS", 'geoms': x_geoms_v})
+
+    # 10.3 Pranchas Oficiais A0 (Folhas 01, 02 e 03)
+    sheets_info = [
+        ("FOLHA_01_PLANTA_GERAL", prancha_planta_geoms),
+        ("FOLHA_02_PERFIS_LONGITUDINAIS", prancha_long_geoms),
+        ("FOLHA_03_SECOES_TRANSVERSAIS", prancha_secoes_geoms)
+    ]
+    for idx_sh, (sh_name, sh_cat) in enumerate(sheets_info):
+        m_geoms = getattr(sh_cat, 'moldura', []) if hasattr(sh_cat, 'moldura') else []
+        t_geoms = getattr(sh_cat, 'tabela', []) if hasattr(sh_cat, 'tabela') else []
+        x_geoms = getattr(sh_cat, 'textos', []) if hasattr(sh_cat, 'textos') else []
+
+        all_tabelas_2d.extend(t_geoms)
+        all_textos_2d.extend(x_geoms)
+
+        tree_pranchas_dict[(idx_sh, 0)] = m_geoms
+        tree_pranchas_dict[(idx_sh, 1)] = t_geoms
+        tree_pranchas_dict[(idx_sh, 2)] = x_geoms
+
+        bake_items.append({'group_name': "{}_MOLDURA".format(sh_name), 'parent_group': sh_name, 'layer_name': "PROJETO_LEGAL::PRANCHAS::MOLDURAS", 'geoms': m_geoms})
+        bake_items.append({'group_name': "{}_CARIMBO_TABELAS".format(sh_name), 'parent_group': sh_name, 'layer_name': "PROJETO_LEGAL::PRANCHAS::CARIMBO", 'geoms': t_geoms})
+        bake_items.append({'group_name': "{}_TEXTOS_DADOS".format(sh_name), 'parent_group': sh_name, 'layer_name': "PROJETO_LEGAL::PRANCHAS::TEXTOS", 'geoms': x_geoms})
+
+    # 10.4 Execução Automática do Bake se Bake == True
+    bake_msg = "Bake inativo (conecte Bake=True para gravar no Rhino)."
+    bake_requested = False
+    try:
+        bake_requested = bool(raw_bake) if raw_bake is not None else False
+    except:
+        bake_requested = False
+
+    if bake_requested and doc is not None:
+        try:
+            g_mode = int(raw_group_mode) if raw_group_mode is not None else 0
+        except:
+            g_mode = 0
+        _, _, bake_msg = bake_to_rhino_document(doc, bake_items, group_mode=g_mode)
+
+    # Registra saídas estruturadas em DataTree e listas categorizadas
+    globals()['Grupos_Secoes'] = to_gh_data_tree(tree_secoes_dict)
+    globals()['Grupos_PerfisLongitudinais'] = to_gh_data_tree(tree_long_dict)
+    globals()['Grupos_Pranchas'] = to_gh_data_tree(tree_pranchas_dict)
+
+    globals()['Textos2D'] = all_textos_2d
+    globals()['Tabelas2D'] = all_tabelas_2d
+    globals()['PerfisTopograficos2D'] = all_perfis_2d
+    globals()['StatusBake'] = bake_msg
 
     return modelo_3d_completo, planta_baixa_geoms, desenho_completo_secoes_2d, poligonos_corte_all, poligonos_aterro_all, relatorio
 
