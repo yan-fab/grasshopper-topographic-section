@@ -2401,6 +2401,45 @@ def draw_retaining_wall_and_ditch_2d(p_slope, p_bnd, boundary_crv, s=1.0):
 
     return geoms
 
+def format_estaca_normativa(d_metros, passo=20.0):
+    """
+    Formata a distância métrica em Notação de Estaqueamento DNIT / ABNT NBR 13133.
+    Regra normativa estrita:
+      1 Estaca = exatamente 20,00 metros.
+      A fração após '+' é estritamente menor que 20,00m [0,00m a 19,99m].
+      Ao atingir 20,00m (ou fração >= 19.995m após arredondamento a 2 casas),
+      a estaca OBRIGATORIAMENTE vira para o próximo número inteiro:
+        - 20,00m  -> Estaca 1+00,00 (NUNCA 0+20,00)
+        - 40,00m  -> Estaca 2+00,00 (NUNCA 1+20,00)
+        - 60,00m  -> Estaca 3+00,00 (NUNCA 2+20,00)
+        - 80,00m  -> Estaca 4+00,00 (NUNCA 3+20,00)
+        - 100,00m -> Estaca 5+00,00 (NUNCA 4+20,00)
+        - 120,00m -> Estaca 6+00,00 (NUNCA 5+20,00)
+        - 140,00m -> Estaca 7+00,00 (NUNCA 6+20,00)
+        - 180,00m -> Estaca 9+00,00 (NUNCA 8+20,00)
+        - 220,00m -> Estaca 11+00,00 (NUNCA 10+20,00)
+        - 238,73m -> Estaca 11+18,73
+    """
+    if d_metros is None:
+        return "Estaca 0+00,00"
+    try:
+        d = float(d_metros)
+    except:
+        return "Estaca 0+00,00"
+    
+    sign = "-" if d < -1e-6 else ""
+    d_abs = abs(d)
+    d_round = round(d_abs, 2)
+    e_int = int(d_round // passo)
+    e_rem = round(d_round - (e_int * passo), 2)
+    
+    if e_rem >= round(passo - 0.005, 2):
+        e_int += 1
+        e_rem = 0.0
+        
+    return "Estaca {}{}+{:05.2f}".format(sign, e_int, e_rem).replace('.', ',')
+
+
 def draw_road_stationing_2d(crv, label_prefix="Est. ", step=20.0, s=1.0):
     """
     Gera o estaqueamento normativo de 20 em 20 metros ao longo do eixo da via em 2D
@@ -2433,12 +2472,9 @@ def draw_road_stationing_2d(crv, label_prefix="Est. ", step=20.0, s=1.0):
         p_t1 = pt_2d - norm_2d * tick_half_len
         p_t2 = pt_2d + norm_2d * tick_half_len
         geoms.append(rg.LineCurve(p_t1, p_t2))
-        idx_est = int(d_val // step)
-        rest_m = d_val - (idx_est * step)
-        if abs(rest_m) < 0.05:
-            lbl_str = "{}{}".format(label_prefix, idx_est)
-        else:
-            lbl_str = "{}{}+{}".format(label_prefix, idx_est, "{:05.2f}".format(rest_m).replace('.', ','))
+        st_norm = format_estaca_normativa(d_val, passo=step)
+        # st_norm format: "Estaca X+YY,YY"
+        lbl_str = st_norm.replace("Estaca ", label_prefix)
         p_txt = pt_2d + norm_2d * txt_offset
         u_txt = tan_2d if (tan_2d.X >= 0 or (abs(tan_2d.X) < 1e-4 and tan_2d.Y >= 0)) else -tan_2d
         v_txt = rg.Vector3d(-u_txt.Y, u_txt.X, 0.0)
@@ -5335,7 +5371,7 @@ def run():
                 d_prog = v_ref_end - v_ref_start
                 last_i = int(d_prog // passo_estacas)
                 r_st = d_prog - (last_i * passo_estacas)
-                lbl_estaca = "Estaca Final ({}+{:05.2f})".format(last_i, r_st).replace('.', ',')
+                lbl_estaca = "Estaca Final ({})".format(format_estaca_normativa(total_ext_eixo, passo=passo_estacas).replace("Estaca ", ""))
                 estacas_normativas_info.append({
                     'curve': line_st,
                     'index': last_i,
@@ -5779,12 +5815,13 @@ def run():
     estacas_secoes_t = []
     for idx_s in range(num_secoes):
         d_acum = 0.0 if idx_s == 0 else dist_acum_t
-        e_int = int(d_acum // passo_estacas)
-        e_rem = d_acum - (e_int * passo_estacas)
-        if e_rem < 0.005:
-            e_str = "Estaca {}+00,00".format(e_int)
-        else:
-            e_str = "Estaca {}+{:05.2f}".format(e_int, e_rem).replace('.', ',')
+        e_str = format_estaca_normativa(d_acum, passo=passo_estacas)
+        d_round = round(abs(d_acum), 2)
+        e_int = int(d_round // passo_estacas)
+        e_rem = round(d_round - (e_int * passo_estacas), 2)
+        if e_rem >= round(passo_estacas - 0.005, 2):
+            e_int += 1
+            e_rem = 0.0
 
         estacas_secoes_t.append({
             'estaca_str': e_str,
@@ -6342,7 +6379,33 @@ def run():
                         else:
                             gx_u = u_ux; gy_u = u_uy
 
+                        # Classificação rigorosamente compatibilizada com as seções transversais (NBR 6492 / DNIT):
+                        # Quando z_tn_m >= z_pr_m (diff_z > 0.04), corresponde à zona de aterro na convenção do projeto.
+                        # Quando z_tn_m < z_pr_m (diff_z < -0.04), corresponde à zona de corte.
                         if diff_z > 0.04:
+                            quads_sup_3d_aterro.append([p00, p10, p11, p01])
+                            q2d = [rg.Point3d(p00.X, p00.Y, 0.0), rg.Point3d(p10.X, p10.Y, 0.0), rg.Point3d(p11.X, p11.Y, 0.0), rg.Point3d(p01.X, p01.Y, 0.0)]
+                            quads_2d_aterro.append(q2d)
+                            area_mancha_aterro_2d += quad_area_2d
+                            sum_aterro_x += cx * quad_area_2d; sum_aterro_y += cy * quad_area_2d
+
+                            # Hachura técnica vetorial de aterro a -45°
+                            if (m % 2 == 0):
+                                p_ha0 = rg.Point3d((p00.X + p10.X)/2.0, (p00.Y + p10.Y)/2.0, 0.0)
+                                p_ha1 = rg.Point3d((p01.X + p11.X)/2.0, (p01.Y + p11.Y)/2.0, 0.0)
+                                hachuras_aterro_geoms.append(rg.LineCurve(p_ha0, p_ha1))
+
+                            if abs(diff_z) > 0.15:
+                                outer_slope_pts.append(p_cen_m)
+                                # Dentes de talude de aterro (crista descendo para a saia do aterro)
+                                if (m % 2 == 0) and (k % 2 == 0):
+                                    is_l = ((m // 2 + k // 2) % 2 == 0)
+                                    l_run = min(max(2.8 * s, 1.8), 5.5 * s)
+                                    p_top_s = rg.Point3d(cx - gx_u * (l_run * 0.5), cy - gy_u * (l_run * 0.5), 0.0)
+                                    p_bot_s = rg.Point3d(cx + gx_u * (l_run * 0.5), cy + gy_u * (l_run * 0.5), 0.0)
+                                    dt_geoms = draw_slope_ticks_tadpoles_2d(p_top_s, p_bot_s, s=s, is_long=is_l, is_cut=False)
+                                    dentes_talude_geoms.extend(dt_geoms)
+                        elif diff_z < -0.04:
                             quads_sup_3d_corte.append([p00, p10, p11, p01])
                             q2d = [rg.Point3d(p00.X, p00.Y, 0.0), rg.Point3d(p10.X, p10.Y, 0.0), rg.Point3d(p11.X, p11.Y, 0.0), rg.Point3d(p01.X, p01.Y, 0.0)]
                             quads_2d_corte.append(q2d)
@@ -6361,34 +6424,9 @@ def run():
                                 if (m % 2 == 0) and (k % 2 == 0):
                                     is_l = ((m // 2 + k // 2) % 2 == 0)
                                     l_run = min(max(2.8 * s, 1.8), 5.5 * s)
-                                    # Em corte, sentido descendente aponta em direção oposta ao gradiente de diff_z
                                     p_top_s = rg.Point3d(cx + gx_u * (l_run * 0.5), cy + gy_u * (l_run * 0.5), 0.0)
                                     p_bot_s = rg.Point3d(cx - gx_u * (l_run * 0.5), cy - gy_u * (l_run * 0.5), 0.0)
                                     dt_geoms = draw_slope_ticks_tadpoles_2d(p_top_s, p_bot_s, s=s, is_long=is_l, is_cut=True)
-                                    dentes_talude_geoms.extend(dt_geoms)
-                        elif diff_z < -0.04:
-                            quads_sup_3d_aterro.append([p00, p10, p11, p01])
-                            q2d = [rg.Point3d(p00.X, p00.Y, 0.0), rg.Point3d(p10.X, p10.Y, 0.0), rg.Point3d(p11.X, p11.Y, 0.0), rg.Point3d(p01.X, p01.Y, 0.0)]
-                            quads_2d_aterro.append(q2d)
-                            area_mancha_aterro_2d += quad_area_2d
-                            sum_aterro_x += cx * quad_area_2d; sum_aterro_y += cy * quad_area_2d
-
-                            # Hachura técnica vetorial de aterro a -45°
-                            if (m % 2 == 0):
-                                p_ha0 = rg.Point3d((p00.X + p10.X)/2.0, (p00.Y + p10.Y)/2.0, 0.0)
-                                p_ha1 = rg.Point3d((p01.X + p11.X)/2.0, (p01.Y + p11.Y)/2.0, 0.0)
-                                hachuras_aterro_geoms.append(rg.LineCurve(p_ha0, p_ha1))
-
-                            if abs(diff_z) > 0.15:
-                                outer_slope_pts.append(p_cen_m)
-                                # Dentes de talude de aterro (crista no bordo do projeto descendo para a saia)
-                                if (m % 2 == 0) and (k % 2 == 0):
-                                    is_l = ((m // 2 + k // 2) % 2 == 0)
-                                    l_run = min(max(2.8 * s, 1.8), 5.5 * s)
-                                    # Em aterro, sentido descendente aponta no sentido do gradiente de diff_z
-                                    p_top_s = rg.Point3d(cx - gx_u * (l_run * 0.5), cy - gy_u * (l_run * 0.5), 0.0)
-                                    p_bot_s = rg.Point3d(cx + gx_u * (l_run * 0.5), cy + gy_u * (l_run * 0.5), 0.0)
-                                    dt_geoms = draw_slope_ticks_tadpoles_2d(p_top_s, p_bot_s, s=s, is_long=is_l, is_cut=False)
                                     dentes_talude_geoms.extend(dt_geoms)
                         else:
                             quads_sup_3d_neutro.append([p00, p10, p11, p01])
@@ -6702,15 +6740,15 @@ def run():
     vol_total_corte_solto = vol_total_corte_geo * fator_k
 
     if saldo_global_geo < -0.01:
-        diag_global = "DÉFICIT CRÍTICO DE ATERRO ({:+.2f} m³ em banco): Os cortes internos suprem apenas {:.1f}% da demanda necessária de aterro (considerando Fh={:.2f}). É mandatória a importação externa de {:.2f} m³ de material de jazida/empréstimo.".format(
+        diag_global = "DÉFICIT GENERALIZADO DE ATERRO ({:+.2f} m³ em banco): Os cortes internos suprem apenas {:.1f}% da demanda de aterro (Fh={:.2f}). É MANDATÓRIA A IMPORTAÇÃO DE {:.2f} m³ DE JAZIDA DE EMPRÉSTIMO EXTERNA LICENCIADA. Não há excedente para bota-fora.".format(
             saldo_global_geo, (vol_total_corte_geo / max(vol_total_aterro_banco, 1e-4)) * 100.0, fh, abs(saldo_global_geo)
         )
     elif saldo_global_geo > 0.01:
-        diag_global = "SUPERÁVIT DE ESCAVAÇÃO ({:+.2f} m³ em banco): Os cortes internos suprem 100% dos aterros. O volume excedente de {:.2f} m³ ({:.2f} m³ solto com K={:.2f}) deve ser destinado a bota-fora licenciado.".format(
+        diag_global = "SUPERÁVIT DE ESCAVAÇÃO ({:+.2f} m³ em banco): Cortes internos cobrem 100% dos aterros. Excedente de {:.2f} m³ ({:.2f} m³ solto com K={:.2f}) destinado a bota-fora externo licenciado.".format(
             saldo_global_geo, saldo_global_geo, vol_total_corte_solto, fator_k
         )
     else:
-        diag_global = "EQUILÍBRIO VOLUMÉTRICO PLENO: O volume escavado atende com precisão à demanda de aterro compactado (Fh={:.2f}).".format(fh)
+        diag_global = "EQUILÍBRIO VOLUMÉTRICO PLENO: Volume escavado atende à demanda de aterro compactado (Fh={:.2f}).".format(fh)
 
     relatorio = [
         "=========================================================================================",
@@ -6741,7 +6779,7 @@ def run():
     ])
     for idx_e, st_info in enumerate(estacas_secoes_t):
         lbl_e = labels_t[idx_e] if idx_e < len(labels_t) else "S{}".format(idx_e + 1)
-        relatorio.append("     * SEÇÃO {:<2} : {:<16} (Dist. Acumulada: {:6.2f} m | Δd p/ próxima: {:5.2f} m)".format(
+        relatorio.append("     * SEÇÃO {:<2} : {:<16} (Dist. Acumulada: {:6.2f} m | Dist. p/ próxima: {:5.2f} m)".format(
             lbl_e, st_info['estaca_str'], st_info['dist_acum'], st_info['d_prox']
         ))
 
@@ -6797,13 +6835,24 @@ def run():
         relatorio.append("     * " + desc_l)
         relatorio.append("     * " + ramo_l)
 
-    relatorio.extend([
-        "     * DIRETRIZ DE TRANSPORTE LONGITUDINAL (DIAGRAMA DE BRÜCKNER):",
-        "       O excedente de escavação gerado nos trechos em corte profundo (Seções J, I, H, G, F)",
-        "       deve ser transportado a montante para suprir a demanda de aterro dos",
-        "       trechos em depressão (Seções E, D, C, B, A). O saldo excedente residual ({:+.1f} m³)".format(saldo_global_geo),
-        "       deverá ser destinado para bota-fora externo licenciado."
-    ])
+    if saldo_global_geo < -0.01:
+        relatorio.extend([
+            "     * DIRETRIZ DE TRANSPORTE LONGITUDINAL (DIAGRAMA DE BRÜCKNER):",
+            "       A obra opera em REGIME DE DÉFICIT GENERALIZADO ao longo de todo o eixo viário,",
+            "       onde o corte total ({:.1f} m³) cobre apenas {:.1f}% do aterro ({:.1f} m³ em banco).".format(
+                vol_total_corte_geo, (vol_total_corte_geo / max(vol_total_aterro_banco, 1e-4)) * 100.0, vol_total_aterro_banco
+            ),
+            "       Todos os trechos operam em déficit local acumulado (ordenada descendente).",
+            "       DIRETRIZ EXECUTIVA: Não há trechos em corte com excedente. O suprimento de",
+            "       aterro deve ser realizado por ALIMENTAÇÃO CONTÍNUA VIA JAZIDA DE EMPRÉSTIMO",
+            "       LICENCIADA externa ({:+.1f} m³ necessários). Não há bota-fora.".format(saldo_global_geo)
+        ])
+    else:
+        relatorio.extend([
+            "     * DIRETRIZ DE TRANSPORTE LONGITUDINAL (DIAGRAMA DE BRÜCKNER):",
+            "       Compensação longitudinal executada dos cortes para os aterros a jusante.",
+            "       Saldo excedente residual ({:+.1f} m³) destinado a bota-fora licenciado.".format(saldo_global_geo)
+        ])
 
     ext_acumulada_long = sum(sdv.get('total_ext', 0.0) for sdv in sec_v_data_list) if sec_v_data_list else sum(cv.GetLength() for cv in lista_verticais)
     relatorio.extend([
@@ -6882,8 +6931,8 @@ def run():
             "     * FOLHA 02/03: Perfis Longitudinais das Vias com Guitarra (Escala H=1:1.000 / V=1:100)",
             "     * FOLHA 03/03: Seções Transversais de Terraplenagem (Escala 1:200)", 
             "   - Manchas de Grading (Corte e Aterro 2D)  : CONFORME (Mapeamento cromático Laranja/Verde com Linha Neutra)",
-            "     * Área Total da Mancha de Corte em Planta: {:.2f} m²".format(area_mancha_corte_2d),
-            "     * Área Total da Mancha de Aterro em Planta: {:.2f} m²".format(area_mancha_aterro_2d),
+            "     * Área Total da Mancha de Corte em Planta : {:.2f} m² (H.Média: {:.2f} m)".format(area_mancha_corte_2d, vol_total_corte_geo / max(area_mancha_corte_2d, 1e-4)),
+            "     * Área Total da Mancha de Aterro em Planta: {:.2f} m² (H.Média: {:.2f} m)".format(area_mancha_aterro_2d, vol_total_aterro_geo / max(area_mancha_aterro_2d, 1e-4)),
             "-----------------------------------------------------------------------------------------",
             "8. LAUDO TÉCNICO DE ESTABILIDADE DE TALUDES E MUROS DE CONTENÇÃO (NBR 11682 / NBR 6122):",
             "-----------------------------------------------------------------------------------------",
@@ -6898,20 +6947,23 @@ def run():
             "     * Taludes com H <= 4,50 m: Talude contínuo simples (1V:1.5H aterro / 1V:1H corte).",
             "     * Taludes com H > 4,50 m : ZONA CRÍTICA NORMATIVA. Obrigatória a interposição de",
             "       bermas de equilíbrio intermediárias ou estruturas de contenção dimensionadas.",
-            "   - DIAGNÓSTICO E ENQUADRAMENTO GEOTÉCNICO SEÇÃO A SEÇÃO:",
-            "     * SEÇÃO A : H.Aterro = 3,18m | H.Corte = 2,14m -> CONFORME (H <= 4,5m). Talude 1V:1.5H simples. FS >= 1,50.",
-            "     * SEÇÃO B : H.Aterro = 6,46m | H.Corte = 4,11m -> CRÍTICO EM ATERRO (H > 4,5m). Exige berma intermediária B >= 3,0m.",
-            "     * SEÇÃO C : H.Aterro = 8,92m | H.Corte = 6,46m -> HIPER-CRÍTICO (Aterro 8,92m e Corte 6,46m).",
-            "       -> Aterro exige 2 lances (h <= 4,5m) com berma B >= 3,0m, dreno profundo e enrocamento de pé (ou muro de flexão se recuo < 16,4m).",
-            "       -> Corte exige banqueteamento com berma B >= 2,5m e canaleta de berma.",
-            "     * SEÇÃO D : H.Aterro = 5,40m | H.Corte = 3,39m -> CRÍTICO EM ATERRO (H > 4,5m). Exige berma intermediária B >= 3,0m.",
-            "     * SEÇÃO E : H.Aterro = 5,80m | H.Corte = 4,20m -> CRÍTICO EM ATERRO (H > 4,5m). Exige berma intermediária B >= 3,0m.",
-            "     * SEÇÃO F : H.Aterro = 4,02m | H.Corte = 4,66m -> CRÍTICO EM CORTE (H > 4,5m). Exige berma intermediária B >= 2,5m.",
-            "     * SEÇÃO G : H.Aterro = 3,86m | H.Corte = 3,37m -> CONFORME (H <= 4,5m). Talude 1V:1.5H simples. FS >= 1,50.",
-            "     * SEÇÃO H : H.Aterro = 4,42m | H.Corte = 3,97m -> CONFORME (H <= 4,5m). Limiar normativo. FS >= 1,50.",
-            "     * SEÇÃO I : H.Corte = 7,45m | H.Aterro = 1,99m -> CRÍTICO EM CORTE (H > 4,5m). Exige banqueteamento em 2 lances (B >= 2,5m).",
-            "     * SEÇÃO J : H.Corte = 5,90m | H.Aterro = 3,45m -> CRÍTICO EM CORTE (H > 4,5m). Exige berma intermediária B >= 2,5m.",
-            "     * EIXO 4  : H.Corte = 7,52m | H.Aterro = 1,48m -> CRÍTICO EM CORTE (H > 4,5m). Exige banqueteamento ou solo grampeado.",
+            "   - DIAGNÓSTICO E ENQUADRAMENTO GEOTÉCNICO SEÇÃO A SEÇÃO (100% DINÂMICO NBR 11682):"
+        ])
+    for s_geot in sec_data_list:
+        lbl_g = s_geot.get('label', 'S')
+        hc_g = s_geot.get('max_h_corte', 0.0)
+        ha_g = s_geot.get('max_h_aterro', 0.0)
+        if ha_g > 4.50 and hc_g > 4.50:
+            laudo_g = "HIPER-CRÍTICO (Aterro {:.2f}m e Corte {:.2f}m). Exige bermas B>=3,0m em aterro e B>=2,5m em corte ou contenção.".format(ha_g, hc_g)
+        elif ha_g > 4.50:
+            laudo_g = "CRÍTICO EM ATERRO (H={:.2f}m > 4,50m). Exige berma intermediária B>=3,0m a cada 4,5m de desnível ou muro de contenção.".format(ha_g)
+        elif hc_g > 4.50:
+            laudo_g = "CRÍTICO EM CORTE (H={:.2f}m > 4,50m). Exige banqueteamento com berma B>=2,5m a cada 4,5m de altura.".format(hc_g)
+        else:
+            laudo_g = "CONFORME (H.Aterro={:.2f}m, H.Corte={:.2f}m <= 4,50m). Talude 1V:1.5H simples. FS >= 1,50.".format(ha_g, hc_g)
+        relatorio.append("     * SEÇÃO {:<2} : H.Aterro = {:>5.2f}m | H.Corte = {:>5.2f}m -> {}".format(lbl_g, ha_g, hc_g, laudo_g))
+
+    relatorio.extend([
             "   - PARÂMETROS GEOTÉCNICOS & CÁLCULO DE ESTABILIDADE (BISHOP / FELLENIUS):",
             "     * Parâmetros do Maciço (Solos Residuais da Região de Cotia/SP):",
             "       - Coesão Efetiva (c')            : 15,0 kPa",
