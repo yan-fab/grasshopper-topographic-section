@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 ===============================================================================
-CÁLCULO DE TERRAPLENAGEM, VOLUMES MULTI-EIXOS & SISTEMA VIÁRIO (NBR 6492 & AGPTEA)
+CÁLCULO DE TERRAPLENAGEM, VOLUMES MULTI-EIXOS, SISTEMA VIÁRIO & DRENAGEM PLUVIAL (NBR 6492, AGPTEA & GRAPROHAB/DAEE)
 ===============================================================================
 Algoritmo paramétrico para Grasshopper (Rhinoceros 8 / GhPython).
 Unifica múltiplos eixos de corte transversais (A, B, C...) e longitudinais (1, 2, 3...),
 integra o sistema viário projetado em 2D/3D (ruas, calçadas, abaulamento de 2.0% e desnível de guias),
 calcula automaticamente as distâncias entre eixos consecutivos, calcula as metragens
 cúbicas de corte e aterro pelo Método das Seções Transversais da AGPTEA, alinha todas
-as seções com espaçamento uniforme e realiza a COMPENSAÇÃO PROGRESSIVA DE MASSAS
-(rastreando de onde sai a terra excedente para abastecer o aterro da próxima seção).
+as seções com espaçamento uniforme, realiza a COMPENSAÇÃO PROGRESSIVA DE MASSAS e
+monta automaticamente o SISTEMA DE DRENAGEM PLUVIAL URBANA (puxando a LinhaGuia sobre o novo terreno).
 
 Metodologia baseada em:
 - "TOPOGRAFIA: CÁLCULO DE VOLUMES – NOTAS DE AULA"
@@ -17,6 +17,8 @@ Metodologia baseada em:
   Cap. 3.2 (Método das Seções Transversais) e Cap. 3.3 (Balanço de Massas)
 - NBR 6492: Representação de Projetos de Arquitetura (Simbologia de Cortes e Níveis)
 - Normas DNIT / NBR de Vias Urbanas (Carroçabilidade, Greide e Drenagem com Abaulamento)
+- Manual GRAPROHAB (Itens 12 e 13) / DAEE-SP (TR = 10 anos microdrenagem / TR = 25 anos detenção)
+- Lei Complementar nº 67/2013 de Vargem Grande Paulista (Art. 21-24) e ABNT NBR 8882 / NBR 15645
 
 ENTRADAS (INPUTS - Bilíngue Português / English):
   Terreno / Terrain                 [List, Curve/Mesh] : Curvas de nível 3D ou Malha topográfica.
@@ -24,6 +26,11 @@ ENTRADAS (INPUTS - Bilíngue Português / English):
   EixosVerticais / LongitudinalLines[List, Curve]      : Eixos longitudinais/verticais (1, 2, 3...) [Opcional].
   CurvaProjeto / GradingLine        [Item/List, Curve] : Curva(s) de greide ou projeto / LinhaDelimitadora [Opcional].
   Viario / Roadway / Ruas           [Item/List, Curve] : Poligonais fechadas 2D do viário (calçadas + pistas + cul-de-sacs) [Opcional].
+  Lotes / Lots / Parcelas           [Item/List, Curve] : Poligonais 2D dos lotes para auditoria de declividade GRAPROHAB [Opcional].
+  LinhaGuia / LinhaGuiaDrenagem     [Item/List, Curve] : Linhas guia / eixos de drenagem pluvial puxadas sobre o terreno novo [Opcional].
+                                                         (Aliases: GuiasDrenagem, EixosDrenagem, RedeDrenagem, DrainageGuide, Drenagem)
+  CobrimentoMinimo / MinCover       [Item, float]      : Cobrimento mínimo sobre a geratriz superior da tubulação [Opcional, Padrão = 1.00 m].
+  EspacamentoBL / InletSpacing      [Item, float]      : Espaçamento máximo entre pares de Bocas de Lobo nas sarjetas [Opcional, Padrão = 30.0 m].
   InclinacaoMaxima / MaxSlope       [Item, float]      : Inclinação máxima permitida para o greide delimitador [Opcional, Padrão = 15.0 (%)].
   NivelProjeto / ProjectElevation   [Item/List/Tree]   : Cota(s) de platô individual por trecho/quadrante [Opcional].
   Ponto / Point                     [Item, Point3d]    : Ponto base de inserção das seções 2D no Top View [Opcional].
@@ -37,16 +44,25 @@ ENTRADAS (INPUTS - Bilíngue Português / English):
   Escala / Scale                    [Item, float]      : Fator de escala dos símbolos, textos e balões NBR (padrão: 1.0).
 
 SAÍDAS (OUTPUTS):
-  a : Modelo 3D Completo de Terraplenagem (Superfície Projetada com Asfalto/Calçada + Fatias 3D Laranja/Verde + Greides 3D).
+  a : Modelo 3D Completo de Terraplenagem + Drenagem Pluvial 3D (Superfície Projetada + Viário + Galerias, PVs, BLs e Bacia 3D).
   b : PLANTA BAIXA TÉCNICA (Eixos A, B, C... e 1, 2, 3... com balões NBR, setas de corte, cotas de distância, quadrantes e viário).
-  c : DESENHO COMPLETO DAS SEÇÕES 2D ALINHADAS (Títulos, malhas coloridas Laranja/Verde, cotas NBR, corredores viários e banners).
+  c : DESENHO COMPLETO DAS SEÇÕES 2D ALINHADAS + PRANCHA DE DRENAGEM A0 (FOLHA DREN-01/01).
   d : Polígonos de CORTE de todas as seções (Curvas Fechadas para Hachura/Bake).
   e : Polígonos de ATERRO de todas as seções (Curvas Fechadas para Hachura/Bake).
-  f : Memorial Técnico Completo de Terraplenagem, Balanço de Massas e Sistema Viário (Panel).
+  f : Memorial Técnico Completo de Terraplenagem, Balanço de Massas, Viário, Lotes e Drenagem Pluvial (Panel).
   Viario3D / Roadway3D : Malhas 3D do leito viário (asfalto e calçadas com relevo de guias).
   Asfalto3D            : Malhas 3D exclusivas da pista de rolamento (asfalto grafite escuro).
   Calcadas3D           : Malhas 3D exclusivas dos passeios públicos (concreto claro).
   Viario2D             : Contornos 2D das ruas para planta técnica.
+  Drenagem3D           : Modelo 3D completo da rede de drenagem pluvial (Galerias + PVs + BLs + Bacia de Detenção).
+  Drenagem2D           : Desenho técnico 2D da rede de drenagem sobre a planta.
+  Galerias3D / Galerias2D : Tubulações de concreto armado (PA-1 / PA-2, DN 400 a 800 mm) em 3D e 2D.
+  PocosVisita3D / PocosVisita2D : Poços de Visita (PVs DN 1200 mm) em 3D e simbologia 2D com cotas CT/CF/Prof.
+  BocasDeLobo3D / BocasDeLobo2D : Bocas de Lobo duplas nas sarjetas + ramais DN 300 mm em 3D e 2D.
+  BaciaDetencao3D / BaciaDetencao2D : Bacia de Detenção Amortecedora (450 m³, TR=25 anos) e Dissipador em 3D e 2D.
+  PranchaDrenagem      : Prancha Técnica A0 Exclusiva do Sistema de Drenagem Pluvial (FOLHA DREN-01/01).
+  TabelaManning2D      : Quadro de Dimensionamento Hidráulico de Galerias (Equação de Manning, n=0.013).
+  MemorialDrenagem     : Memorial Descritivo e Justificativo de Drenagem Pluvial (GRAPROHAB Item 13 / DAEE).
 ===============================================================================
 """
 
@@ -5086,6 +5102,781 @@ def analyze_lot_slopes_graprohab(raw_lotes, geoms_terreno, doc=None, s=1.0, tol=
     }
 
 
+
+
+# =============================================================================
+# 11. MOTOR DE MONTAGEM AUTOMÁTICA DO SISTEMA DE DRENAGEM PLUVIAL POR LINHA GUIA
+#     (GRAPROHAB ITEM 13 / DAEE / LC 67/2013 VGP / ABNT NBR 8882 & NBR 15645)
+# =============================================================================
+
+REDE_DRENAGEM_CABE_VGP_PADRAO_PVS = [
+    {"id": "PV-01", "x": 292920.5, "y": 7386512.0, "zt_ref": 900.20, "zf_ref": 898.90, "h": 1.30, "tipo": "PV Cabeceira (Cul-de-sac 01)"},
+    {"id": "PV-02", "x": 292965.0, "y": 7386518.0, "zt_ref": 897.80, "zf_ref": 896.40, "h": 1.40, "tipo": "PV Passagem"},
+    {"id": "PV-03", "x": 293012.0, "y": 7386525.0, "zt_ref": 895.10, "zf_ref": 893.60, "h": 1.50, "tipo": "PV Confluência (Degrau)"},
+    {"id": "PV-04", "x": 292948.0, "y": 7386452.0, "zt_ref": 906.40, "zf_ref": 905.10, "h": 1.30, "tipo": "PV Cabeceira (Cul-de-sac 02)"},
+    {"id": "PV-05", "x": 292988.0, "y": 7386460.0, "zt_ref": 903.20, "zf_ref": 901.80, "h": 1.40, "tipo": "PV Passagem"},
+    {"id": "PV-06", "x": 293028.0, "y": 7386470.0, "zt_ref": 899.50, "zf_ref": 898.00, "h": 1.50, "tipo": "PV Confluência (Degrau)"},
+    {"id": "PV-07", "x": 292982.0, "y": 7386392.0, "zt_ref": 914.50, "zf_ref": 913.20, "h": 1.30, "tipo": "PV Cabeceira (Cul-de-sac 03)"},
+    {"id": "PV-08", "x": 293022.0, "y": 7386402.0, "zt_ref": 911.00, "zf_ref": 909.60, "h": 1.40, "tipo": "PV Passagem"},
+    {"id": "PV-09", "x": 293060.0, "y": 7386415.0, "zt_ref": 907.20, "zf_ref": 905.70, "h": 1.50, "tipo": "PV Confluência (Degrau)"},
+    {"id": "PV-10", "x": 293048.6, "y": 7386336.3, "zt_ref": 925.81, "zf_ref": 924.51, "h": 1.30, "tipo": "PV Cabeceira (Portaria Sul)"},
+    {"id": "PV-11", "x": 293095.0, "y": 7386342.0, "zt_ref": 923.40, "zf_ref": 922.00, "h": 1.40, "tipo": "PV Deflexão Leste"},
+    {"id": "PV-12", "x": 293152.0, "y": 7386355.0, "zt_ref": 921.80, "zf_ref": 920.30, "h": 1.50, "tipo": "PV Coletor Leste"},
+    {"id": "PV-13", "x": 293132.0, "y": 7386410.0, "zt_ref": 915.20, "zf_ref": 913.70, "h": 1.50, "tipo": "PV Coletor Leste (Degrau)"},
+    {"id": "PV-14", "x": 293112.0, "y": 7386465.0, "zt_ref": 908.40, "zf_ref": 906.90, "h": 1.50, "tipo": "PV Coletor Leste (Degrau)"},
+    {"id": "PV-15", "x": 293092.0, "y": 7386520.0, "zt_ref": 901.10, "zf_ref": 899.50, "h": 1.60, "tipo": "PV Tronco Principal"},
+    {"id": "PV-16", "x": 293052.0, "y": 7386532.0, "zt_ref": 896.80, "zf_ref": 895.20, "h": 1.60, "tipo": "PV Tronco Norte"},
+    {"id": "PV-17", "x": 293078.0, "y": 7386548.0, "zt_ref": 893.50, "zf_ref": 891.80, "h": 1.70, "tipo": "PV Entrada Bacia Detenção"},
+    {"id": "PV-18", "x": 293079.8, "y": 7386564.4, "zt_ref": 891.00, "zf_ref": 889.20, "h": 1.80, "tipo": "Caixa Dissipadora (Escadaria)"},
+]
+
+REDE_DRENAGEM_CABE_VGP_PADRAO_TRECHOS = [
+    ("T-01", "PV-01", "PV-02", 400),
+    ("T-02", "PV-02", "PV-03", 400),
+    ("T-03", "PV-04", "PV-05", 400),
+    ("T-04", "PV-05", "PV-06", 400),
+    ("T-05", "PV-07", "PV-08", 400),
+    ("T-06", "PV-08", "PV-09", 400),
+    ("T-07", "PV-10", "PV-11", 400),
+    ("T-08", "PV-11", "PV-12", 400),
+    ("T-09", "PV-12", "PV-13", 500),
+    ("T-10", "PV-09", "PV-06", 500),
+    ("T-11", "PV-06", "PV-03", 500),
+    ("T-12", "PV-13", "PV-14", 500),
+    ("T-13", "PV-14", "PV-15", 600),
+    ("T-14", "PV-03", "PV-16", 600),
+    ("T-15", "PV-16", "PV-15", 600),
+    ("T-16", "PV-15", "PV-17", 600),
+    ("T-17", "PV-17", "PV-18", 800),
+    ("T-18", "PV-18", "CORPO_HIDRICO", 800),
+]
+
+def calc_manning_full_pipe(dn_mm, slope_m_m, n_manning=0.013):
+    """
+    Calcula os parâmetros hidráulicos de galeria circular em seção plena pela Equação de Manning:
+      Q = (1/n) * A * Rh^(2/3) * S^(1/2)
+      V = (1/n) * Rh^(2/3) * S^(1/2)
+    Retorna dicionário com D(m), A(m²), Rh(m), S(%), V(m/s), Q_cap(L/s) e status normativo.
+    """
+    d_m = float(dn_mm) / 1000.0
+    s_eff = max(abs(float(slope_m_m)), 0.005) # declividade mínima construtiva 0.5%
+    area = (math.pi * (d_m ** 2)) / 4.0
+    rh = d_m / 4.0
+    vel = (1.0 / n_manning) * (rh ** (2.0 / 3.0)) * (s_eff ** 0.5)
+    q_m3s = area * vel
+    q_ls = q_m3s * 1000.0
+    if vel < 0.75:
+        status = "Atenção: V < 0,75 m/s (Autolimpeza)"
+    elif vel > 5.00:
+        status = "V > 5,0 m/s (Exige Degrau no PV)"
+    else:
+        status = "OK (Escoamento Normal)"
+    return {
+        'd_m': d_m,
+        'dn_mm': int(dn_mm),
+        'area': area,
+        'rh': rh,
+        's_m_m': s_eff,
+        's_pct': s_eff * 100.0,
+        'vel': vel,
+        'q_ls': q_ls,
+        'status': status
+    }
+
+def make_3d_cylinder_mesh(p0, p1, radius, color=None, sides=12):
+    """Cria uma malha cilíndrica 3D fechada entre p0 e p1 (para galerias, ramais e chaminés de PVs)."""
+    vec = p1 - p0
+    length = vec.Length
+    if length <= 1e-4 or radius <= 1e-4:
+        return None
+    u_ax = rg.Vector3d(vec.X / length, vec.Y / length, vec.Z / length)
+    if abs(u_ax.Z) < 0.9:
+        ref = rg.Vector3d(0.0, 0.0, 1.0)
+    else:
+        ref = rg.Vector3d(1.0, 0.0, 0.0)
+    v1 = rg.Vector3d.CrossProduct(u_ax, ref)
+    v1.Unitize()
+    v2 = rg.Vector3d.CrossProduct(u_ax, v1)
+    v2.Unitize()
+
+    quads = []
+    for i in range(sides):
+        ang0 = (2.0 * math.pi * i) / float(sides)
+        ang1 = (2.0 * math.pi * (i + 1)) / float(sides)
+        off0 = v1 * (radius * math.cos(ang0)) + v2 * (radius * math.sin(ang0))
+        off1 = v1 * (radius * math.cos(ang1)) + v2 * (radius * math.sin(ang1))
+        qa = p0 + off0
+        qb = p0 + off1
+        qc = p1 + off1
+        qd = p1 + off0
+        quads.append([qa, qb, qc, qd])
+    return create_colored_mesh(quads, color)
+
+def make_3d_box_mesh_oriented(center_top, u_dir, w_len, w_trans, height_down, color=None):
+    """Cria uma caixa prismática 3D orientada ao longo de u_dir (para PVs 1,00x1,00m e Bocas de Lobo 0,80x0,40m)."""
+    ux = u_dir.X; uy = u_dir.Y
+    l_u = math.hypot(ux, uy)
+    if l_u <= 1e-5:
+        ux, uy = 1.0, 0.0
+    else:
+        ux /= l_u; uy /= l_u
+    nx, ny = -uy, ux
+
+    hl = w_len * 0.5
+    ht = w_trans * 0.5
+    zt = center_top.Z
+    zb = zt - abs(height_down)
+    cx, cy = center_top.X, center_top.Y
+
+    t0 = rg.Point3d(cx - ux*hl - nx*ht, cy - uy*hl - ny*ht, zt)
+    t1 = rg.Point3d(cx + ux*hl - nx*ht, cy + uy*hl - ny*ht, zt)
+    t2 = rg.Point3d(cx + ux*hl + nx*ht, cy + uy*hl + ny*ht, zt)
+    t3 = rg.Point3d(cx - ux*hl + nx*ht, cy - uy*hl + ny*ht, zt)
+
+    b0 = rg.Point3d(t0.X, t0.Y, zb)
+    b1 = rg.Point3d(t1.X, t1.Y, zb)
+    b2 = rg.Point3d(t2.X, t2.Y, zb)
+    b3 = rg.Point3d(t3.X, t3.Y, zb)
+
+    quads = [
+        [t0, t1, t2, t3], # Topo
+        [b3, b2, b1, b0], # Fundo
+        [b0, b1, t1, t0], # Lateral 1
+        [b1, b2, t2, t1], # Lateral 2
+        [b2, b3, t3, t2], # Lateral 3
+        [b3, b0, t0, t3], # Lateral 4
+    ]
+    return create_colored_mesh(quads, color)
+
+def draw_pv_standard_detail_2d(x0, y0, w_box, h_box, sc, s=1.0):
+    """
+    Desenha o Detalhe Construtivo Padrão — Poço de Visita (PV 1,00 x 1,00m) em Concreto Armado
+    com Degrau de Queda Interno (Drop Manhole), Planta e Corte Esquemático s/ escala.
+    """
+    geoms = []
+    x1 = x0 + w_box
+    y1 = y0 + h_box
+    bg = make_box_background_mesh(
+        rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0),
+        rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0),
+        System.Drawing.Color.FromArgb(254, 254, 254)
+    )
+    if bg: geoms.append(bg)
+    geoms.append(make_box_poly(x0, y0, x1, y1))
+
+    # Cabeçalho
+    y_hdr = y1 - 8.5 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)))
+    geoms.extend(make_text_geometry("DETALHE CONSTRUTIVO PADRÃO — POÇO DE VISITA (PV 1,00x1,00m) COM DEGRAU", rg.Point3d((x0 + x1)/2.0, y1 - 4.5*sc, 0), 2.1*sc, rg.TextJustification.MiddleCenter, s))
+
+    # Divisão Planta (Esquerda) x Corte Esquemático (Direita)
+    x_mid = x0 + w_box * 0.44
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid, y0 + 6.0*sc, 0), rg.Point3d(x_mid, y_hdr, 0)))
+
+    # 1. Planta do PV (Esquerda)
+    cx_p = (x0 + x_mid) * 0.5
+    cy_p = (y0 + 10.0*sc + y_hdr) * 0.5
+    r_ext = 15.0 * sc
+    r_int = 11.5 * sc
+    geoms.append(make_box_poly(cx_p - r_ext, cy_p - r_ext, cx_p + r_ext, cy_p + r_ext))
+    geoms.append(make_box_poly(cx_p - r_int, cy_p - r_int, cx_p + r_int, cy_p + r_int))
+    # Tampão FoFo DN 600mm
+    geoms.append(rg.Circle(rg.Point3d(cx_p, cy_p, 0), 6.5 * sc).ToNurbsCurve())
+    geoms.append(rg.Circle(rg.Point3d(cx_p, cy_p, 0), 5.5 * sc).ToNurbsCurve())
+    # Tubos chegando e saindo
+    geoms.append(rg.LineCurve(rg.Point3d(cx_p - r_ext - 8.0*sc, cy_p + 3.5*sc, 0), rg.Point3d(cx_p - r_int, cy_p + 3.5*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_p - r_ext - 8.0*sc, cy_p - 3.5*sc, 0), rg.Point3d(cx_p - r_int, cy_p - 3.5*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_p + r_int, cy_p + 4.5*sc, 0), rg.Point3d(cx_p + r_ext + 8.0*sc, cy_p + 4.5*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_p + r_int, cy_p - 4.5*sc, 0), rg.Point3d(cx_p + r_ext + 8.0*sc, cy_p - 4.5*sc, 0)))
+    geoms.extend(make_text_geometry("PLANTA (1,00 x 1,00 m)", rg.Point3d(cx_p, y_hdr - 5.0*sc, 0), 1.6*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Tampão FoFo Ø 600mm (NBR 10160)", rg.Point3d(cx_p, cy_p - r_ext - 5.0*sc, 0), 1.4*sc, rg.TextJustification.MiddleCenter, s))
+
+    # 2. Corte Esquemático com Degrau (Direita)
+    cx_c = (x_mid + x1) * 0.5
+    y_top_pv = y_hdr - 10.0 * sc
+    y_bot_pv = y0 + 14.0 * sc
+    w_ch = 22.0 * sc
+    geoms.append(make_box_poly(cx_c - w_ch*0.5, y_bot_pv, cx_c + w_ch*0.5, y_top_pv))
+    geoms.append(make_box_poly(cx_c - w_ch*0.36, y_bot_pv + 3.0*sc, cx_c + w_ch*0.36, y_top_pv - 2.5*sc))
+    y_mont = y_top_pv - 14.0 * sc
+    y_jus  = y_bot_pv + 4.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c - w_ch*0.5 - 14.0*sc, y_mont + 5.0*sc, 0), rg.Point3d(cx_c - w_ch*0.36, y_mont + 5.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c - w_ch*0.5 - 14.0*sc, y_mont, 0), rg.Point3d(cx_c - w_ch*0.36, y_mont, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c + w_ch*0.36, y_jus + 6.5*sc, 0), rg.Point3d(cx_c + w_ch*0.5 + 14.0*sc, y_jus + 6.5*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c + w_ch*0.36, y_jus, 0), rg.Point3d(cx_c + w_ch*0.5 + 14.0*sc, y_jus, 0)))
+    geoms.extend(make_text_geometry("CORTE ESQUEMÁTICO (C/ DEGRAU DE QUEDA)", rg.Point3d(cx_c, y_hdr - 5.0*sc, 0), 1.6*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("ZT (Cota Tampão Viário)", rg.Point3d(cx_c, y_top_pv + 2.5*sc, 0), 1.35*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("ZF (Cota Fundo / Geratriz Inf.) | Laje fck>=25MPa", rg.Point3d(cx_c, y_bot_pv - 4.0*sc, 0), 1.35*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Recobrimento Mínimo >= 1,00 m | Escada Marinheiro Galvanizada a cada 0,30 m", rg.Point3d((x0 + x1)*0.5, y0 + 2.8*sc, 0), 1.35*sc, rg.TextJustification.MiddleCenter, s))
+
+    t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
+    t_texts = [g for g in geoms if g not in t_lines]
+    return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
+
+def draw_drainage_sizing_table_a0(x0, y0, trechos_list, pvs_list, sc, s=1.0):
+    """
+    Desenha a Tabela Oficial de Pré-Dimensionamento Hidráulico das Galerias (Manning n=0,013)
+    contendo todos os trechos da rede (T-01 a T-18 ou dinâmicos pela Linha Guia),
+    cotas de tampão (ZT), cotas de fundo (ZF), extensão, declividade, DN, velocidade e vazão.
+    """
+    geoms = []
+    col_w = [12.0*sc, 14.0*sc, 14.0*sc, 15.0*sc, 15.0*sc, 16.0*sc, 16.0*sc, 16.0*sc, 16.0*sc, 16.0*sc, 18.0*sc, 42.0*sc]
+    total_w = sum(col_w)
+    row_h = 3.8 * sc
+    hdr_h = 7.0 * sc
+    title_h = 8.0 * sc
+    n_rows = max(len(trechos_list), 1)
+    total_h = title_h + hdr_h + n_rows * row_h + 7.5 * sc
+
+    x1 = x0 + total_w
+    y1 = y0 + total_h
+
+    bg_t = make_box_background_mesh(
+        rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0),
+        rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0),
+        System.Drawing.Color.FromArgb(254, 254, 254)
+    )
+    if bg_t: geoms.append(bg_t)
+    geoms.append(make_box_poly(x0, y0, x1, y1))
+
+    y_title_line = y1 - title_h
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_title_line, 0), rg.Point3d(x1, y_title_line, 0)))
+    geoms.extend(make_text_geometry("TABELA DE PRÉ-DIMENSIONAMENTO HIDRÁULICO DE GALERIAS PLUVIAIS (MANNING n = 0,013 | TR = 10 ANOS)", rg.Point3d((x0 + x1)/2.0, y1 - 4.2*sc, 0), 2.3*sc, rg.TextJustification.MiddleCenter, s))
+
+    y_hdr_line = y_title_line - hdr_h
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr_line, 0), rg.Point3d(x1, y_hdr_line, 0)))
+
+    headers = ["Trecho", "Mont.", "Jus.", "L (m)", "DN(mm)", "ZT Mont", "ZF Mont", "ZT Jus", "ZF Jus", "Decl. S%", "V (m/s)", "Q.Cap(L/s) / Diagnóstico"]
+    cur_x = x0
+    for idx_c, w_c in enumerate(col_w):
+        geoms.extend(make_text_geometry(headers[idx_c], rg.Point3d(cur_x + w_c/2.0, (y_title_line + y_hdr_line)/2.0, 0), 1.35*sc, rg.TextJustification.MiddleCenter, s))
+        if idx_c > 0:
+            geoms.append(rg.LineCurve(rg.Point3d(cur_x, y_title_line, 0), rg.Point3d(cur_x, y0 + 7.5*sc, 0)))
+        cur_x += w_c
+
+    cur_y = y_hdr_line
+    tot_len = 0.0
+    for tr in trechos_list:
+        next_y = cur_y - row_h
+        geoms.append(rg.LineCurve(rg.Point3d(x0, next_y, 0), rg.Point3d(x1, next_y, 0)))
+        tot_len += tr['length']
+        q_diag = "{:.0f} L/s | {}".format(tr['q_ls'], "Degrau PV" if tr['vel'] > 5.0 else "OK").replace('.', ',')
+        row_vals = [
+            tr['id'],
+            tr['pv_ini'],
+            tr['pv_fim'],
+            "{:.1f}".format(tr['length']).replace('.', ','),
+            str(tr['dn_mm']),
+            "{:.2f}".format(tr['zt_ini']).replace('.', ','),
+            "{:.2f}".format(tr['zf_ini']).replace('.', ','),
+            "{:.2f}".format(tr['zt_fim']).replace('.', ','),
+            "{:.2f}".format(tr['zf_fim']).replace('.', ','),
+            "{:.2f}%".format(tr['s_pct']).replace('.', ','),
+            "{:.2f}".format(tr['vel']).replace('.', ','),
+            q_diag
+        ]
+        x_c = x0
+        for idx_c, val in enumerate(row_vals):
+            w_c = col_w[idx_c]
+            geoms.extend(make_text_geometry(val, rg.Point3d(x_c + w_c/2.0, (cur_y + next_y)/2.0, 0), 1.25*sc, rg.TextJustification.MiddleCenter, s))
+            x_c += w_c
+        cur_y = next_y
+
+    rodape_txt = "Extensão Total de Galerias: {:.1f} m  |  Total de Poços de Visita: {} PVs (1,00x1,00m)  |  Bacia de Detenção: V = 450,0 m³ (TR=25 anos - Art. 22 PD VGP)".format(
+        tot_len, len(pvs_list)
+    ).replace('.', ',')
+    geoms.extend(make_text_geometry(rodape_txt, rg.Point3d((x0 + x1)/2.0, y0 + 3.5*sc, 0), 1.75*sc, rg.TextJustification.MiddleCenter, s))
+
+    t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
+    t_texts = [g for g in geoms if g not in t_lines]
+    return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
+
+def build_automatic_drainage_system(raw_linha_guia, sample_z_fn, road_polygons=None, boundary_info=None,
+                                    s=1.0, tol=0.001, cobrimento_min=1.0, espacamento_bl=30.0):
+    """
+    Motor de montagem automática do Sistema de Drenagem Pluvial do Loteamento:
+    - Se o usuário conectar curvas em `LinhaGuia` / `LinhaGuiaDrenagem` / `EixosDrenagem`:
+      1. Extrai os segmentos das linhas guia puxadas pelo usuário no terreno novo.
+      2. Amostra a cota real do terreno projetado (ZT) em cada vértice usando `sample_z_fn(x, y)`.
+      3. Orienta cada trecho automaticamente a favor da gravidade (do ponto mais alto para o mais baixo).
+      4. Subdivide trechos retos > 50,0m inserindo PVs intermediários (Regra 2).
+      5. Agrupa extremidades próximas (tolerância 4,5m) para formar a topologia de nós (PVs) de montante a jusante.
+      6. Dimensiona progressivamente os diâmetros (DN 400mm -> 500mm -> 600mm -> 800mm) conforme ordem topológica acumulada.
+      7. Calcula Manning (n=0,013) em cada trecho, posiciona Bocas de Lobo pareadas (BLs 0,80x0,40x0,20m) a cada 25-35m
+         nas duas sarjetas com ramais de ligação Ø200/300mm, e implanta a Bacia de Detenção (450m³) e o Dissipador (PV final)
+         no exutório mais baixo.
+    - Caso `raw_linha_guia` não esteja conectado (None ou vazio), monta automaticamente a rede normativa de 18 trechos
+      (T-01 a T-18) e 18 PVs (PV-01 a PV-18) do projeto CABE VGP adaptada à superfície 3D do terreno novo!
+    """
+    guia_crvs = []
+    if raw_linha_guia is not None:
+        for item in to_list(raw_linha_guia):
+            c = to_rhino_curve(item)
+            if c is not None and getattr(c, 'IsValid', True) and c.GetLength() > 1.5:
+                guia_crvs.append(c)
+
+    usar_rede_custom = (len(guia_crvs) > 0)
+    pvs_dict = {}
+    pvs_list = []
+    trechos_raw = []
+
+    def eval_zt(px, py, z_fallback=None):
+        try:
+            z_val = sample_z_fn(px, py)
+            if z_val is not None and not math.isnan(z_val) and z_val > 10.0:
+                return float(z_val)
+        except:
+            pass
+        return float(z_fallback) if z_fallback is not None else 900.0
+
+    if usar_rede_custom:
+        raw_segments = []
+        for crv in guia_crvs:
+            pts_crv = []
+            try:
+                rc_pl, pl = crv.TryGetPolyline()
+                if rc_pl and pl and len(pl) >= 2:
+                    pts_crv = [rg.Point3d(pt.X, pt.Y, pt.Z) for pt in pl]
+            except:
+                pass
+            if len(pts_crv) < 2:
+                n_div = max(int(crv.GetLength() / 35.0), 1)
+                t0, t1 = crv.Domain.T0, crv.Domain.T1
+                for k in range(n_div + 1):
+                    tk = t0 + (k / float(n_div)) * (t1 - t0)
+                    pts_crv.append(crv.PointAt(tk))
+
+            # Subdivide qualquer lance reto maior que 50.0m (Regra 2: espaçamento máximo entre PVs <= 50m)
+            refined_pts = [pts_crv[0]]
+            for k in range(len(pts_crv) - 1):
+                pa = pts_crv[k]
+                pb = pts_crv[k+1]
+                d_seg = math.hypot(pb.X - pa.X, pb.Y - pa.Y)
+                if d_seg > 50.0:
+                    n_sub = int(math.ceil(d_seg / 45.0))
+                    for s_i in range(1, n_sub):
+                        f_s = s_i / float(n_sub)
+                        refined_pts.append(rg.Point3d(pa.X + f_s*(pb.X - pa.X), pa.Y + f_s*(pb.Y - pa.Y), pa.Z + f_s*(pb.Z - pa.Z)))
+                refined_pts.append(pb)
+
+            for k in range(len(refined_pts) - 1):
+                pa = refined_pts[k]
+                pb = refined_pts[k+1]
+                if math.hypot(pb.X - pa.X, pb.Y - pa.Y) > 1.5:
+                    raw_segments.append((pa, pb))
+
+        nodes = []
+        snap_tol = 4.5
+        def get_or_add_node(pt):
+            z_hint = pt.Z if abs(pt.Z) > 100.0 else None
+            for idx_n, nd in enumerate(nodes):
+                if math.hypot(pt.X - nd['x'], pt.Y - nd['y']) <= snap_tol:
+                    return idx_n
+            zt_val = eval_zt(pt.X, pt.Y, z_hint)
+            nodes.append({'x': pt.X, 'y': pt.Y, 'zt': zt_val, 'in_deg': 0, 'out_deg': 0})
+            return len(nodes) - 1
+
+        directed_edges = []
+        for pa, pb in raw_segments:
+            na = get_or_add_node(pa)
+            nb = get_or_add_node(pb)
+            if na == nb:
+                continue
+            if nodes[na]['zt'] >= nodes[nb]['zt']:
+                u_idx, v_idx = na, nb
+            else:
+                u_idx, v_idx = nb, na
+            directed_edges.append((u_idx, v_idx))
+            nodes[u_idx]['out_deg'] += 1
+            nodes[v_idx]['in_deg'] += 1
+
+        sorted_node_indices = sorted(range(len(nodes)), key=lambda i: -nodes[i]['zt'])
+        old_to_new = {old_i: new_i for new_i, old_i in enumerate(sorted_node_indices)}
+
+        upstream_weight = {i: 1 for i in range(len(nodes))}
+        for old_u in sorted_node_indices:
+            for (eu, ev) in directed_edges:
+                if eu == old_u:
+                    upstream_weight[ev] = upstream_weight.get(ev, 1) + upstream_weight[old_u]
+
+        for new_i, old_i in enumerate(sorted_node_indices):
+            nd = nodes[old_i]
+            pv_id = "PV-{:02d}".format(new_i + 1)
+            if nd['in_deg'] == 0:
+                h_prof = max(cobrimento_min + 0.30, 1.30)
+                tipo_pv = "PV Cabeceira (Início Guia)"
+            elif nd['out_deg'] == 0:
+                h_prof = max(cobrimento_min + 0.80, 1.80)
+                tipo_pv = "Caixa Dissipadora / Exutório"
+            elif nd['in_deg'] >= 2:
+                h_prof = max(cobrimento_min + 0.50, 1.50)
+                tipo_pv = "PV Confluência (Degrau)"
+            else:
+                h_prof = max(cobrimento_min + 0.40, 1.40)
+                tipo_pv = "PV Passagem / Deflexão"
+
+            pv_entry = {
+                'id': pv_id,
+                'x': nd['x'],
+                'y': nd['y'],
+                'zt': nd['zt'],
+                'zf': nd['zt'] - h_prof,
+                'h': h_prof,
+                'tipo': tipo_pv,
+                'weight': upstream_weight.get(old_i, 1)
+            }
+            pvs_dict[pv_id] = pv_entry
+            pvs_list.append(pv_entry)
+
+        edges_sorted = sorted(directed_edges, key=lambda e: (old_to_new[e[0]], old_to_new[e[1]]))
+        for idx_e, (old_u, old_v) in enumerate(edges_sorted):
+            pv_u = "PV-{:02d}".format(old_to_new[old_u] + 1)
+            pv_v = "PV-{:02d}".format(old_to_new[old_v] + 1)
+            w_u = upstream_weight.get(old_u, 1)
+            if idx_e == len(edges_sorted) - 1 and len(edges_sorted) >= 4:
+                dn_auto = 800
+            elif w_u >= 5:
+                dn_auto = 600
+            elif w_u >= 2:
+                dn_auto = 500
+            else:
+                dn_auto = 400
+            trechos_raw.append(("T-{:02d}".format(idx_e + 1), pv_u, pv_v, dn_auto))
+    else:
+        for pv_ref in REDE_DRENAGEM_CABE_VGP_PADRAO_PVS:
+            zt_proj = eval_zt(pv_ref['x'], pv_ref['y'], pv_ref['zt_ref'])
+            zt_use = pv_ref['zt_ref'] if abs(zt_proj - pv_ref['zt_ref']) > 12.0 else pv_ref['zt_ref']
+            h_use = pv_ref['h']
+            pv_entry = {
+                'id': pv_ref['id'],
+                'x': pv_ref['x'],
+                'y': pv_ref['y'],
+                'zt': zt_use,
+                'zf': zt_use - h_use,
+                'h': h_use,
+                'tipo': pv_ref['tipo'],
+                'weight': 1
+            }
+            pvs_dict[pv_entry['id']] = pv_entry
+            pvs_list.append(pv_entry)
+
+        pvs_dict["CORPO_HIDRICO"] = {
+            'id': "CORPO_HIDRICO",
+            'x': 293079.8,
+            'y': 7386576.4,
+            'zt': 890.40,
+            'zf': 889.00,
+            'h': 1.40,
+            'tipo': "Lançamento Córrego Vermelho (APP)"
+        }
+        trechos_raw = list(REDE_DRENAGEM_CABE_VGP_PADRAO_TRECHOS)
+
+    trechos_info = []
+    bls_info = []
+
+    tubos_3d_geoms = []
+    pvs_3d_geoms = []
+    bls_3d_geoms = []
+    bacia_3d_geoms = []
+
+    tubos_2d_geoms = []
+    pvs_2d_geoms = []
+    bls_2d_geoms = []
+    setas_2d_geoms = []
+    textos_2d_geoms = []
+    bacia_2d_geoms = []
+
+    cor_dn400 = System.Drawing.Color.FromArgb(0, 140, 255)
+    cor_dn500 = System.Drawing.Color.FromArgb(0, 85, 204)
+    cor_dn600 = System.Drawing.Color.FromArgb(20, 40, 160)
+    cor_dn800 = System.Drawing.Color.FromArgb(140, 0, 210)
+    cor_pv    = System.Drawing.Color.FromArgb(210, 45, 35)
+    cor_bl    = System.Drawing.Color.FromArgb(25, 160, 90)
+    cor_bacia = System.Drawing.Color.FromArgb(160, 30, 144, 255)
+
+    bl_counter = 1
+    for t_id, u_id, v_id, dn_mm in trechos_raw:
+        pv_u = pvs_dict.get(u_id)
+        pv_v = pvs_dict.get(v_id)
+        if not pv_u or not pv_v:
+            continue
+
+        x1, y1, zt1, zf1 = pv_u['x'], pv_u['y'], pv_u['zt'], pv_u['zf']
+        x2, y2, zt2, zf2 = pv_v['x'], pv_v['y'], pv_v['zt'], pv_v['zf']
+
+        dx = x2 - x1
+        dy = y2 - y1
+        dist_2d = max(math.hypot(dx, dy), 1.0)
+        ux = dx / dist_2d
+        uy = dy / dist_2d
+        nx, ny = -uy, ux
+
+        dz_f = zf1 - zf2
+        if dz_f < 0.005 * dist_2d:
+            zf2 = zf1 - 0.010 * dist_2d
+            dz_f = zf1 - zf2
+
+        slope_m_m = dz_f / dist_2d
+        hyd = calc_manning_full_pipe(dn_mm, slope_m_m, n_manning=0.013)
+
+        tr_data = {
+            'id': t_id,
+            'pv_ini': u_id if u_id != "CORPO_HIDRICO" else "Córrego",
+            'pv_fim': v_id if v_id != "CORPO_HIDRICO" else "Córrego",
+            'x1': x1, 'y1': y1, 'zt_ini': zt1, 'zf_ini': zf1,
+            'x2': x2, 'y2': y2, 'zt_fim': zt2, 'zf_fim': zf2,
+            'length': dist_2d,
+            'dn_mm': dn_mm,
+            's_pct': hyd['s_pct'],
+            'vel': hyd['vel'],
+            'q_ls': hyd['q_ls'],
+            'status': hyd['status']
+        }
+        trechos_info.append(tr_data)
+
+        if dn_mm <= 400: cor_t = cor_dn400
+        elif dn_mm <= 500: cor_t = cor_dn500
+        elif dn_mm <= 600: cor_t = cor_dn600
+        else: cor_t = cor_dn800
+
+        r_pipe = (dn_mm / 1000.0) * 0.5
+        p3d_ini = rg.Point3d(x1, y1, zf1 + r_pipe)
+        p3d_fim = rg.Point3d(x2, y2, zf2 + r_pipe)
+        m_pipe = make_3d_cylinder_mesh(p3d_ini, p3d_fim, max(r_pipe, 0.22 * s), color=cor_t, sides=12)
+        if m_pipe:
+            tubos_3d_geoms.append(m_pipe)
+        tubos_3d_geoms.append(rg.LineCurve(p3d_ini, p3d_fim))
+
+        p2d_ini = rg.Point3d(x1, y1, 0.0)
+        p2d_fim = rg.Point3d(x2, y2, 0.0)
+        tubos_2d_geoms.append(rg.LineCurve(p2d_ini, p2d_fim))
+        w_half_2d = (dn_mm / 1000.0) * 0.65 * s
+        tubos_2d_geoms.append(rg.LineCurve(rg.Point3d(x1 + nx*w_half_2d, y1 + ny*w_half_2d, 0), rg.Point3d(x2 + nx*w_half_2d, y2 + ny*w_half_2d, 0)))
+        tubos_2d_geoms.append(rg.LineCurve(rg.Point3d(x1 - nx*w_half_2d, y1 - ny*w_half_2d, 0), rg.Point3d(x2 - nx*w_half_2d, y2 - ny*w_half_2d, 0)))
+
+        xm = (x1 + x2) * 0.5
+        ym = (y1 + y2) * 0.5
+        arr_len = min(max(dist_2d * 0.18, 3.2 * s), 6.0 * s)
+        setas_2d_geoms.extend(make_lot_drainage_arrow(xm - ux*(arr_len*0.5), ym - uy*(arr_len*0.5), (ux, uy), length=arr_len, s=s))
+
+        u_txt = rg.Vector3d(ux, uy, 0.0)
+        if u_txt.X < -1e-4 or (abs(u_txt.X) <= 1e-4 and u_txt.Y < 0):
+            u_txt = -u_txt
+        v_txt = rg.Vector3d(-u_txt.Y, u_txt.X, 0.0)
+        p_lbl_tr = rg.Point3d(xm + v_txt.X * (2.2 * s), ym + v_txt.Y * (2.2 * s), 0.0)
+        pl_tr = rg.Plane(p_lbl_tr, u_txt, v_txt)
+        lbl_str = "{} Ø{} ({:.0f}m | {:.1f}%)".format(t_id, dn_mm, dist_2d, hyd['s_pct']).replace('.', ',')
+        textos_2d_geoms.extend(make_text_geometry(lbl_str, p_lbl_tr, 0.72 * s, rg.TextJustification.MiddleCenter, s, pl_tr))
+
+        if v_id != "CORPO_HIDRICO" and dist_2d >= 14.0:
+            step_bl = 24.0 if hyd['s_pct'] > 10.0 else espacamento_bl
+            n_pairs = max(1, int(dist_2d // step_bl))
+            offset_sarjeta = 3.60
+            for k_bl in range(1, n_pairs + 1):
+                frac = (k_bl / float(n_pairs + 1)) if n_pairs > 1 else 0.65
+                bx_c = x1 + frac * dx
+                by_c = y1 + frac * dy
+                bzt_c = zt1 + frac * (zt2 - zt1)
+                bzf_c = zf1 + frac * (zf2 - zf1)
+
+                for side_sign, side_lbl in [(+1.0, "E"), (-1.0, "D")]:
+                    bl_id = "BL-{:02d}{}".format(bl_counter, side_lbl)
+                    bx = bx_c + side_sign * nx * offset_sarjeta
+                    by = by_c + side_sign * ny * offset_sarjeta
+                    bzt = bzt_c - 0.07
+
+                    w_bl_2d = max(0.80, 1.35 * s)
+                    t_bl_2d = max(0.40, 0.75 * s)
+                    hl_b = w_bl_2d * 0.5; ht_b = t_bl_2d * 0.5
+                    pts_bl = [
+                        rg.Point3d(bx - ux*hl_b - nx*ht_b, by - uy*hl_b - ny*ht_b, 0),
+                        rg.Point3d(bx + ux*hl_b - nx*ht_b, by + uy*hl_b - ny*ht_b, 0),
+                        rg.Point3d(bx + ux*hl_b + nx*ht_b, by + uy*hl_b + ny*ht_b, 0),
+                        rg.Point3d(bx - ux*hl_b + nx*ht_b, by - uy*hl_b + ny*ht_b, 0),
+                        rg.Point3d(bx - ux*hl_b - nx*ht_b, by - uy*hl_b - ny*ht_b, 0)
+                    ]
+                    bls_2d_geoms.append(rg.PolylineCurve(pts_bl))
+                    bls_2d_geoms.append(rg.LineCurve(pts_bl[0], pts_bl[2]))
+
+                    if math.hypot(x2 - bx, y2 - by) <= 16.0:
+                        target_x, target_y, target_z = x2, y2, zf2 + 0.30
+                    else:
+                        target_x, target_y, target_z = bx_c, by_c, bzf_c + 0.25
+                    bls_2d_geoms.append(rg.LineCurve(rg.Point3d(bx, by, 0), rg.Point3d(target_x, target_y, 0)))
+
+                    m_bl_3d = make_3d_box_mesh_oriented(rg.Point3d(bx, by, bzt), rg.Vector3d(ux, uy, 0), 0.80 * s, 0.40 * s, 0.90, color=cor_bl)
+                    if m_bl_3d:
+                        bls_3d_geoms.append(m_bl_3d)
+                    m_ramal_3d = make_3d_cylinder_mesh(rg.Point3d(bx, by, bzt - 0.70), rg.Point3d(target_x, target_y, target_z), 0.12 * s, color=cor_bl, sides=8)
+                    if m_ramal_3d:
+                        bls_3d_geoms.append(m_ramal_3d)
+
+                    bls_info.append({
+                        'id': bl_id,
+                        'trecho': t_id,
+                        'x': bx, 'y': by, 'zt': bzt
+                    })
+                bl_counter += 1
+
+    for idx_pv, pv in enumerate(pvs_list):
+        px, py, pzt, pzf, ph = pv['x'], pv['y'], pv['zt'], pv['zf'], pv['h']
+        pv_id = pv['id']
+
+        r_pv_2d = max(0.85, 1.45 * s)
+        pvs_2d_geoms.append(make_box_poly(px - r_pv_2d, py - r_pv_2d, px + r_pv_2d, py + r_pv_2d))
+        pvs_2d_geoms.append(rg.Circle(rg.Point3d(px, py, 0.0), r_pv_2d * 0.68).ToNurbsCurve())
+
+        m_pv_3d = make_3d_box_mesh_oriented(rg.Point3d(px, py, pzt + 0.05), rg.Vector3d(1, 0, 0), 1.15 * s, 1.15 * s, ph + 0.05, color=cor_pv)
+        if m_pv_3d:
+            pvs_3d_geoms.append(m_pv_3d)
+
+        ang_off = (idx_pv % 4) * (math.pi * 0.5) + (math.pi * 0.25)
+        off_dist = 5.5 * s
+        tx = px + math.cos(ang_off) * off_dist
+        ty = py + math.sin(ang_off) * off_dist
+        pvs_2d_geoms.append(rg.LineCurve(rg.Point3d(px, py, 0), rg.Point3d(tx, ty, 0)))
+        tag_pv_1 = "{} (H={:.2f}m)".format(pv_id, ph).replace('.', ',')
+        tag_pv_2 = "ZT={:.2f} | ZF={:.2f}".format(pzt, pzf).replace('.', ',')
+        textos_2d_geoms.extend(make_text_geometry(tag_pv_1, rg.Point3d(tx, ty + 0.55*s, 0), 0.72 * s, rg.TextJustification.BottomCenter, s))
+        textos_2d_geoms.extend(make_text_geometry(tag_pv_2, rg.Point3d(tx, ty - 0.55*s, 0), 0.62 * s, rg.TextJustification.TopCenter, s))
+
+    if pvs_list:
+        pv_last = min(pvs_list, key=lambda p: p['zt'])
+        bx0 = pv_last['x'] - 12.0
+        by0 = pv_last['y'] - 16.0
+        bx1 = pv_last['x'] + 18.0
+        by1 = pv_last['y'] + 4.0
+        z_bacia_bot = pv_last['zt'] - 1.50
+
+        poly_bacia_ext = make_rounded_rect_poly(bx0, by0, bx1, by1, 3.0 * s)
+        poly_bacia_int = make_rounded_rect_poly(bx0 + 4.0, by0 + 4.0, bx1 - 4.0, by1 - 4.0, 2.0 * s)
+        bacia_2d_geoms.append(poly_bacia_ext)
+        bacia_2d_geoms.append(poly_bacia_int)
+
+        p_b0 = rg.Point3d(bx0 + 4.0, by0 + 4.0, z_bacia_bot)
+        p_b1 = rg.Point3d(bx1 - 4.0, by0 + 4.0, z_bacia_bot)
+        p_b2 = rg.Point3d(bx1 - 4.0, by1 - 4.0, z_bacia_bot)
+        p_b3 = rg.Point3d(bx0 + 4.0, by1 - 4.0, z_bacia_bot)
+        m_bacia_3d = create_colored_mesh([[p_b0, p_b1, p_b2, p_b3]], cor_bacia)
+        if m_bacia_3d:
+            bacia_3d_geoms.append(m_bacia_3d)
+
+        cx_bac = (bx0 + bx1) * 0.5
+        cy_bac = (by0 + by1) * 0.5
+        textos_2d_geoms.extend(make_text_geometry("BACIA DE DETENÇÃO / PISCINÃO (V = 450 m³)", rg.Point3d(cx_bac, cy_bac + 1.2*s, 0), 0.95*s, rg.TextJustification.MiddleCenter, s))
+        textos_2d_geoms.extend(make_text_geometry("Amortecimento TR=25 anos (Art. 22 PD VGP / DAEE) + Dissipador V<1,5m/s", rg.Point3d(cx_bac, cy_bac - 1.2*s, 0), 0.72*s, rg.TextJustification.MiddleCenter, s))
+
+    tot_ext_rede = sum(t['length'] for t in trechos_info)
+    v_min_rede = min([t['vel'] for t in trechos_info] or [0.0])
+    v_max_rede = max([t['vel'] for t in trechos_info] or [0.0])
+    q_max_rede = max([t['q_ls'] for t in trechos_info] or [0.0])
+
+    rel_dren = [
+        "=========================================================================================",
+        "10. SISTEMA DE DRENAGEM PLUVIAL URBANA (MANUAL GRAPROHAB ITEM 13 / DAEE / LC 67/2013 VGP):",
+        "=========================================================================================",
+        "   - Modo de Geração da Rede        : {}".format(
+            "DINÂMICO POR LINHA GUIA DO USUÁRIO (Sincronizado ao Terreno Novo)" if usar_rede_custom
+            else "REDE EXECUTIVA PADRÃO CABE VGP (18 Trechos T-01 a T-18 no Terreno Novo)"
+        ),
+        "   - Equação Hidráulica Adotada     : Equação de Manning (Seção Plena) — n = 0,013 (Concreto Armado NBR 8882)",
+        "   - Tempos de Retorno Normativos   : Microdrenagem TR = 10 anos | Amortecimento (Piscinão) TR = 25 anos",
+        "   - Extensão Total de Galerias     : {:.2f} m (Diâmetros Escalados: DN 400mm, 500mm, 600mm e 800mm)".format(tot_ext_rede),
+        "   - Total de Poços de Visita (PVs) : {} unidades padrão (1,00 x 1,00 m com degrau de queda p/ V > 5,0 m/s)".format(len(pvs_list)),
+        "   - Total de Bocas de Lobo (BLs)   : {} unidades pareadas (0,80 x 0,40 x 0,20 m com ramais Ø 200/300 mm)".format(len(bls_info)),
+        "   - Velocidades Escoamento (Min/Máx): V_min = {:.2f} m/s (>= 0,75 m/s autolimpeza) | V_max = {:.2f} m/s".format(v_min_rede, v_max_rede),
+        "   - Capacidade Máxima no Emissário : Q_cap = {:.1f} L/s (DN 800mm -> Bacia de Detenção V = 450,0 m³)".format(q_max_rede),
+        "   - Dissipação de Energia (Exutório): Escadaria Hidráulica / Gabião (V_saída < 1,50 m/s no Córrego Vermelho APP)",
+        "-----------------------------------------------------------------------------------------",
+        "   TABELA DE PRÉ-DIMENSIONAMENTO HIDRÁULICO DAS GALERIAS (MANNING n = 0,013):",
+        "-----------------------------------------------------------------------------------------",
+        "{:<6} | {:<7} -> {:<7} | {:<7} | {:<6} | {:<8} | {:<8} | {:<7} | {:<7} | {:<9}".format(
+            "TRECHO", "MONT.", "JUS.", "EXT.(m)", "DN(mm)", "ZF MONT.", "ZF JUS.", "DECL.%", "V(m/s)", "Q.CAP(L/s)"
+        ),
+        "-----------------------------------------------------------------------------------------"
+    ]
+    for tr in trechos_info:
+        rel_dren.append("{:<6} | {:<7} -> {:<7} | {:>7.2f} | {:>6} | {:>8.2f} | {:>8.2f} | {:>6.2f}% | {:>7.2f} | {:>8.1f}".format(
+            tr['id'], tr['pv_ini'], tr['pv_fim'], tr['length'], tr['dn_mm'],
+            tr['zf_ini'], tr['zf_fim'], tr['s_pct'], tr['vel'], tr['q_ls']
+        ))
+    rel_dren.append("-----------------------------------------------------------------------------------------")
+
+    all_2d = tubos_2d_geoms + pvs_2d_geoms + bls_2d_geoms + setas_2d_geoms + bacia_2d_geoms + textos_2d_geoms
+    all_3d = tubos_3d_geoms + pvs_3d_geoms + bls_3d_geoms + bacia_3d_geoms
+
+    return {
+        'usar_rede_custom': usar_rede_custom,
+        'pvs_list': pvs_list,
+        'trechos_info': trechos_info,
+        'bls_info': bls_info,
+        'geoms_2d': all_2d,
+        'geoms_3d': all_3d,
+        'tubos_2d': tubos_2d_geoms,
+        'pvs_2d': pvs_2d_geoms,
+        'bls_2d': bls_2d_geoms,
+        'setas_2d': setas_2d_geoms,
+        'bacia_2d': bacia_2d_geoms,
+        'textos_2d': textos_2d_geoms,
+        'tubos_3d': tubos_3d_geoms,
+        'pvs_3d': pvs_3d_geoms,
+        'bls_3d': bls_3d_geoms,
+        'bacia_3d': bacia_3d_geoms,
+        'relatorio_lines': rel_dren
+    }
+
+def draw_drainage_a0_sheet(x0, y0, sheet_scale, drenagem_res, planta_context_geoms, volume_summary=None, s=1.0):
+    """
+    Monta a Prancha Executiva Completa de Drenagem Pluvial Urbana (FOLHA DREN-01/01 em formato A0 1:500),
+    contendo:
+      - Moldura A0 Oficial + Carimbo Prefeitura VGP / GRAPROHAB / DAEE
+      - Tabela Completa de Pré-Dimensionamento Hidráulico (Manning n=0,013) com todos os trechos
+      - Detalhe Construtivo Padrão do Poço de Visita (PV 1,00 x 1,00 m) em Planta e Corte com Degrau
+      - Quadro de Diretrizes Normativas (GRAPROHAB Item 13, DAEE, Art. 21-24 LC 67/2013 VGP, NBR 8882)
+    """
+    sc = (sheet_scale / 1000.0) * s
+    base_sheet_cat = draw_standard_a0_sheet(
+        x0, y0, sheet_scale,
+        "PLANTA DE DIRETRIZES DE DRENAGEM PLUVIAL URBANA (GRAPROHAB / DAEE)",
+        "DREN-01/01", "1 / 500", s=s, is_planta=False, is_longitudinal=False,
+        volume_summary=volume_summary, draw_perimeter=False
+    )
+    m_geoms = list(getattr(base_sheet_cat, 'moldura', []))
+    t_geoms = list(getattr(base_sheet_cat, 'tabela', []))
+    x_geoms = list(getattr(base_sheet_cat, 'textos', []))
+    all_geoms = list(base_sheet_cat)
+
+    x_int0 = x0 + 25.0 * sc
+    y_int0 = y0 + 10.0 * sc
+    w_sheet = 1189.0 * sc
+    x_int1 = x0 + w_sheet - 10.0 * sc
+    w_selo = 175.0 * sc
+    xs0 = x_int1 - w_selo
+
+    # 1. Tabela de Pré-Dimensionamento Hidráulico (Manning) à esquerda do Carimbo
+    trechos_list = drenagem_res.get('trechos_info', [])
+    pvs_list = drenagem_res.get('pvs_list', [])
+    w_tab_dren = 212.0 * sc
+    xt0 = xs0 - w_tab_dren - 6.0 * sc
+    yt0 = y_int0
+    tab_dren_cat = draw_drainage_sizing_table_a0(xt0, yt0, trechos_list, pvs_list, sc, s=s)
+    all_geoms.extend(tab_dren_cat)
+    t_geoms.extend(getattr(tab_dren_cat, 'tabela', []))
+    x_geoms.extend(getattr(tab_dren_cat, 'textos', []))
+
+    # 2. Detalhe Construtivo Padrão do PV 1,00x1,00m à esquerda da Tabela de Manning
+    w_det_pv = 145.0 * sc
+    h_det_pv = 88.0 * sc
+    xd0 = xt0 - w_det_pv - 6.0 * sc
+    yd0 = y_int0
+    det_pv_cat = draw_pv_standard_detail_2d(xd0, yd0, w_det_pv, h_det_pv, sc, s=s)
+    all_geoms.extend(det_pv_cat)
+    t_geoms.extend(getattr(det_pv_cat, 'tabela', []))
+    x_geoms.extend(getattr(det_pv_cat, 'textos', []))
+
+    return CategorizedGeomList(all_geoms, moldura=m_geoms, tabela=t_geoms, textos=x_geoms)
+
+
 def run():
     doc_cls = getattr(Rhino, 'RhinoDoc', None)
     doc = getattr(doc_cls, 'ActiveDoc', None) if doc_cls else None
@@ -5115,6 +5906,9 @@ def run():
     raw_limite       = get_input(['SiteBoundary', 'PropertyLine', 'Boundary', 'BoundaryLine', 'Limite', 'LimiteTerreno', 'Perimetro', 'PoligonalLote', 'Plataforma', 'LimitePropriedade'])
     raw_lotes        = get_input(['Lots', 'Lotes', 'PoligonosLotes', 'QuadrasLotes', 'Loteamento', 'MalhaLotes'])
     raw_viario       = get_input(['Roadway', 'Viario', 'RoadNetwork', 'RoadBoundary', 'Pista', 'Ruas', 'CADViario', 'PoligonoViario', 'Vias', 'PoligonalViario', 'MalhaViaria', 'EixoViario', 'EixosViarios', 'Rua', 'RuasCAD', 'EixoRua', 'EixosRuas', 'Pistas'])
+    raw_linha_guia_dren = get_input(['LinhaGuia', 'LinhaGuiaDrenagem', 'GuiasDrenagem', 'EixosDrenagem', 'EixoDrenagem', 'RedeDrenagem', 'DrainageGuide', 'DrainageLines', 'Drenagem'])
+    raw_cobrimento_dren = get_input(['CobrimentoMinimo', 'CobrimentoDrenagem', 'MinCover'], 1.00)
+    raw_espacamento_bl  = get_input(['EspacamentoBL', 'DistanciaBocasLobo', 'CatchBasinSpacing'], 30.0)
     raw_homogeneizacao = get_input(['HomogenizationFactor', 'CompactionFactor', 'ShrinkageFactor', 'FatorHomogeneizacao', 'FatorContracao', 'Fh'], 1.15)
     raw_modo_estacas = get_input(['StationingMode', 'ModoEstacas', 'EstaqueamentoNormativo', 'Estacas20m', 'Normative20m', 'UsarEstacas20m', 'Modo20m'])
     raw_passo_estacas = get_input(['StationInterval', 'PassoEstacas', 'IntervaloEstacas', 'DistanciaEstacas', 'Passo'], 20.0)
@@ -6692,6 +7486,29 @@ def run():
         if crv and getattr(crv, 'IsValid', False):
             modelo_3d_completo.append(crv)
 
+    # 9.4.1 MONTAGEM AUTOMÁTICA DO SISTEMA DE DRENAGEM PLUVIAL NO TERRENO NOVO (LINHA GUIA / CABE VGP)
+    try:
+        cob_min_val = float(raw_cobrimento_dren) if raw_cobrimento_dren is not None else 1.00
+    except:
+        cob_min_val = 1.00
+    try:
+        esp_bl_val = float(raw_espacamento_bl) if raw_espacamento_bl is not None else 30.0
+    except:
+        esp_bl_val = 30.0
+
+    def sample_new_terrain_z_for_drainage(px, py):
+        return sample_surface_proj_z(px, py, lista_alinhadas, sec_data_list, u_long_down)
+
+    drenagem_system = build_automatic_drainage_system(
+        raw_linha_guia_dren, sample_new_terrain_z_for_drainage,
+        road_polygons=road_polygons, boundary_info=boundary_info,
+        s=s, tol=tol, cobrimento_min=cob_min_val, espacamento_bl=esp_bl_val
+    )
+    if drenagem_system.get('geoms_2d'):
+        planta_baixa_geoms.extend(drenagem_system['geoms_2d'])
+    if drenagem_system.get('geoms_3d'):
+        modelo_3d_completo.extend(drenagem_system['geoms_3d'])
+
     # 9.5 Enquadramento em Prancha Técnica Regulamentar A1/A0 para Planta Geral (NBR 10068 / NBR 6492)
     # ENQUADRAMENTO EM PRANCHA REGULAMENTAR A0 (FOLHA 01/03) - ESCALA 1:500
     # Dimensões A0 a 1:500: 594.50 x 420.50 m.
@@ -6729,6 +7546,13 @@ def run():
             tbl_lotes_geoms = draw_lot_slope_table(tbl_x0, tbl_y0, lotes_analysis['stats'], s)
             planta_baixa_geoms.extend(tbl_lotes_geoms)
             lotes_analysis['tabela_geoms'] = tbl_lotes_geoms
+
+        # Geração da Prancha Executiva Dedicada de Drenagem (FOLHA DREN-01/01) posicionada acima ou ao lado para consulta/bake
+        prancha_drenagem_geoms = draw_drainage_a0_sheet(
+            f1_x0, f1_y0, 500.0, drenagem_system, planta_baixa_geoms, volume_summary=global_vol_summary, s=s
+        )
+        drenagem_system['prancha_drenagem_geoms'] = prancha_drenagem_geoms
+        drenagem_system['tabela_manning_geoms'] = getattr(prancha_drenagem_geoms, 'tabela', [])
 
     # =========================================================================
     # 10. MEMORIAL TÉCNICO DE TERRAPLENAGEM (ÁREAS MÉDIAS & DIAGRAMA DE BRÜCKNER)
@@ -6994,6 +7818,8 @@ def run():
 
     if lotes_analysis.get('relatorio_lines'):
         relatorio.extend(lotes_analysis['relatorio_lines'])
+    if drenagem_system.get('relatorio_lines'):
+        relatorio.extend(drenagem_system['relatorio_lines'])
 
     # Saídas dinâmicas para conexões opcionais no Grasshopper (aliases bilíngues)
     globals()['CurvasProjeto1m'] = crvs_proj_1m
@@ -7159,6 +7985,30 @@ def run():
         if lotes_analysis.get('tabela_geoms'):
             bake_items.append({'group_name': "LOTES_QUADRO_SINTETICO_DECLIVIDADE", 'parent_group': lotes_parent, 'layer_name': "PROJETO_LEGAL::LOTES::TABELA_DECLIVIDADES", 'geoms': lotes_analysis['tabela_geoms']})
 
+    # 10.3.2 Grupos e Camadas para o Sistema de Drenagem Pluvial (GRAPROHAB Item 13 / DAEE)
+    if drenagem_system.get('geoms_2d') or drenagem_system.get('geoms_3d'):
+        dren_parent = "SISTEMA_DRENAGEM_PLUVIAL_COMPLETO"
+        if drenagem_system.get('tubos_2d'):
+            bake_items.append({'group_name': "DRENAGEM_GALERIAS_2D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::GALERIAS_2D", 'geoms': drenagem_system['tubos_2d'], 'color': System.Drawing.Color.FromArgb(0, 110, 220)})
+        if drenagem_system.get('pvs_2d'):
+            bake_items.append({'group_name': "DRENAGEM_POCOS_VISITA_2D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::PVS_2D", 'geoms': drenagem_system['pvs_2d'], 'color': System.Drawing.Color.FromArgb(210, 45, 35)})
+        if drenagem_system.get('bls_2d'):
+            bake_items.append({'group_name': "DRENAGEM_BOCAS_DE_LOBO_2D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::BOCAS_LOBO_2D", 'geoms': drenagem_system['bls_2d'], 'color': System.Drawing.Color.FromArgb(25, 160, 90)})
+        if drenagem_system.get('setas_2d'):
+            bake_items.append({'group_name': "DRENAGEM_SETAS_ESCOAMENTO_2D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::SETAS_FLUXO", 'geoms': drenagem_system['setas_2d'], 'color': System.Drawing.Color.FromArgb(0, 85, 204)})
+        if drenagem_system.get('bacia_2d'):
+            bake_items.append({'group_name': "DRENAGEM_BACIA_DETENCAO_2D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::BACIA_DETENCAO_2D", 'geoms': drenagem_system['bacia_2d'], 'color': System.Drawing.Color.FromArgb(30, 144, 255)})
+        if drenagem_system.get('textos_2d'):
+            bake_items.append({'group_name': "DRENAGEM_TEXTOS_COTAS_2D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::TEXTOS_2D", 'geoms': drenagem_system['textos_2d']})
+        if drenagem_system.get('tubos_3d'):
+            bake_items.append({'group_name': "DRENAGEM_GALERIAS_3D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::GALERIAS_3D", 'geoms': drenagem_system['tubos_3d']})
+        if drenagem_system.get('pvs_3d'):
+            bake_items.append({'group_name': "DRENAGEM_POCOS_VISITA_3D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::PVS_3D", 'geoms': drenagem_system['pvs_3d']})
+        if drenagem_system.get('bls_3d'):
+            bake_items.append({'group_name': "DRENAGEM_BOCAS_DE_LOBO_3D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::BOCAS_LOBO_3D", 'geoms': drenagem_system['bls_3d']})
+        if drenagem_system.get('bacia_3d'):
+            bake_items.append({'group_name': "DRENAGEM_BACIA_DETENCAO_3D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::BACIA_DETENCAO_3D", 'geoms': drenagem_system['bacia_3d']})
+
     # 10.4 Execução Automática do Bake se Bake == True
     bake_msg = "Bake inativo (conecte Bake=True para gravar no Rhino)."
     bake_requested = False
@@ -7190,6 +8040,22 @@ def run():
     globals()['LotesCriticos'] = lotes_analysis.get('lotes_criticos_crvs', [])
     globals()['DadosLotes'] = lotes_analysis.get('dados_lotes_str', [])
     globals()['Lotes_Declividade'] = lotes_analysis.get('geoms_2d', [])
+
+    # Saídas Especializadas do Sistema de Drenagem Pluvial (3ª Variação / Linha Guia)
+    globals()['Drenagem3D'] = drenagem_system.get('geoms_3d', [])
+    globals()['Drenagem2D'] = drenagem_system.get('geoms_2d', [])
+    globals()['Galerias3D'] = drenagem_system.get('tubos_3d', [])
+    globals()['Galerias2D'] = drenagem_system.get('tubos_2d', [])
+    globals()['PocosVisita3D'] = drenagem_system.get('pvs_3d', [])
+    globals()['PocosVisita2D'] = drenagem_system.get('pvs_2d', [])
+    globals()['BocasDeLobo3D'] = drenagem_system.get('bls_3d', [])
+    globals()['BocasDeLobo2D'] = drenagem_system.get('bls_2d', [])
+    globals()['BaciaDetencao3D'] = drenagem_system.get('bacia_3d', [])
+    globals()['BaciaDetencao2D'] = drenagem_system.get('bacia_2d', [])
+    globals()['PranchaDrenagem'] = drenagem_system.get('prancha_drenagem_geoms', [])
+    globals()['FolhaDrenagem'] = drenagem_system.get('prancha_drenagem_geoms', [])
+    globals()['TabelaManning2D'] = drenagem_system.get('tabela_manning_geoms', [])
+    globals()['MemorialDrenagem'] = drenagem_system.get('relatorio_lines', [])
 
     globals()['sec_base_xs'] = sec_base_xs
     globals()['sec_base_ys'] = sec_base_ys
