@@ -4605,6 +4605,451 @@ def render_longitudinal_profile_with_guitarra(
         'total_height': (delta_z * ev) + h_guitarra + 25.0 * s
     }
 
+
+# =============================================================================
+# ANÁLISE DE DECLIVIDADE DOS LOTES - MANUAL DO GRAPROHAB (ITEM 12) & LEI 6.766/79
+# =============================================================================
+
+def prepare_contour_points(geoms_terreno):
+    """Extrai amostras 3D regulares das curvas de nível para amostragem expedita e precisa de cotas Z."""
+    contour_pts = []
+    for g in geoms_terreno:
+        if g is None: continue
+        if isinstance(g, rg.Curve):
+            z = g.PointAtStart.Z
+            try:
+                domain = g.Domain
+                t0, t1 = domain.T0, domain.T1
+            except:
+                t0, t1 = 0.0, 1.0
+            num_samples = 20
+            pts = []
+            for s_i in range(num_samples + 1):
+                t = t0 + (t1 - t0) * (s_i / float(num_samples))
+                p = g.PointAt(t)
+                pts.append((p.X, p.Y, z))
+            contour_pts.append(pts)
+    return contour_pts
+
+def get_terrain_z_at_point(px, py, contour_pts, max_dist=40.0):
+    """Calcula a cota Z de qualquer coordenada (X, Y) por interpolação de curvas de nível mais próximas."""
+    closest_contours = []
+    for c_pl in contour_pts:
+        z_c = c_pl[0][2]
+        min_seg_dist = 1e9
+        for i in range(len(c_pl) - 1):
+            x1, y1, _ = c_pl[i]
+            x2, y2, _ = c_pl[i+1]
+            dx = x2 - x1
+            dy = y2 - y1
+            l2 = dx*dx + dy*dy
+            if l2 == 0:
+                dist = math.hypot(px - x1, py - y1)
+            else:
+                t = max(0.0, min(1.0, ((px - x1)*dx + (py - y1)*dy) / l2))
+                proj_x = x1 + t * dx
+                proj_y = y1 + t * dy
+                dist = math.hypot(px - proj_x, py - proj_y)
+            if dist < min_seg_dist:
+                min_seg_dist = dist
+        if min_seg_dist < max_dist:
+            closest_contours.append((min_seg_dist, z_c))
+            
+    if not closest_contours:
+        min_d = 1e9
+        best_z = 900.0
+        for c_pl in contour_pts:
+            z_c = c_pl[0][2]
+            for pt in c_pl:
+                d = math.hypot(px - pt[0], py - pt[1])
+                if d < min_d:
+                    min_d = d
+                    best_z = z_c
+        return best_z
+        
+    closest_contours.sort(key=lambda item: item[0])
+    if closest_contours[0][0] <= 0.5:
+        return closest_contours[0][1]
+        
+    c1_dist, c1_z = closest_contours[0]
+    c2_dist, c2_z = None, None
+    for d, z in closest_contours[1:]:
+        if abs(z - c1_z) >= 0.5:
+            c2_dist, c2_z = d, z
+            break
+            
+    if c2_dist is not None:
+        tot_d = c1_dist + c2_dist
+        if tot_d > 0.001:
+            return c1_z + (c2_z - c1_z) * (c1_dist / tot_d)
+        return c1_z
+    return c1_z
+
+def make_lot_drainage_arrow(cx, cy, dir_vector, length=6.0, s=1.0):
+    """Gera seta técnica regulamentar de escoamento superficial pluvial do lote (GRAPROHAB Itens A.1 e D.1)."""
+    geoms = []
+    dx, dy = dir_vector[0], dir_vector[1]
+    tip_x = cx + dx * length * s
+    tip_y = cy + dy * length * s
+    
+    # Haste da seta
+    line_shaft = rg.LineCurve(rg.Point3d(cx, cy, 0), rg.Point3d(tip_x, tip_y, 0))
+    geoms.append(line_shaft)
+    
+    # Aletas da ponta da seta
+    wing_len = length * 0.32 * s
+    nx, ny = -dy, dx # Vetor normal unitário perpendicular
+    back_x = tip_x - dx * wing_len
+    back_y = tip_y - dy * wing_len
+    
+    w1_x = back_x + nx * (wing_len * 0.55)
+    w1_y = back_y + ny * (wing_len * 0.55)
+    w2_x = back_x - nx * (wing_len * 0.55)
+    w2_y = back_y - ny * (wing_len * 0.55)
+    
+    geoms.append(rg.LineCurve(rg.Point3d(w1_x, w1_y, 0), rg.Point3d(tip_x, tip_y, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(w2_x, w2_y, 0), rg.Point3d(tip_x, tip_y, 0)))
+    return geoms
+
+def draw_lot_slope_table(x0, y0, stats, s=1.0):
+    """
+    Desenha o Quadro Sintético de Declividade dos Lotes normatizado conforme Manual do GRAPROHAB Item 12.
+    Dimensões compactas (140x52m em escala de prancha) para inserção sem colisões na Folha 01 Planta Geral.
+    """
+    if not stats: return []
+    geoms = []
+    w = 145.0 * s
+    h = 52.0 * s
+    x1 = x0 + w
+    y1 = y0 + h
+    
+    p0 = rg.Point3d(x0, y0, 0)
+    p1 = rg.Point3d(x1, y0, 0)
+    p2 = rg.Point3d(x1, y1, 0)
+    p3 = rg.Point3d(x0, y1, 0)
+    
+    # Fundo do quadro
+    try:
+        cor_fundo = System.Drawing.Color.FromArgb(252, 252, 252)
+        bg = make_box_background_mesh(p0, p1, p2, p3, cor_fundo)
+        if bg: geoms.append(bg)
+    except: pass
+    
+    geoms.append(rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve())
+    
+    # Faixa do Cabeçalho
+    y_hdr_bot = y1 - 8.5 * s
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr_bot, 0), rg.Point3d(x1, y_hdr_bot, 0)))
+    
+    tit = "QUADRO SINTÉTICO DE DECLIVIDADE DOS LOTES (MANUAL GRAPROHAB - ITEM 12)"
+    geoms.extend(make_text_geometry(tit, rg.Point3d(x0 + 3.0*s, y1 - 3.2*s, 0), 1.25*s, rg.TextJustification.BottomLeft, s))
+    sub = "Enquadramento Geotécnico e Ocupação Urbana | Lei Federal 6.766/79 & NBR 11682"
+    geoms.extend(make_text_geometry(sub, rg.Point3d(x0 + 3.0*s, y1 - 6.5*s, 0), 0.85*s, rg.TextJustification.BottomLeft, s))
+    
+    # Cabeçalho das Colunas
+    y_cols = y_hdr_bot - 4.5 * s
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_cols, 0), rg.Point3d(x1, y_cols, 0)))
+    
+    x_c1 = x0 + 20.0 * s
+    x_c2 = x0 + 48.0 * s
+    x_c3 = x0 + 64.0 * s
+    x_c4 = x0 + 80.0 * s
+    
+    geoms.extend(make_text_geometry("CLASSE", rg.Point3d(x0 + 2.0*s, y_hdr_bot - 3.2*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("FAIXA DECLIV.", rg.Point3d(x_c1 + 1.0*s, y_hdr_bot - 3.2*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("LOTES", rg.Point3d(x_c2 + 1.0*s, y_hdr_bot - 3.2*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("% TOTAL", rg.Point3d(x_c3 + 1.0*s, y_hdr_bot - 3.2*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("CONDICIONANTE / ENQUADRAMENTO NORMATIVO", rg.Point3d(x_c4 + 2.0*s, y_hdr_bot - 3.2*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+    
+    tot = stats['total']
+    c1, c2, c3, c4 = stats['c1'], stats['c2'], stats['c3'], stats['c4']
+    p1 = (c1 / float(tot) * 100.0) if tot > 0 else 0.0
+    p2 = (c2 / float(tot) * 100.0) if tot > 0 else 0.0
+    p3 = (c3 / float(tot) * 100.0) if tot > 0 else 0.0
+    p4 = (c4 / float(tot) * 100.0) if tot > 0 else 0.0
+    
+    rows = [
+        ("Classe I", "<= 15,0% (Suave)", f"{c1} lotes", f"{p1:.1f}%", "Ocupação direta sem restrição geotécnica", (46, 204, 113)),
+        ("Classe II", "15,1% a 30,0% (Moderada)", f"{c2} lotes", f"{p2:.1f}%", "Ocupação convencional / contenções locais", (243, 156, 18)),
+        ("Classe III", "30,1% a 47,0% (Crítica)", f"{c3} lotes", f"{p3:.1f}%", "ALERTA GRAPROHAB: Exige Implantação Genérica", (231, 76, 60)),
+        ("Classe IV", "> 47,0% (Muito Crítica)", f"{c4} lotes", f"{p4:.1f}%", "ALERTA LEI 6.766/79: Contenções escalonadas", (142, 68, 173)),
+    ]
+    
+    y_cur = y_cols
+    for row_name, row_faixa, row_qtd, row_pct, row_cond, rgb in rows:
+        y_next = y_cur - 6.5 * s
+        geoms.append(rg.LineCurve(rg.Point3d(x0, y_next, 0), rg.Point3d(x1, y_next, 0)))
+        
+        # Patch colorido indicador
+        try:
+            m_col = make_box_background_mesh(rg.Point3d(x0 + 1.5*s, y_cur - 5.0*s, 0), rg.Point3d(x0 + 3.5*s, y_cur - 5.0*s, 0),
+                                            rg.Point3d(x0 + 3.5*s, y_cur - 2.0*s, 0), rg.Point3d(x0 + 1.5*s, y_cur - 2.0*s, 0),
+                                            System.Drawing.Color.FromArgb(rgb[0], rgb[1], rgb[2]))
+            if m_col: geoms.append(m_col)
+        except: pass
+        
+        geoms.extend(make_text_geometry(row_name, rg.Point3d(x0 + 4.5*s, y_cur - 4.5*s, 0), 0.85*s, rg.TextJustification.BottomLeft, s))
+        geoms.extend(make_text_geometry(row_faixa, rg.Point3d(x_c1 + 1.0*s, y_cur - 4.5*s, 0), 0.80*s, rg.TextJustification.BottomLeft, s))
+        geoms.extend(make_text_geometry(row_qtd, rg.Point3d(x_c2 + 1.0*s, y_cur - 4.5*s, 0), 0.85*s, rg.TextJustification.BottomLeft, s))
+        geoms.extend(make_text_geometry(row_pct, rg.Point3d(x_c3 + 1.0*s, y_cur - 4.5*s, 0), 0.85*s, rg.TextJustification.BottomLeft, s))
+        geoms.extend(make_text_geometry(row_cond, rg.Point3d(x_c4 + 2.0*s, y_cur - 4.5*s, 0), 0.78*s, rg.TextJustification.BottomLeft, s))
+        y_cur = y_next
+        
+    # Linha Total
+    y_tot = y_cur - 5.5 * s
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_tot, 0), rg.Point3d(x1, y_tot, 0)))
+    geoms.extend(make_text_geometry("TOTAL GLEBA", rg.Point3d(x0 + 4.5*s, y_cur - 4.2*s, 0), 0.90*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry(f"{tot} lotes", rg.Point3d(x_c2 + 1.0*s, y_cur - 4.2*s, 0), 0.90*s, rg.TextJustification.BottomLeft, s))
+    geoms.extend(make_text_geometry("100.0%", rg.Point3d(x_c3 + 1.0*s, y_cur - 4.2*s, 0), 0.90*s, rg.TextJustification.BottomLeft, s))
+    n_crit = c3 + c4
+    crit_msg = f"{n_crit} Lotes com declividade > 30% (demandam implantação genérica)" if n_crit > 0 else "100% dos lotes atendem declividade < 30%"
+    geoms.extend(make_text_geometry(crit_msg, rg.Point3d(x_c4 + 2.0*s, y_cur - 4.2*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
+    
+    # Rodapé Normativo
+    rodape = "* NOTA TÉCNICA: Lotes com declividade > 30% possuem setas de drenagem pluvial e exigem Projeto de Implantação Genérica das Edificações no Memorial (Item 12 GRAPROHAB)."
+    geoms.extend(make_text_geometry(rodape, rg.Point3d(x0 + 2.5*s, y0 + 1.8*s, 0), 0.70*s, rg.TextJustification.BottomLeft, s))
+    
+    # Divisórias verticais internas
+    for xc in [x_c1, x_c2, x_c3, x_c4]:
+        geoms.append(rg.LineCurve(rg.Point3d(xc, y_tot, 0), rg.Point3d(xc, y_hdr_bot, 0)))
+        
+    return geoms
+
+def analyze_lot_slopes_graprohab(raw_lotes, geoms_terreno, doc=None, s=1.0, tol=0.001):
+    """
+    Executa a auditoria completa de declividade dos lotes em atendimento ao Manual do GRAPROHAB (Item 12).
+    Calcula inclinação percentual, identifica pontos críticos (>30%), emite setas de escoamento e quadro sintético.
+    """
+    lotes_list = []
+    if raw_lotes is not None:
+        for item in to_list(raw_lotes):
+            c = to_rhino_curve(item)
+            if c is not None and c.IsValid:
+                lotes_list.append(c)
+                
+    # Fallback automático: busca objetos na camada 'Lote' / 'Lotes' do RhinoDoc ativo
+    if not lotes_list and doc is not None:
+        try:
+            for obj in doc.Objects:
+                if obj and obj.Geometry and not obj.IsDeleted:
+                    layer_idx = obj.Attributes.LayerIndex
+                    layer = doc.Layers[layer_idx]
+                    if layer and any(k in layer.Name.lower() for k in ['lote', 'lot', 'quadra']):
+                        geom = obj.Geometry
+                        if isinstance(geom, rg.Curve) and geom.IsValid:
+                            lotes_list.append(geom)
+        except: pass
+        
+    if not lotes_list:
+        rel_empty = [
+            "-----------------------------------------------------------------------------------------",
+            "9. ANÁLISE DE DECLIVIDADE DOS LOTES (MANUAL DO GRAPROHAB - ITEM 12):",
+            "   - Status: Nenhum polígono de lote conectado no input 'Lotes' ou detectado nas camadas do modelo.",
+            "   - Orientações: Conecte as poligonais dos lotes no input 'Lotes' para cálculo automático de declividade,",
+            "     classificação cromática das quadras, geração de setas de escoamento pluvial e quadro sintético.",
+            "-----------------------------------------------------------------------------------------"
+        ]
+        return {
+            'geoms_2d': [],
+            'tabela_geoms': [],
+            'lotes_criticos_crvs': [],
+            'dados_lotes_str': ["Nenhum lote conectado."],
+            'stats': None,
+            'relatorio_lines': rel_empty,
+            'lotes_suaves_geoms': [],
+            'lotes_criticos_30_geoms': [],
+            'lotes_criticos_47_geoms': [],
+            'setas_drenagem_geoms': [],
+            'textos_lotes_geoms': []
+        }
+        
+    c_pts = prepare_contour_points(geoms_terreno)
+    
+    geoms_2d_all = []
+    lotes_suaves_geoms = []
+    lotes_criticos_30_geoms = []
+    lotes_criticos_47_geoms = []
+    setas_drenagem_geoms = []
+    textos_lotes_geoms = []
+    lotes_criticos_crvs = []
+    dados_lotes_str = []
+    lot_records = []
+    
+    for idx, lot in enumerate(lotes_list):
+        bb = lot.GetBoundingBox(True) if hasattr(lot, 'GetBoundingBox') else lot.GetBoundingBox()
+        cx = (bb.Min.X + bb.Max.X) / 2.0
+        cy = (bb.Min.Y + bb.Max.Y) / 2.0
+        w = bb.Max.X - bb.Min.X
+        h = bb.Max.Y - bb.Min.Y
+        
+        try:
+            domain = lot.Domain
+            t0, t1 = domain.T0, domain.T1
+        except:
+            t0, t1 = 0.0, 1.0
+            
+        num_samples = 16
+        pts_2d = []
+        for s_i in range(num_samples):
+            t = t0 + (t1 - t0) * (s_i / float(num_samples))
+            p = lot.PointAt(t)
+            pts_2d.append((p.X, p.Y))
+            
+        # Área do polígono via Shoelace
+        shoelace = 0.0
+        for k in range(len(pts_2d)):
+            k_next = (k + 1) % len(pts_2d)
+            shoelace += pts_2d[k][0] * pts_2d[k_next][1] - pts_2d[k_next][0] * pts_2d[k][1]
+        area = abs(shoelace) / 2.0
+        if area < 1.0: area = w * h
+        
+        # Amostragem de cotas Z
+        sample_pts = list(pts_2d)
+        sample_pts.append((cx, cy))
+        
+        pts_with_z = []
+        for px, py in sample_pts:
+            z = get_terrain_z_at_point(px, py, c_pts)
+            pts_with_z.append((px, py, z))
+            
+        z_min = min(p[2] for p in pts_with_z)
+        z_max = max(p[2] for p in pts_with_z)
+        dz = z_max - z_min
+        
+        pt_high = max(pts_with_z, key=lambda p: p[2])
+        pt_low = min(pts_with_z, key=lambda p: p[2])
+        
+        dx_flow = pt_low[0] - pt_high[0]
+        dy_flow = pt_low[1] - pt_high[1]
+        dist_flow = math.hypot(dx_flow, dy_flow)
+        
+        if dist_flow >= 3.0:
+            l_horiz = dist_flow
+            dir_vector = (dx_flow / dist_flow, dy_flow / dist_flow)
+        else:
+            l_horiz = max(w, h, 10.0)
+            dir_vector = (0.0, -1.0)
+            
+        slope_pct = (dz / l_horiz) * 100.0 if l_horiz > 0.0 else 0.0
+        
+        # Classificação Normativa GRAPROHAB
+        if slope_pct <= 15.0:
+            classe = "CLASSE_I"
+            desc = "<= 15% (Suave - Ocupação Direta)"
+            cor_rgb = (46, 204, 113) # Verde
+            alerta = False
+            lotes_suaves_geoms.append(lot)
+        elif slope_pct <= 30.0:
+            classe = "CLASSE_II"
+            desc = "15% a 30% (Moderada - Ocupação Convencional)"
+            cor_rgb = (243, 156, 18) # Âmbar
+            alerta = False
+            lotes_suaves_geoms.append(lot)
+        elif slope_pct <= 47.0:
+            classe = "CLASSE_III"
+            desc = "30% a 47% (Crítica - GRAPROHAB Item 12)"
+            cor_rgb = (231, 76, 60) # Vermelho
+            alerta = True
+            lotes_criticos_30_geoms.append(lot)
+            lotes_criticos_crvs.append(lot)
+        else:
+            classe = "CLASSE_IV"
+            desc = "> 47% (Muito Crítica - Lei Federal 6.766/79)"
+            cor_rgb = (142, 68, 173) # Roxo
+            alerta = True
+            lotes_criticos_47_geoms.append(lot)
+            lotes_criticos_crvs.append(lot)
+            
+        # Seta de escoamento superficial pluvial
+        arrow_len = min(max(dist_flow * 0.40, 4.0 * s), 9.0 * s)
+        arrow_geoms = make_lot_drainage_arrow(cx, cy, dir_vector, length=arrow_len, s=s)
+        setas_drenagem_geoms.extend(arrow_geoms)
+        
+        # Rótulo de texto central do lote
+        lbl_lote = f"LOTE {idx+1:02d}"
+        txt_lote_geoms = make_text_geometry(lbl_lote, rg.Point3d(cx, cy + 1.8*s, 0), 1.05*s, rg.TextJustification.MiddleCenter, s)
+        lbl_info = f"A={area:.0f}m² | i={slope_pct:.1f}%"
+        txt_info_geoms = make_text_geometry(lbl_info, rg.Point3d(cx, cy - 0.5*s, 0), 0.80*s, rg.TextJustification.MiddleCenter, s)
+        textos_lotes_geoms.extend(txt_lote_geoms)
+        textos_lotes_geoms.extend(txt_info_geoms)
+        
+        if alerta:
+            tag_crit = "⚠️ >30% GRAPROHAB" if slope_pct <= 47.0 else "⚠️ >47% LEI 6766"
+            txt_alerta_geoms = make_text_geometry(tag_crit, rg.Point3d(cx, cy - 2.8*s, 0), 0.72*s, rg.TextJustification.MiddleCenter, s)
+            textos_lotes_geoms.extend(txt_alerta_geoms)
+            
+        dados_lotes_str.append(f"Lote {idx+1:02d}: Área={area:.1f}m² | Zmin={z_min:.2f}m | Zmax={z_max:.2f}m | dZ={dz:.2f}m | Declividade={slope_pct:.1f}% | {desc}")
+        
+        lot_records.append({
+            'id': idx + 1,
+            'curve': lot,
+            'centroid': (cx, cy),
+            'area': area,
+            'z_min': z_min,
+            'z_max': z_max,
+            'dz': dz,
+            'l_horiz': l_horiz,
+            'slope_pct': slope_pct,
+            'dir_vector': dir_vector,
+            'classe': classe,
+            'desc': desc,
+            'alerta': alerta
+        })
+        
+    geoms_2d_all.extend(lotes_list)
+    geoms_2d_all.extend(setas_drenagem_geoms)
+    geoms_2d_all.extend(textos_lotes_geoms)
+    
+    c1 = sum(1 for r in lot_records if r['classe'] == 'CLASSE_I')
+    c2 = sum(1 for r in lot_records if r['classe'] == 'CLASSE_II')
+    c3 = sum(1 for r in lot_records if r['classe'] == 'CLASSE_III')
+    c4 = sum(1 for r in lot_records if r['classe'] == 'CLASSE_IV')
+    tot = len(lot_records)
+    
+    stats = {
+        'total': tot,
+        'c1': c1, 'c2': c2, 'c3': c3, 'c4': c4,
+        'records': lot_records
+    }
+    
+    # Montagem do Memorial Técnico GRAPROHAB
+    criticos_ids = [str(r['id']) for r in lot_records if r['alerta']]
+    rel_lines = [
+        "-----------------------------------------------------------------------------------------",
+        "9. ANÁLISE DE DECLIVIDADE DOS LOTES (MANUAL DO GRAPROHAB - ITEM 12 & LEI FEDERAL 6.766/79):",
+        "-----------------------------------------------------------------------------------------",
+        f"   - Total de Lotes Analisados na Gleba       : {tot} lotes (Poligonais oficiais da camada 'Lote')",
+        f"   - Classe I   (Declividade <= 15.0%)       : {c1} lotes ({c1/float(tot)*100.0:.1f}%) [Ocupação Direta / Topografia Suave]",
+        f"   - Classe II  (Declividade 15.1% a 30.0%)  : {c2} lotes ({c2/float(tot)*100.0:.1f}%) [Ocupação Convencional / Contenções Baixas]",
+        f"   - Classe III (Declividade 30.1% a 47.0%)  : {c3} lotes ({c3/float(tot)*100.0:.1f}%) [CRÍTICO - ALERTA GRAPROHAB ITEM 12]",
+        f"   - Classe IV  (Declividade > 47.0%)        : {c4} lotes ({c4/float(tot)*100.0:.1f}%) [MUITO CRÍTICO - LEI 6.766/79 ART. 3º]",
+        "   - Enquadramento Normativo GRAPROHAB (Item 12):",
+        f"     * Exigência de Projeto de Implantação Genérica: {'SIM (Obrigatório)' if (c3 + c4) > 0 else 'NÃO APLICÁVEL'}",
+        f"     * Lotes Sujeitos à Exigência (>30% decliv.)    : {len(criticos_ids)} lotes ({', '.join(criticos_ids) if criticos_ids else 'Nenhum'})",
+        "   - Diretrizes Obrigatórias para os Lotes Críticos (>30%):",
+        "     1. Memorial Descritivo e Projeto Legal devem conter cortes esquemáticos de implantação genérica das edificações.",
+        "     2. Previsão de platôs escalonados (cortes/aterros internos <= 2,50m) com contenções por muros de flexão ou gabiões.",
+        "     3. Sentido do escoamento pluvial (setas em planta) direcionado obrigatoriamente para as sarjetas viárias,",
+        "        vedado qualquer despejo de águas pluviais sobre os lotes a jusante ou divisas lindeiras.",
+        "     4. Fator de Segurança geotécnico FS >= 1,50 assegurado para todas as intervenções internas dos lotes.",
+        "-----------------------------------------------------------------------------------------"
+    ]
+    
+    return {
+        'geoms_2d': geoms_2d_all,
+        'tabela_geoms': [], # Será gerada com coordenadas exatas da Folha 01
+        'lotes_criticos_crvs': lotes_criticos_crvs,
+        'dados_lotes_str': dados_lotes_str,
+        'stats': stats,
+        'relatorio_lines': rel_lines,
+        'lotes_suaves_geoms': lotes_suaves_geoms,
+        'lotes_criticos_30_geoms': lotes_criticos_30_geoms,
+        'lotes_criticos_47_geoms': lotes_criticos_47_geoms,
+        'setas_drenagem_geoms': setas_drenagem_geoms,
+        'textos_lotes_geoms': textos_lotes_geoms
+    }
+
+
 def run():
     doc_cls = getattr(Rhino, 'RhinoDoc', None)
     doc = getattr(doc_cls, 'ActiveDoc', None) if doc_cls else None
@@ -4631,7 +5076,8 @@ def run():
     raw_escala       = get_input(['Scale', 'Escala', 'S'], 1.0)
     raw_nivel_proj   = get_input(['ProjectElevation', 'PadElevation', 'GradeElevation', 'NivelProjeto', 'Plato', 'CotaProjeto'])
     raw_inclinacao   = get_input(['MaxSlope', 'InclinacaoMaxima', 'RampaMaxima', 'Inclinacao', 'Imax'], 15.0)
-    raw_limite       = get_input(['SiteBoundary', 'PropertyLine', 'Boundary', 'BoundaryLine', 'Limite', 'LimiteTerreno', 'Perimetro', 'PoligonalLote', 'Plataforma', 'LimitePropriedade', 'Lote'])
+    raw_limite       = get_input(['SiteBoundary', 'PropertyLine', 'Boundary', 'BoundaryLine', 'Limite', 'LimiteTerreno', 'Perimetro', 'PoligonalLote', 'Plataforma', 'LimitePropriedade'])
+    raw_lotes        = get_input(['Lots', 'Lotes', 'PoligonosLotes', 'QuadrasLotes', 'Loteamento', 'MalhaLotes'])
     raw_viario       = get_input(['Roadway', 'Viario', 'RoadNetwork', 'RoadBoundary', 'Pista', 'Ruas', 'CADViario', 'PoligonoViario', 'Vias', 'PoligonalViario', 'MalhaViaria', 'EixoViario', 'EixosViarios', 'Rua', 'RuasCAD', 'EixoRua', 'EixosRuas', 'Pistas'])
     raw_homogeneizacao = get_input(['HomogenizationFactor', 'CompactionFactor', 'ShrinkageFactor', 'FatorHomogeneizacao', 'FatorContracao', 'Fh'], 1.15)
     raw_modo_estacas = get_input(['StationingMode', 'ModoEstacas', 'EstaqueamentoNormativo', 'Estacas20m', 'Normative20m', 'UsarEstacas20m', 'Modo20m'])
@@ -4710,6 +5156,7 @@ def run():
 
     boundary_info = sanitize_site_boundary(raw_limite, raw_projeto, tol)
     road_polygons = sanitize_road_polygons(raw_viario, tol)
+    lotes_analysis = analyze_lot_slopes_graprohab(raw_lotes, geoms_terreno, doc, s, tol)
 
     # Processing cross-sectional cut lines
     lista_linhas_raw = [to_rhino_curve(c) for c in to_list(raw_linhas) if to_rhino_curve(c) is not None]
@@ -5715,6 +6162,8 @@ def run():
     # 2D CAD Road Network on Plan View
     for p_info in road_polygons:
         planta_baixa_geoms.append(p_info['curve'])
+    if lotes_analysis.get('geoms_2d'):
+        planta_baixa_geoms.extend(lotes_analysis['geoms_2d'])
     if boundary_info is not None:
         planta_baixa_geoms.append(boundary_info['curve'])
 
@@ -6235,6 +6684,14 @@ def run():
         )
         planta_baixa_geoms.extend(prancha_planta_geoms)
 
+        # Inserção do Quadro Sintético de Declividade dos Lotes (GRAPROHAB Item 12) na Folha 01
+        if lotes_analysis.get('stats'):
+            tbl_x0 = f1_x0 + 15.0 * s
+            tbl_y0 = f1_y0 + 15.0 * s
+            tbl_lotes_geoms = draw_lot_slope_table(tbl_x0, tbl_y0, lotes_analysis['stats'], s)
+            planta_baixa_geoms.extend(tbl_lotes_geoms)
+            lotes_analysis['tabela_geoms'] = tbl_lotes_geoms
+
     # =========================================================================
     # 10. MEMORIAL TÉCNICO DE TERRAPLENAGEM (ÁREAS MÉDIAS & DIAGRAMA DE BRÜCKNER)
     # =========================================================================
@@ -6483,6 +6940,9 @@ def run():
             "========================================================================================="
         ])
 
+    if lotes_analysis.get('relatorio_lines'):
+        relatorio.extend(lotes_analysis['relatorio_lines'])
+
     # Saídas dinâmicas para conexões opcionais no Grasshopper (aliases bilíngues)
     globals()['CurvasProjeto1m'] = crvs_proj_1m
     globals()['CurvasProjeto5m'] = crvs_proj_5m
@@ -6631,6 +7091,22 @@ def run():
         bake_items.append({'group_name': "{}_CARIMBO_TABELAS".format(sh_name), 'parent_group': sh_name, 'layer_name': "PROJETO_LEGAL::PRANCHAS::CARIMBO", 'geoms': t_geoms})
         bake_items.append({'group_name': "{}_TEXTOS_DADOS".format(sh_name), 'parent_group': sh_name, 'layer_name': "PROJETO_LEGAL::PRANCHAS::TEXTOS", 'geoms': x_geoms})
 
+    # 10.3.1 Grupos e Camadas para Lotes e Declividade (Manual GRAPROHAB)
+    if lotes_analysis.get('geoms_2d'):
+        lotes_parent = "LOTES_DECLIVIDADE_GRAPROHAB"
+        if lotes_analysis.get('lotes_suaves_geoms'):
+            bake_items.append({'group_name': "LOTES_SUAVES_ATE_30PCT", 'parent_group': lotes_parent, 'layer_name': "PROJETO_LEGAL::LOTES::DECLIVIDADE_ATE_30PCT", 'geoms': lotes_analysis['lotes_suaves_geoms']})
+        if lotes_analysis.get('lotes_criticos_30_geoms'):
+            bake_items.append({'group_name': "LOTES_CRITICOS_30_A_47PCT", 'parent_group': lotes_parent, 'layer_name': "PROJETO_LEGAL::LOTES::ALERTAS_GRAPROHAB_30PCT", 'geoms': lotes_analysis['lotes_criticos_30_geoms']})
+        if lotes_analysis.get('lotes_criticos_47_geoms'):
+            bake_items.append({'group_name': "LOTES_MUITO_CRITICOS_MAIOR_47PCT", 'parent_group': lotes_parent, 'layer_name': "PROJETO_LEGAL::LOTES::ALERTAS_LEI_6766_47PCT", 'geoms': lotes_analysis['lotes_criticos_47_geoms']})
+        if lotes_analysis.get('setas_drenagem_geoms'):
+            bake_items.append({'group_name': "LOTES_SETAS_DRENAGEM_SUPERFICIAL", 'parent_group': lotes_parent, 'layer_name': "PROJETO_LEGAL::LOTES::SETAS_DRENAGEM", 'geoms': lotes_analysis['setas_drenagem_geoms']})
+        if lotes_analysis.get('textos_lotes_geoms'):
+            bake_items.append({'group_name': "LOTES_ROTULOS_DECLIVIDADE", 'parent_group': lotes_parent, 'layer_name': "PROJETO_LEGAL::LOTES::TEXTOS_DECLIVIDADE", 'geoms': lotes_analysis['textos_lotes_geoms']})
+        if lotes_analysis.get('tabela_geoms'):
+            bake_items.append({'group_name': "LOTES_QUADRO_SINTETICO_DECLIVIDADE", 'parent_group': lotes_parent, 'layer_name': "PROJETO_LEGAL::LOTES::TABELA_DECLIVIDADES", 'geoms': lotes_analysis['tabela_geoms']})
+
     # 10.4 Execução Automática do Bake se Bake == True
     bake_msg = "Bake inativo (conecte Bake=True para gravar no Rhino)."
     bake_requested = False
@@ -6655,6 +7131,13 @@ def run():
     globals()['Tabelas2D'] = all_tabelas_2d
     globals()['PerfisTopograficos2D'] = all_perfis_2d
     globals()['StatusBake'] = bake_msg
+
+    # Saídas Especializadas para Declividade dos Lotes (GRAPROHAB)
+    globals()['AnaliseLotes2D'] = lotes_analysis.get('geoms_2d', [])
+    globals()['TabelaLotes2D'] = lotes_analysis.get('tabela_geoms', [])
+    globals()['LotesCriticos'] = lotes_analysis.get('lotes_criticos_crvs', [])
+    globals()['DadosLotes'] = lotes_analysis.get('dados_lotes_str', [])
+    globals()['Lotes_Declividade'] = lotes_analysis.get('geoms_2d', [])
 
     globals()['sec_base_xs'] = sec_base_xs
     globals()['sec_base_ys'] = sec_base_ys
