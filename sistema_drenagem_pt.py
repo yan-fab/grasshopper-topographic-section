@@ -5286,10 +5286,177 @@ def make_3d_box_mesh_oriented(center_top, u_dir, w_len, w_trans, height_down, co
     ]
     return create_colored_mesh(quads, color)
 
-def draw_pv_standard_detail_2d(x0, y0, w_box, h_box, sc, s=1.0):
+# =============================================================================
+# DETALHES CONSTRUTIVOS PADRONIZADOS — CADERNO DE ENCARGOS PBH (CAPÍTULO 19: DRENAGEM)
+# Prefeituras de Belo Horizonte, Vargem Grande Paulista e Padrão Normativo Nacional
+# =============================================================================
+
+# Referências dimensionais oficiais da PBH / SUDECAP (Novembro/2022 - 4ª Edição):
+# Tabela 1 PBH: Referência para dimensionamento do berço de concreto 1:3:6 (DN: a, b, b', vol_m3_m, forma_m2_m)
+PBH_BERCO_CONCRETO = {
+    400: {'a': 0.12, 'b': 0.10, 'b_linha': 0.065, 'vol_m3_m': 0.13, 'forma_m2_m': 0.44},
+    500: {'a': 0.15, 'b': 0.13, 'b_linha': 0.090, 'vol_m3_m': 0.21, 'forma_m2_m': 0.56},
+    600: {'a': 0.18, 'b': 0.15, 'b_linha': 0.105, 'vol_m3_m': 0.25, 'forma_m2_m': 0.66},
+    700: {'a': 0.21, 'b': 0.18, 'b_linha': 0.125, 'vol_m3_m': 0.32, 'forma_m2_m': 0.78},
+    800: {'a': 0.24, 'b': 0.20, 'b_linha': 0.125, 'vol_m3_m': 0.43, 'forma_m2_m': 0.88},
+    1000: {'a': 0.30, 'b': 0.25, 'b_linha': 0.155, 'vol_m3_m': 0.66, 'forma_m2_m': 1.10}
+}
+
+# Tabela 4 PBH (NBR 17015): Largura da vala (m) em função do diâmetro e profundidade H
+PBH_LARGURA_VALA = {
+    400: {'h_ate_2m': 1.00, 'h_mais_2m': 1.20},
+    500: {'h_ate_2m': 1.15, 'h_mais_2m': 1.30},
+    600: {'h_ate_2m': 1.25, 'h_mais_2m': 1.45},
+    700: {'h_ate_2m': 1.50, 'h_mais_2m': 1.70},
+    800: {'h_ate_2m': 1.60, 'h_mais_2m': 1.80},
+    1000: {'h_ate_2m': 1.90, 'h_mais_2m': 2.10}
+}
+
+# Tabela 7 PBH: Alas de rede tubular para desemboque a 45° (DN: C_cm, L_cm, a_cm)
+PBH_ALA_REDE_TUBULAR = {
+    400: {'C': 1.50, 'L': 1.90, 'a': 0.15},
+    500: {'C': 1.50, 'L': 2.00, 'a': 0.15},
+    600: {'C': 1.50, 'L': 2.10, 'a': 0.15},
+    700: {'C': 1.50, 'L': 2.20, 'a': 0.15},
+    800: {'C': 1.50, 'L': 2.30, 'a': 0.15},
+    1000: {'C': 1.50, 'L': 2.50, 'a': 0.15}
+}
+
+def draw_pv_pbh_detail_2d(x0, y0, w_box, h_box, sc, s=1.0):
     """
-    Desenha o Detalhe Construtivo Padrão — Poço de Visita (PV 1,00 x 1,00m) em Concreto Armado
-    com Degrau de Queda Interno (Drop Manhole), Planta e Corte Esquemático s/ escala.
+    Desenha o Detalhe Construtivo Oficial dos Poços de Visita da PBH (Capítulo 19.12):
+      - Poço de Visita Tipo A: Sem dispositivo de queda interno (delta Z <= 10 cm);
+      - Poço de Visita Tipo B: Com dispositivo de queda interno em rampa (delta Z <= 50 cm);
+      - Poço de Visita Tipo C: Com dispositivo de queda interno em calha/rampa (delta Z <= 100 cm);
+      - Chaminé excêntrica circular d=80cm, escada de marinheiro a cada 30cm e tampão FoFo D400 d=600mm.
+    """
+    geoms = []
+    x1 = x0 + w_box
+    y1 = y0 + h_box
+    bg = make_box_background_mesh(
+        rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0),
+        rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0),
+        System.Drawing.Color.FromArgb(254, 254, 254)
+    )
+    if bg: geoms.append(bg)
+    geoms.append(make_box_poly(x0, y0, x1, y1))
+
+    # Cabeçalho do Card
+    y_hdr = y1 - 8.5 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)))
+    geoms.extend(make_text_geometry("DETALHE PADRÃO PBH — POÇOS DE VISITA (CAP. 19.12 — TIPOS A, B E C)", rg.Point3d((x0 + x1)/2.0, y1 - 4.5*sc, 0), 2.05*sc, rg.TextJustification.MiddleCenter, s))
+
+    # Divisão: Planta (esquerda) x Corte com Rampa/Queda PBH (centro-direita) x Tabela PBH (direita)
+    x_d1 = x0 + w_box * 0.32
+    x_d2 = x0 + w_box * 0.68
+    geoms.append(rg.LineCurve(rg.Point3d(x_d1, y0 + 6.0*sc, 0), rg.Point3d(x_d1, y_hdr, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(x_d2, y0 + 6.0*sc, 0), rg.Point3d(x_d2, y_hdr, 0)))
+
+    # 1. Planta do PV (Painel Esquerdo)
+    cx_p = (x0 + x_d1) * 0.5
+    cy_p = (y0 + 10.0*sc + y_hdr) * 0.52
+    r_ext = 13.0 * sc
+    r_int = 10.0 * sc
+    # Câmara de trabalho quadrada externa e interna
+    geoms.append(make_box_poly(cx_p - r_ext, cy_p - r_ext, cx_p + r_ext, cy_p + r_ext))
+    geoms.append(make_box_poly(cx_p - r_int, cy_p - r_int, cx_p + r_int, cy_p + r_int))
+    # Chaminé excêntrica d=80cm
+    geoms.append(rg.Circle(rg.Point3d(cx_p, cy_p + 1.5*sc, 0), 6.5 * sc).ToNurbsCurve())
+    # Tampão articulado FoFo DN 600mm (Classe D400 - NBR 10160)
+    geoms.append(rg.Circle(rg.Point3d(cx_p, cy_p + 1.5*sc, 0), 5.2 * sc).ToNurbsCurve())
+    geoms.append(rg.Circle(rg.Point3d(cx_p, cy_p + 1.5*sc, 0), 4.2 * sc).ToNurbsCurve())
+    # Tubo afluente (montante) e efluente (jusante) com canaleta meia cana
+    geoms.append(rg.LineCurve(rg.Point3d(cx_p - r_ext - 7.0*sc, cy_p + 3.0*sc, 0), rg.Point3d(cx_p - r_int, cy_p + 3.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_p - r_ext - 7.0*sc, cy_p - 3.0*sc, 0), rg.Point3d(cx_p - r_int, cy_p - 3.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_p + r_int, cy_p + 3.5*sc, 0), rg.Point3d(cx_p + r_ext + 7.0*sc, cy_p + 3.5*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_p + r_int, cy_p - 3.5*sc, 0), rg.Point3d(cx_p + r_ext + 7.0*sc, cy_p - 3.5*sc, 0)))
+    # Canaleta meia-cana no fundo
+    geoms.append(rg.LineCurve(rg.Point3d(cx_p - r_int, cy_p + 2.0*sc, 0), rg.Point3d(cx_p + r_int, cy_p + 2.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_p - r_int, cy_p - 2.0*sc, 0), rg.Point3d(cx_p + r_int, cy_p - 2.0*sc, 0)))
+
+    geoms.extend(make_text_geometry("PLANTA BAIXA (PBH)", rg.Point3d(cx_p, y_hdr - 4.5*sc, 0), 1.5*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Câmara de Trabalho (Laje fck>=25MPa)", rg.Point3d(cx_p, cy_p - r_ext - 4.5*sc, 0), 1.25*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Tampão FoFo Ø600 D400 / Chaminé Ø80", rg.Point3d(cx_p, cy_p - r_ext - 8.0*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+
+    # 2. Corte Esquemático PV Tipo B / C com Rampa de Queda (Painel Central)
+    cx_c = (x_d1 + x_d2) * 0.5
+    y_top_pv = y_hdr - 9.0 * sc
+    y_bot_pv = y0 + 13.0 * sc
+    w_camara = 24.0 * sc
+    w_cham   = 13.0 * sc
+
+    # Câmara de trabalho (inferior)
+    y_trans = y_bot_pv + 28.0 * sc
+    geoms.append(make_box_poly(cx_c - w_camara*0.5, y_bot_pv, cx_c + w_camara*0.5, y_trans))
+    geoms.append(make_box_poly(cx_c - w_camara*0.4, y_bot_pv + 3.0*sc, cx_c + w_camara*0.4, y_trans - 2.0*sc))
+    # Chaminé excêntrica (superior)
+    geoms.append(make_box_poly(cx_c - w_cham*0.4, y_trans, cx_c + w_cham*0.6, y_top_pv))
+    geoms.append(make_box_poly(cx_c - w_cham*0.3, y_trans + 1.5*sc, cx_c + w_cham*0.5, y_top_pv - 1.5*sc))
+    # Escada de marinheiro a cada 30cm
+    for y_deg in range(int(y_bot_pv + 8.0*sc), int(y_top_pv - 3.0*sc), int(3.5*sc)):
+        geoms.append(rg.LineCurve(rg.Point3d(cx_c + w_cham*0.25, y_deg, 0), rg.Point3d(cx_c + w_cham*0.45, y_deg, 0)))
+
+    # Tubo de entrada superior com Rampa de Queda (Tipo B / C)
+    y_ent = y_trans - 5.0 * sc
+    y_sai = y_bot_pv + 4.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c - w_camara*0.5 - 10.0*sc, y_ent + 4.0*sc, 0), rg.Point3d(cx_c - w_camara*0.4, y_ent + 4.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c - w_camara*0.5 - 10.0*sc, y_ent, 0), rg.Point3d(cx_c - w_camara*0.4, y_ent, 0)))
+    # Rampa defletora de transição interna (PBH)
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c - w_camara*0.4, y_ent, 0), rg.Point3d(cx_c + 2.0*sc, y_sai + 3.0*sc, 0)))
+    # Tubo de saída na geratriz inferior
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c + w_camara*0.4, y_sai + 5.0*sc, 0), rg.Point3d(cx_c + w_camara*0.5 + 10.0*sc, y_sai + 5.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c + w_camara*0.4, y_sai, 0), rg.Point3d(cx_c + w_camara*0.5 + 10.0*sc, y_sai, 0)))
+
+    geoms.extend(make_text_geometry("CORTE LONGITUDINAL (PBH TIPO B/C)", rg.Point3d(cx_c, y_hdr - 4.5*sc, 0), 1.5*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("CT (Cota Tampão Viário)", rg.Point3d(cx_c, y_top_pv + 2.2*sc, 0), 1.25*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Rampa Defletora (Queda <= 50cm / 100cm)", rg.Point3d(cx_c - 1.0*sc, (y_ent + y_sai)/2.0 + 3.0*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("ZF (Fundo) | Canaleta Meia-Cana fck>=25MPa", rg.Point3d(cx_c, y_bot_pv - 3.5*sc, 0), 1.25*sc, rg.TextJustification.MiddleCenter, s))
+
+    # 3. Tabela Sintética PBH das Dimensões (Painel Direito)
+    cx_t = (x_d2 + x1) * 0.5
+    geoms.extend(make_text_geometry("DIMENSÕES PADRÃO PBH", rg.Point3d(cx_t, y_hdr - 4.5*sc, 0), 1.5*sc, rg.TextJustification.MiddleCenter, s))
+    headers_pv = ["DN", "Tipo A (LxC)", "Tipo B (Q<=50)", "Tipo C (Q<=100)"]
+    col_w_pv = [9.0*sc, 15.0*sc, 16.0*sc, 16.0*sc]
+    x_tab_pv0 = x_d2 + (w_box * 0.32 - sum(col_w_pv))*0.5
+    y_tpv = y_hdr - 9.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x_tab_pv0, y_tpv, 0), rg.Point3d(x_tab_pv0 + sum(col_w_pv), y_tpv, 0)))
+    cur_x = x_tab_pv0
+    for idx_c, w_c in enumerate(col_w_pv):
+        geoms.extend(make_text_geometry(headers_pv[idx_c], rg.Point3d(cur_x + w_c/2.0, y_tpv - 2.5*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+        cur_x += w_c
+    y_tpv -= 5.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x_tab_pv0, y_tpv, 0), rg.Point3d(x_tab_pv0 + sum(col_w_pv), y_tpv, 0)))
+
+    tab_rows_pv = [
+        ["400", "90 x 90 cm", "90x90 h=70cm", "100x100 h=120"],
+        ["500", "90 x 90 cm", "90x90 h=70cm", "100x100 h=120"],
+        ["600", "100 x 100 cm", "100x100 h=80cm", "110x110 h=130"],
+        ["800", "120 x 120 cm", "120x120 h=90cm", "130x130 h=140"]
+    ]
+    for r_vals in tab_rows_pv:
+        cur_x = x_tab_pv0
+        for idx_c, val in enumerate(r_vals):
+            w_c = col_w_pv[idx_c]
+            geoms.extend(make_text_geometry(val, rg.Point3d(cur_x + w_c/2.0, y_tpv - 2.5*sc, 0), 1.1*sc, rg.TextJustification.MiddleCenter, s))
+            cur_x += w_c
+        y_tpv -= 4.2 * sc
+        geoms.append(rg.LineCurve(rg.Point3d(x_tab_pv0, y_tpv, 0), rg.Point3d(x_tab_pv0 + sum(col_w_pv), y_tpv, 0)))
+
+    geoms.extend(make_text_geometry("Notas: PBH Cap. 19.12 / 19.13 | Degraus ferro d=20mm", rg.Point3d(cx_t, y0 + 3.0*sc, 0), 1.1*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Recobrimento Mínimo H >= 1,00 m sob Leito Carroçável", rg.Point3d((x0 + x1)*0.5, y0 + 1.8*sc, 0), 1.25*sc, rg.TextJustification.MiddleCenter, s))
+
+    t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
+    t_texts = [g for g in geoms if g not in t_lines]
+    return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
+
+
+def draw_bl_pbh_detail_2d(x0, y0, w_box, h_box, sc, s=1.0):
+    """
+    Desenha o Detalhe Construtivo Oficial das Bocas de Lobo da PBH (Capítulo 19.8 / 19.9 / 19.10):
+      - Boca de Lobo Tipo A Simples e Dupla com Grelha em Ferro Dúctil;
+      - Guia-chapéu em concreto e cantoneira de aço galvanizado;
+      - Depressão de Sarjeta PBH (Cap. 19.10): Transição em rampa de 1,50m com rebaixo de 5cm;
+      - Caixa coletora de sedimentos e ramal de ligação d=300mm com S >= 2,0%.
     """
     geoms = []
     x1 = x0 + w_box
@@ -5305,66 +5472,292 @@ def draw_pv_standard_detail_2d(x0, y0, w_box, h_box, sc, s=1.0):
     # Cabeçalho
     y_hdr = y1 - 8.5 * sc
     geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)))
-    geoms.extend(make_text_geometry("DETALHE CONSTRUTIVO PADRÃO — POÇO DE VISITA (PV 1,00x1,00m) COM DEGRAU", rg.Point3d((x0 + x1)/2.0, y1 - 4.5*sc, 0), 2.1*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("BOCA DE LOBO TIPO A & DEPRESSÃO DE SARJETA (PBH CAP. 19.8 A 19.10)", rg.Point3d((x0 + x1)/2.0, y1 - 4.5*sc, 0), 2.05*sc, rg.TextJustification.MiddleCenter, s))
 
-    # Divisão Planta (Esquerda) x Corte Esquemático (Direita)
-    x_mid = x0 + w_box * 0.44
+    # Divisão: Corte Transversal na Sarjeta (Esquerda) x Planta Dupla + Depressão 1,50m (Direita)
+    x_mid = x0 + w_box * 0.48
     geoms.append(rg.LineCurve(rg.Point3d(x_mid, y0 + 6.0*sc, 0), rg.Point3d(x_mid, y_hdr, 0)))
 
-    # 1. Planta do PV (Esquerda)
-    cx_p = (x0 + x_mid) * 0.5
-    cy_p = (y0 + 10.0*sc + y_hdr) * 0.5
-    r_ext = 15.0 * sc
-    r_int = 11.5 * sc
-    geoms.append(make_box_poly(cx_p - r_ext, cy_p - r_ext, cx_p + r_ext, cy_p + r_ext))
-    geoms.append(make_box_poly(cx_p - r_int, cy_p - r_int, cx_p + r_int, cy_p + r_int))
-    # Tampão FoFo DN 600mm
-    geoms.append(rg.Circle(rg.Point3d(cx_p, cy_p, 0), 6.5 * sc).ToNurbsCurve())
-    geoms.append(rg.Circle(rg.Point3d(cx_p, cy_p, 0), 5.5 * sc).ToNurbsCurve())
-    # Tubos chegando e saindo
-    geoms.append(rg.LineCurve(rg.Point3d(cx_p - r_ext - 8.0*sc, cy_p + 3.5*sc, 0), rg.Point3d(cx_p - r_int, cy_p + 3.5*sc, 0)))
-    geoms.append(rg.LineCurve(rg.Point3d(cx_p - r_ext - 8.0*sc, cy_p - 3.5*sc, 0), rg.Point3d(cx_p - r_int, cy_p - 3.5*sc, 0)))
-    geoms.append(rg.LineCurve(rg.Point3d(cx_p + r_int, cy_p + 4.5*sc, 0), rg.Point3d(cx_p + r_ext + 8.0*sc, cy_p + 4.5*sc, 0)))
-    geoms.append(rg.LineCurve(rg.Point3d(cx_p + r_int, cy_p - 4.5*sc, 0), rg.Point3d(cx_p + r_ext + 8.0*sc, cy_p - 4.5*sc, 0)))
-    geoms.extend(make_text_geometry("PLANTA (1,00 x 1,00 m)", rg.Point3d(cx_p, y_hdr - 5.0*sc, 0), 1.6*sc, rg.TextJustification.MiddleCenter, s))
-    geoms.extend(make_text_geometry("Tampão FoFo Ø 600mm (NBR 10160)", rg.Point3d(cx_p, cy_p - r_ext - 5.0*sc, 0), 1.4*sc, rg.TextJustification.MiddleCenter, s))
+    # 1. Corte Transversal na Sarjeta / Meio-Fio
+    cx_c = (x0 + x_mid) * 0.5
+    y_base_c = y0 + 16.0 * sc
+    # Pista de rolamento com declividade transversal 2%
+    geoms.append(rg.LineCurve(rg.Point3d(x0 + 4.0*sc, y_base_c + 20.0*sc, 0), rg.Point3d(cx_c, y_base_c + 15.0*sc, 0)))
+    # Sarjeta de concreto (largura 40cm com rebaixo 5cm)
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c, y_base_c + 15.0*sc, 0), rg.Point3d(cx_c + 6.0*sc, y_base_c + 14.0*sc, 0)))
+    # Guia / meio-fio e Guia-chapéu da PBH
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c + 12.0*sc, y_base_c + 14.0*sc, 0), rg.Point3d(cx_c + 12.0*sc, y_base_c + 25.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c + 12.0*sc, y_base_c + 25.0*sc, 0), rg.Point3d(cx_c + 22.0*sc, y_base_c + 25.0*sc, 0)))
+    # Caixa coletora da boca de lobo (alvenaria revestida / concreto)
+    w_bx = 14.0 * sc
+    h_bx = 22.0 * sc
+    geoms.append(make_box_poly(cx_c + 2.0*sc, y_base_c - h_bx + 14.0*sc, cx_c + 2.0*sc + w_bx, y_base_c + 14.0*sc))
+    # Grelha articulada em ferro dúctil Tipo A
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c + 3.0*sc, y_base_c + 14.0*sc, 0), rg.Point3d(cx_c + 11.0*sc, y_base_c + 14.0*sc, 0)))
+    # Ramal de ligação d=300mm saindo da caixa coletora
+    y_ram = y_base_c - h_bx + 19.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c + 2.0*sc, y_ram + 3.5*sc, 0), rg.Point3d(x0 + 6.0*sc, y_ram - 2.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_c + 2.0*sc, y_ram, 0), rg.Point3d(x0 + 6.0*sc, y_ram - 5.5*sc, 0)))
 
-    # 2. Corte Esquemático com Degrau (Direita)
-    cx_c = (x_mid + x1) * 0.5
-    y_top_pv = y_hdr - 10.0 * sc
-    y_bot_pv = y0 + 14.0 * sc
-    w_ch = 22.0 * sc
-    geoms.append(make_box_poly(cx_c - w_ch*0.5, y_bot_pv, cx_c + w_ch*0.5, y_top_pv))
-    geoms.append(make_box_poly(cx_c - w_ch*0.36, y_bot_pv + 3.0*sc, cx_c + w_ch*0.36, y_top_pv - 2.5*sc))
-    y_mont = y_top_pv - 14.0 * sc
-    y_jus  = y_bot_pv + 4.0 * sc
-    geoms.append(rg.LineCurve(rg.Point3d(cx_c - w_ch*0.5 - 14.0*sc, y_mont + 5.0*sc, 0), rg.Point3d(cx_c - w_ch*0.36, y_mont + 5.0*sc, 0)))
-    geoms.append(rg.LineCurve(rg.Point3d(cx_c - w_ch*0.5 - 14.0*sc, y_mont, 0), rg.Point3d(cx_c - w_ch*0.36, y_mont, 0)))
-    geoms.append(rg.LineCurve(rg.Point3d(cx_c + w_ch*0.36, y_jus + 6.5*sc, 0), rg.Point3d(cx_c + w_ch*0.5 + 14.0*sc, y_jus + 6.5*sc, 0)))
-    geoms.append(rg.LineCurve(rg.Point3d(cx_c + w_ch*0.36, y_jus, 0), rg.Point3d(cx_c + w_ch*0.5 + 14.0*sc, y_jus, 0)))
-    geoms.extend(make_text_geometry("CORTE ESQUEMÁTICO (C/ DEGRAU DE QUEDA)", rg.Point3d(cx_c, y_hdr - 5.0*sc, 0), 1.6*sc, rg.TextJustification.MiddleCenter, s))
-    geoms.extend(make_text_geometry("ZT (Cota Tampão Viário)", rg.Point3d(cx_c, y_top_pv + 2.5*sc, 0), 1.35*sc, rg.TextJustification.MiddleCenter, s))
-    geoms.extend(make_text_geometry("ZF (Cota Fundo / Geratriz Inf.) | Laje fck>=25MPa", rg.Point3d(cx_c, y_bot_pv - 4.0*sc, 0), 1.35*sc, rg.TextJustification.MiddleCenter, s))
-    geoms.extend(make_text_geometry("Recobrimento Mínimo >= 1,00 m | Escada Marinheiro Galvanizada a cada 0,30 m", rg.Point3d((x0 + x1)*0.5, y0 + 2.8*sc, 0), 1.35*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("CORTE TRANSVERSAL NA SARJETA", rg.Point3d(cx_c, y_hdr - 4.5*sc, 0), 1.45*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Grelha FoFo Dúctil Tipo A c/ Cantoneira", rg.Point3d(cx_c + 7.0*sc, y_base_c + 16.5*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Guia-Chapéu PBH", rg.Point3d(cx_c + 17.0*sc, y_base_c + 27.0*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Ramal de Ligação Ø300mm (S>=2%) -> PV", rg.Point3d(cx_c - 4.0*sc, y_ram - 8.0*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+
+    # 2. Planta Baixa da BL Dupla com Depressão de Sarjeta 1,50m (Direita)
+    cx_d = (x_mid + x1) * 0.5
+    cy_d = (y0 + 10.0*sc + y_hdr) * 0.5
+    w_grelha = 18.0 * sc
+    h_grelha = 8.0 * sc
+    # Boca de Lobo Dupla (2 grelhas articuladas)
+    geoms.append(make_box_poly(cx_d - w_grelha*0.5, cy_d - h_grelha*0.5, cx_d + w_grelha*0.5, cy_d + h_grelha*0.5))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_d, cy_d - h_grelha*0.5, 0), rg.Point3d(cx_d, cy_d + h_grelha*0.5, 0)))
+    # Barras da grelha
+    for bx in range(int(cx_d - w_grelha*0.45), int(cx_d + w_grelha*0.45), int(2.2*sc)):
+        geoms.append(rg.LineCurve(rg.Point3d(bx, cy_d - h_grelha*0.4, 0), rg.Point3d(bx, cy_d + h_grelha*0.4, 0)))
+
+    # Depressão de Sarjeta PBH (1,50m de rampa a montante e jusante)
+    y_sarj_top = cy_d + h_grelha*0.5 + 4.0*sc
+    y_sarj_bot = cy_d - h_grelha*0.5 - 4.0*sc
+    geoms.append(rg.LineCurve(rg.Point3d(cx_d - w_grelha*0.5 - 15.0*sc, cy_d - h_grelha*0.5, 0), rg.Point3d(cx_d - w_grelha*0.5, cy_d - h_grelha*0.5 - 2.5*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_d + w_grelha*0.5, cy_d - h_grelha*0.5 - 2.5*sc, 0), rg.Point3d(cx_d + w_grelha*0.5 + 15.0*sc, cy_d - h_grelha*0.5, 0)))
+
+    geoms.extend(make_text_geometry("PLANTA BL DUPLA & DEPRESSÃO (PBH)", rg.Point3d(cx_d, y_hdr - 4.5*sc, 0), 1.45*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Grelhas Articuladas PBH Tipo A (180 x 50 cm)", rg.Point3d(cx_d, cy_d + h_grelha*0.5 + 4.5*sc, 0), 1.2*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("<-- Rampa Depressão 1,50 m (Rebaixo 5 cm) -->", rg.Point3d(cx_d, cy_d - h_grelha*0.5 - 6.5*sc, 0), 1.2*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Engolimento Otimizado p/ Evitar Bypass de Vazão na Pista", rg.Point3d(cx_d, y0 + 3.0*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
 
     t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
     t_texts = [g for g in geoms if g not in t_lines]
     return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
 
-def draw_drainage_sizing_table_a0(x0, y0, trechos_list, pvs_list, sc, s=1.0):
+
+def draw_vala_berco_pbh_detail_2d(x0, y0, w_box, h_box, sc, s=1.0):
     """
-    Desenha a Tabela Oficial de Pré-Dimensionamento Hidráulico das Galerias (Manning n=0,013)
-    contendo todos os trechos da rede (T-01 a T-18 ou dinâmicos pela Linha Guia),
-    cotas de tampão (ZT), cotas de fundo (ZF), extensão, declividade, DN, velocidade e vazão.
+    Desenha o Detalhe Construtivo Oficial de Vala e Berço de Tubulação da PBH (Capítulo 19.4):
+      - Seção transversal da vala sob leito viário com largura B da Tabela 4 PBH (NBR 17015);
+      - Berço de concreto 1:3:6 envolvente a 120° com espessura a e largura b (Tabela 1 PBH);
+      - Recobrimento mínimo de 1,00m sob pavimento (Tabela 6 PBH) e compactação a 95% Proctor Normal.
     """
     geoms = []
-    col_w = [12.0*sc, 14.0*sc, 14.0*sc, 15.0*sc, 15.0*sc, 16.0*sc, 16.0*sc, 16.0*sc, 16.0*sc, 16.0*sc, 18.0*sc, 42.0*sc]
+    x1 = x0 + w_box
+    y1 = y0 + h_box
+    bg = make_box_background_mesh(
+        rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0),
+        rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0),
+        System.Drawing.Color.FromArgb(254, 254, 254)
+    )
+    if bg: geoms.append(bg)
+    geoms.append(make_box_poly(x0, y0, x1, y1))
+
+    # Cabeçalho
+    y_hdr = y1 - 8.5 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)))
+    geoms.extend(make_text_geometry("SEÇÃO TÍPICA DE VALA E BERÇO DE CONCRETO (PBH TABELAS 1, 4 E 6)", rg.Point3d((x0 + x1)/2.0, y1 - 4.5*sc, 0), 2.05*sc, rg.TextJustification.MiddleCenter, s))
+
+    # Divisão: Corte da Vala (Esquerda) x Tabela de Berços e Valas PBH (Direita)
+    x_mid = x0 + w_box * 0.50
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid, y0 + 6.0*sc, 0), rg.Point3d(x_mid, y_hdr, 0)))
+
+    # 1. Corte Transversal da Vala
+    cx_v = (x0 + x_mid) * 0.5
+    y_bot_v = y0 + 13.0 * sc
+    y_top_v = y_hdr - 9.0 * sc
+    w_vala = 22.0 * sc
+
+    # Paredes da vala
+    geoms.append(rg.LineCurve(rg.Point3d(cx_v - w_vala*0.5, y_bot_v, 0), rg.Point3d(cx_v - w_vala*0.5, y_top_v, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_v + w_vala*0.5, y_bot_v, 0), rg.Point3d(cx_v + w_vala*0.5, y_top_v, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_v - w_vala*0.5, y_bot_v, 0), rg.Point3d(cx_v + w_vala*0.5, y_bot_v, 0)))
+
+    # Pavimento superior (capa asfáltica 5cm + base brita 15cm)
+    geoms.append(rg.LineCurve(rg.Point3d(cx_v - w_vala*0.6, y_top_v, 0), rg.Point3d(cx_v + w_vala*0.6, y_top_v, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_v - w_vala*0.6, y_top_v - 2.5*sc, 0), rg.Point3d(cx_v + w_vala*0.6, y_top_v - 2.5*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_v - w_vala*0.6, y_top_v - 6.0*sc, 0), rg.Point3d(cx_v + w_vala*0.6, y_top_v - 6.0*sc, 0)))
+
+    # Tubo de concreto armado circular (ex: DN 600mm)
+    r_ext_tb = 6.0 * sc
+    r_int_tb = 5.0 * sc
+    cy_tb = y_bot_v + 8.5 * sc
+    geoms.append(rg.Circle(rg.Point3d(cx_v, cy_tb, 0), r_ext_tb).ToNurbsCurve())
+    geoms.append(rg.Circle(rg.Point3d(cx_v, cy_tb, 0), r_int_tb).ToNurbsCurve())
+
+    # Berço de concreto 1:3:6 envolvente a 120° (Tabela 1 PBH)
+    geoms.append(make_box_poly(cx_v - w_vala*0.48, y_bot_v, cx_v + w_vala*0.48, cy_tb))
+    # Ângulo de apoio 120°
+    geoms.append(rg.LineCurve(rg.Point3d(cx_v - w_vala*0.48, cy_tb, 0), rg.Point3d(cx_v - r_ext_tb * 0.866, cy_tb + r_ext_tb * 0.5, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_v + w_vala*0.48, cy_tb, 0), rg.Point3d(cx_v + r_ext_tb * 0.866, cy_tb + r_ext_tb * 0.5, 0)))
+
+    # Cotas
+    geoms.extend(make_text_geometry("CORTE DA VALA & BERÇO", rg.Point3d(cx_v, y_hdr - 4.5*sc, 0), 1.45*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Capa CBUQ (5cm) + Base Brita (15cm)", rg.Point3d(cx_v, y_top_v + 2.5*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Reaterro Compactado >=95% PN", rg.Point3d(cx_v, (y_top_v - 6.0*sc + cy_tb + r_ext_tb)/2.0, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Berço Concreto 1:3:6 (Apoio 120°)", rg.Point3d(cx_v, y_bot_v - 3.5*sc, 0), 1.2*sc, rg.TextJustification.MiddleCenter, s))
+
+    # 2. Tabela Sintética de Berço e Valas PBH (Direita)
+    cx_t = (x_mid + x1) * 0.5
+    geoms.extend(make_text_geometry("PARÂMETROS DE VALA & BERÇO PBH", rg.Point3d(cx_t, y_hdr - 4.5*sc, 0), 1.45*sc, rg.TextJustification.MiddleCenter, s))
+    headers_v = ["DN(mm)", "B Vala H<=2m", "B Vala H>2m", "Esp. a", "Berço m³/m"]
+    col_w_v = [10.0*sc, 14.0*sc, 14.0*sc, 11.0*sc, 13.0*sc]
+    x_tv0 = x_mid + (w_box * 0.50 - sum(col_w_v))*0.5
+    y_tv = y_hdr - 9.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x_tv0, y_tv, 0), rg.Point3d(x_tv0 + sum(col_w_v), y_tv, 0)))
+    cur_x = x_tv0
+    for idx_c, w_c in enumerate(col_w_v):
+        geoms.extend(make_text_geometry(headers_v[idx_c], rg.Point3d(cur_x + w_c/2.0, y_tv - 2.5*sc, 0), 1.1*sc, rg.TextJustification.MiddleCenter, s))
+        cur_x += w_c
+    y_tv -= 5.0 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x_tv0, y_tv, 0), rg.Point3d(x_tv0 + sum(col_w_v), y_tv, 0)))
+
+    tab_rows_v = [
+        ["400", "1,00 m", "1,20 m", "12 cm", "0,13 m³/m"],
+        ["500", "1,15 m", "1,30 m", "15 cm", "0,21 m³/m"],
+        ["600", "1,25 m", "1,45 m", "18 cm", "0,25 m³/m"],
+        ["800", "1,60 m", "1,80 m", "24 cm", "0,43 m³/m"]
+    ]
+    for r_vals in tab_rows_v:
+        cur_x = x_tv0
+        for idx_c, val in enumerate(r_vals):
+            w_c = col_w_v[idx_c]
+            geoms.extend(make_text_geometry(val, rg.Point3d(cur_x + w_c/2.0, y_tv - 2.5*sc, 0), 1.1*sc, rg.TextJustification.MiddleCenter, s))
+            cur_x += w_c
+        y_tv -= 4.2 * sc
+        geoms.append(rg.LineCurve(rg.Point3d(x_tv0, y_tv, 0), rg.Point3d(x_tv0 + sum(col_w_v), y_tv, 0)))
+
+    geoms.extend(make_text_geometry("Recobrimento Mínimo H >= 1,00 m sob Leito Viário (Tabela 6 PBH)", rg.Point3d(cx_t, y0 + 3.0*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+
+    t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
+    t_texts = [g for g in geoms if g not in t_lines]
+    return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
+
+
+def draw_ala_dissipador_pbh_detail_2d(x0, y0, w_box, h_box, sc, s=1.0):
+    """
+    Desenha o Detalhe Construtivo Oficial de Ala de Desemboque e Dissipador de Energia da PBH (Capítulo 19.7 / 19.16):
+      - Muro de testa em concreto estrutural com alas divergentes a 45° (Tabela 7 PBH);
+      - Escadaria hidráulica dissipadora em degraus e bacia de amortecimento em enrocamento de pedra jogada;
+      - Redução da velocidade torrencial do emissário DN 800mm para V < 1,50 m/s na entrada da bacia/córrego.
+    """
+    geoms = []
+    x1 = x0 + w_box
+    y1 = y0 + h_box
+    bg = make_box_background_mesh(
+        rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0),
+        rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0),
+        System.Drawing.Color.FromArgb(254, 254, 254)
+    )
+    if bg: geoms.append(bg)
+    geoms.append(make_box_poly(x0, y0, x1, y1))
+
+    # Cabeçalho
+    y_hdr = y1 - 8.5 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)))
+    geoms.extend(make_text_geometry("ALA DE LANÇAMENTO & DISSIPADOR EM DEGRAUS (PBH CAP. 19.7 E 19.16)", rg.Point3d((x0 + x1)/2.0, y1 - 4.5*sc, 0), 2.05*sc, rg.TextJustification.MiddleCenter, s))
+
+    # Divisão: Planta das Alas a 45° (Esquerda) x Corte da Escadaria Dissipadora (Direita)
+    x_mid = x0 + w_box * 0.48
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid, y0 + 6.0*sc, 0), rg.Point3d(x_mid, y_hdr, 0)))
+
+    # 1. Planta da Ala de Lançamento a 45° (Tabela 7 PBH)
+    cx_a = (x0 + x_mid) * 0.5
+    cy_a = (y0 + 10.0*sc + y_hdr) * 0.5
+    # Tubo emissário chegando
+    geoms.append(rg.LineCurve(rg.Point3d(cx_a - 18.0*sc, cy_a + 4.5*sc, 0), rg.Point3d(cx_a - 6.0*sc, cy_a + 4.5*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_a - 18.0*sc, cy_a - 4.5*sc, 0), rg.Point3d(cx_a - 6.0*sc, cy_a - 4.5*sc, 0)))
+    # Muro de testa vertical
+    geoms.append(make_box_poly(cx_a - 6.0*sc, cy_a - 9.0*sc, cx_a - 3.5*sc, cy_a + 9.0*sc))
+    # Alas divergentes a 45° (C = 1,50 m | L = 2,30 m para DN 800)
+    geoms.append(rg.LineCurve(rg.Point3d(cx_a - 3.5*sc, cy_a + 9.0*sc, 0), rg.Point3d(cx_a + 12.0*sc, cy_a + 15.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(cx_a - 3.5*sc, cy_a - 9.0*sc, 0), rg.Point3d(cx_a + 12.0*sc, cy_a - 15.0*sc, 0)))
+    # Soleira terminal
+    geoms.append(rg.LineCurve(rg.Point3d(cx_a + 12.0*sc, cy_a - 15.0*sc, 0), rg.Point3d(cx_a + 12.0*sc, cy_a + 15.0*sc, 0)))
+
+    geoms.extend(make_text_geometry("PLANTA DO DESEMBOQUE (ALAS A 45°)", rg.Point3d(cx_a, y_hdr - 4.5*sc, 0), 1.45*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Muro de Testa e Alas Concreto fck>=25MPa", rg.Point3d(cx_a, cy_a - 18.0*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Emissário DN 800mm (Classe PA-2)", rg.Point3d(cx_a - 10.0*sc, cy_a + 6.5*sc, 0), 1.1*sc, rg.TextJustification.MiddleCenter, s))
+
+    # 2. Corte da Escadaria Dissipadora em Degraus
+    cx_d = (x_mid + x1) * 0.5
+    y_bot_esc = y0 + 13.0 * sc
+    # Degraus de dissipação
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid + 4.0*sc, y_bot_esc + 22.0*sc, 0), rg.Point3d(x_mid + 12.0*sc, y_bot_esc + 22.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid + 12.0*sc, y_bot_esc + 22.0*sc, 0), rg.Point3d(x_mid + 12.0*sc, y_bot_esc + 16.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid + 12.0*sc, y_bot_esc + 16.0*sc, 0), rg.Point3d(x_mid + 20.0*sc, y_bot_esc + 16.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid + 20.0*sc, y_bot_esc + 16.0*sc, 0), rg.Point3d(x_mid + 20.0*sc, y_bot_esc + 10.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid + 20.0*sc, y_bot_esc + 10.0*sc, 0), rg.Point3d(x_mid + 28.0*sc, y_bot_esc + 10.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid + 28.0*sc, y_bot_esc + 10.0*sc, 0), rg.Point3d(x_mid + 28.0*sc, y_bot_esc + 4.0*sc, 0)))
+    geoms.append(rg.LineCurve(rg.Point3d(x_mid + 28.0*sc, y_bot_esc + 4.0*sc, 0), rg.Point3d(x1 - 4.0*sc, y_bot_esc + 4.0*sc, 0)))
+    # Bacia de amortecimento em pedra jogada / gabião
+    geoms.append(make_box_poly(x_mid + 28.0*sc, y_bot_esc, x1 - 4.0*sc, y_bot_esc + 4.0*sc))
+
+    geoms.extend(make_text_geometry("CORTE DA ESCADARIA DISSIPADORA", rg.Point3d(cx_d, y_hdr - 4.5*sc, 0), 1.45*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Degraus de Queda p/ Quebra de Energia", rg.Point3d(cx_d - 4.0*sc, y_bot_esc + 25.0*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("Enrocamento Pedra Jogada (D50=25cm)", rg.Point3d(cx_d + 10.0*sc, y_bot_esc + 6.5*sc, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("V_saída < 1,50 m/s (Deságue na Bacia / Córrego APP)", rg.Point3d(cx_d, y0 + 3.0*sc, 0), 1.2*sc, rg.TextJustification.MiddleCenter, s))
+
+    t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
+    t_texts = [g for g in geoms if g not in t_lines]
+    return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
+
+
+def draw_pbh_notes_table_2d(x0, y0, w_box, h_box, sc, s=1.0):
+    """
+    Desenha o Quadro de Notas Técnicas e Diretrizes de Execução do Caderno de Encargos PBH (Capítulo 19).
+    """
+    geoms = []
+    x1 = x0 + w_box
+    y1 = y0 + h_box
+    bg = make_box_background_mesh(
+        rg.Point3d(x0, y0, 0), rg.Point3d(x1, y0, 0),
+        rg.Point3d(x1, y1, 0), rg.Point3d(x0, y1, 0),
+        System.Drawing.Color.FromArgb(254, 254, 254)
+    )
+    if bg: geoms.append(bg)
+    geoms.append(make_box_poly(x0, y0, x1, y1))
+
+    y_hdr = y1 - 8.5 * sc
+    geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)))
+    geoms.extend(make_text_geometry("DIRETRIZES TÉCNICAS E ESPECIFICAÇÕES DE DRENAGEM (CADERNO PBH CAP. 19)", rg.Point3d((x0 + x1)/2.0, y1 - 4.5*sc, 0), 2.0*sc, rg.TextJustification.MiddleCenter, s))
+
+    notas_pbh = [
+        "1. TUBULAÇÕES: Tubos de concreto armado conforme ABNT NBR 8882, classes PA-1 (H<=2,0m) e PA-2 (H>2,0m). Juntas elásticas conforme NBR 15645.",
+        "2. POÇOS DE VISITA: Em concreto estrutural fck >= 25 MPa. Classificação: Tipo A (s/ queda), Tipo B (queda rampa <=50cm) e Tipo C (queda <=100cm).",
+        "3. TAMPÕES E GRELHAS: Em ferro fundido dúctil conforme NBR 10160 Classe D400 (40 toneladas) para tráfego pesado viário com trava de segurança.",
+        "4. BOCAS DE LOBO: Padrão PBH Tipo A (grelha FoFo articulada) com depressão de sarjeta de 5cm e rampa de 1,50m para evitar bypass de vazão.",
+        "5. BERÇO DE CONCRETO: Em concreto 1:3:6 (fck >= 15 MPa) envolvente a 120° sob o tubo conforme Tabela 1 PBH para garantir rigidez estrutural.",
+        "6. VALAS E REATERRO: Largura de vala conforme Tabela 4 PBH / NBR 17015. Reaterro em camadas <= 20cm compactadas a no mínimo 95% do Proctor Normal.",
+        "7. SEGURANÇA (NR-18): Escoramento contínuo/descontínuo obrigatório para valas com profundidade H > 1,25m conforme Itens 19.21 e 19.22 da PBH.",
+        "8. AMORTECIMENTO (DAEE / LC 67/2013 VGP): Bacia de Detenção de 450 m³ (TR=25 anos) e dissipador de energia escalonado com V_saída < 1,50 m/s."
+    ]
+
+    cur_y = y_hdr - 5.5 * sc
+    for n in notas_pbh:
+        geoms.extend(make_text_geometry(n, rg.Point3d(x0 + 4.0*sc, cur_y, 0), 1.25*sc, rg.TextJustification.MiddleLeft, s))
+        cur_y -= 4.2 * sc
+
+    t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
+    t_texts = [g for g in geoms if g not in t_lines]
+    return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
+
+def draw_pv_standard_detail_2d(x0, y0, w_box, h_box, sc, s=1.0):
+    return draw_pv_pbh_detail_2d(x0, y0, w_box, h_box, sc, s=s)
+
+
+def draw_drainage_sizing_table_a0(x0, y0, trechos_list, pvs_list, sc, s=1.0):
+    """
+    Desenha a Tabela Oficial de Pré-Dimensionamento Hidráulico e Quantitativos de Obras PBH (Capítulo 19)
+    com equação de Manning (n=0,013), diâmetros, classes de tubos PA-1/PA-2 (NBR 8882), classificação
+    dos Poços de Visita (Tipos A, B e C), largura de vala (Tabela 4 PBH), volumes de escavação e berço 1:3:6.
+    """
+    geoms = []
+    # 16 colunas executivas completas
+    col_w = [11.0*sc, 13.0*sc, 13.0*sc, 13.0*sc, 14.0*sc, 13.0*sc, 14.0*sc, 14.0*sc, 14.0*sc, 14.0*sc, 14.0*sc, 14.0*sc, 22.0*sc, 17.0*sc, 14.0*sc, 16.0*sc]
     total_w = sum(col_w)
     row_h = 3.8 * sc
     hdr_h = 7.0 * sc
     title_h = 8.0 * sc
     n_rows = max(len(trechos_list), 1)
-    total_h = title_h + hdr_h + n_rows * row_h + 7.5 * sc
+    total_h = title_h + hdr_h + n_rows * row_h + 8.0 * sc
 
     x1 = x0 + total_w
     y1 = y0 + total_h
@@ -5379,55 +5772,64 @@ def draw_drainage_sizing_table_a0(x0, y0, trechos_list, pvs_list, sc, s=1.0):
 
     y_title_line = y1 - title_h
     geoms.append(rg.LineCurve(rg.Point3d(x0, y_title_line, 0), rg.Point3d(x1, y_title_line, 0)))
-    geoms.extend(make_text_geometry("TABELA DE PRÉ-DIMENSIONAMENTO HIDRÁULICO DE GALERIAS PLUVIAIS (MANNING n = 0,013 | TR = 10 ANOS)", rg.Point3d((x0 + x1)/2.0, y1 - 4.2*sc, 0), 2.3*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("TABELA DE DIMENSIONAMENTO HIDRÁULICO & QUANTITATIVOS DE OBRAS (PBH CAP. 19 | MANNING n=0,013)", rg.Point3d((x0 + x1)/2.0, y1 - 4.2*sc, 0), 2.15*sc, rg.TextJustification.MiddleCenter, s))
 
     y_hdr_line = y_title_line - hdr_h
     geoms.append(rg.LineCurve(rg.Point3d(x0, y_hdr_line, 0), rg.Point3d(x1, y_hdr_line, 0)))
 
-    headers = ["Trecho", "Mont.", "Jus.", "L (m)", "DN(mm)", "ZT Mont", "ZF Mont", "ZT Jus", "ZF Jus", "Decl. S%", "V (m/s)", "Q.Cap(L/s) / Diagnóstico"]
+    headers = ["Trecho", "Mont.", "Jus.", "L (m)", "DN(mm)", "Classe", "ZT Mont", "ZF Mont", "ZT Jus", "ZF Jus", "Decl. S%", "V (m/s)", "Q.Cap(L/s)", "PV Mont. PBH", "Vala B(m)", "Escav.(m³)"]
     cur_x = x0
     for idx_c, w_c in enumerate(col_w):
-        geoms.extend(make_text_geometry(headers[idx_c], rg.Point3d(cur_x + w_c/2.0, (y_title_line + y_hdr_line)/2.0, 0), 1.35*sc, rg.TextJustification.MiddleCenter, s))
+        geoms.extend(make_text_geometry(headers[idx_c], rg.Point3d(cur_x + w_c/2.0, (y_title_line + y_hdr_line)/2.0, 0), 1.2*sc, rg.TextJustification.MiddleCenter, s))
         if idx_c > 0:
-            geoms.append(rg.LineCurve(rg.Point3d(cur_x, y_title_line, 0), rg.Point3d(cur_x, y0 + 7.5*sc, 0)))
+            geoms.append(rg.LineCurve(rg.Point3d(cur_x, y_title_line, 0), rg.Point3d(cur_x, y0 + 8.0*sc, 0)))
         cur_x += w_c
 
     cur_y = y_hdr_line
     tot_len = 0.0
+    tot_escav = 0.0
+    tot_berco = 0.0
     for tr in trechos_list:
         next_y = cur_y - row_h
         geoms.append(rg.LineCurve(rg.Point3d(x0, next_y, 0), rg.Point3d(x1, next_y, 0)))
         tot_len += tr['length']
-        q_diag = "{:.0f} L/s | {}".format(tr['q_ls'], "Degrau PV" if tr['vel'] > 5.0 else "OK").replace('.', ',')
+        tot_escav += tr.get('vol_escav_vala', tr['length'] * 1.25 * 1.5)
+        tot_berco += tr.get('vol_berco_conc', tr['length'] * 0.25)
+        q_diag = "{:.0f} L/s".format(tr['q_ls']).replace('.', ',')
         row_vals = [
             tr['id'],
             tr['pv_ini'],
             tr['pv_fim'],
             "{:.1f}".format(tr['length']).replace('.', ','),
             str(tr['dn_mm']),
+            tr.get('classe_tubo', 'PA-1'),
             "{:.2f}".format(tr['zt_ini']).replace('.', ','),
             "{:.2f}".format(tr['zf_ini']).replace('.', ','),
             "{:.2f}".format(tr['zt_fim']).replace('.', ','),
             "{:.2f}".format(tr['zf_fim']).replace('.', ','),
             "{:.2f}%".format(tr['s_pct']).replace('.', ','),
             "{:.2f}".format(tr['vel']).replace('.', ','),
-            q_diag
+            q_diag,
+            tr.get('tipo_pv_pbh', 'Tipo A').split(' ')[0] + " " + tr.get('tipo_pv_pbh', 'Tipo A').split(' ')[1] if ' ' in tr.get('tipo_pv_pbh', '') else tr.get('tipo_pv_pbh', 'Tipo A'),
+            "{:.2f}".format(tr.get('largura_vala', 1.25)).replace('.', ','),
+            "{:.1f}".format(tr.get('vol_escav_vala', tr['length'] * 1.8)).replace('.', ',')
         ]
         x_c = x0
         for idx_c, val in enumerate(row_vals):
             w_c = col_w[idx_c]
-            geoms.extend(make_text_geometry(val, rg.Point3d(x_c + w_c/2.0, (cur_y + next_y)/2.0, 0), 1.25*sc, rg.TextJustification.MiddleCenter, s))
+            geoms.extend(make_text_geometry(val, rg.Point3d(x_c + w_c/2.0, (cur_y + next_y)/2.0, 0), 1.15*sc, rg.TextJustification.MiddleCenter, s))
             x_c += w_c
         cur_y = next_y
 
-    rodape_txt = "Extensão Total de Galerias: {:.1f} m  |  Total de Poços de Visita: {} PVs (1,00x1,00m)  |  Bacia de Detenção: V = 450,0 m³ (TR=25 anos - Art. 22 PD VGP)".format(
-        tot_len, len(pvs_list)
+    rodape_txt = "TOTAIS DA REDE: Extensão: {:.1f} m  |  Escavação de Valas: {:.1f} m³  |  Berço Concreto 1:3:6: {:.1f} m³  |  Total: {} PVs PBH  |  Bacia Detenção: 450 m³ (TR=25 anos)".format(
+        tot_len, tot_escav, tot_berco, len(pvs_list)
     ).replace('.', ',')
-    geoms.extend(make_text_geometry(rodape_txt, rg.Point3d((x0 + x1)/2.0, y0 + 3.5*sc, 0), 1.75*sc, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry(rodape_txt, rg.Point3d((x0 + x1)/2.0, y0 + 3.8*sc, 0), 1.6*sc, rg.TextJustification.MiddleCenter, s))
 
     t_lines = [g for g in geoms if not getattr(g, '__is_text__', False) and not isinstance(g, getattr(rg, 'TextEntity', type(None)))]
     t_texts = [g for g in geoms if g not in t_lines]
     return CategorizedGeomList(geoms, tabela=t_lines, textos=t_texts)
+
 
 def build_automatic_drainage_system(raw_linha_guia, sample_z_fn, road_polygons=None, boundary_info=None,
                                     s=1.0, tol=0.001, cobrimento_min=1.0, espacamento_bl=30.0):
@@ -5657,6 +6059,35 @@ def build_automatic_drainage_system(raw_linha_guia, sample_z_fn, road_polygons=N
         slope_m_m = dz_f / dist_2d
         hyd = calc_manning_full_pipe(dn_mm, slope_m_m, n_manning=0.013)
 
+        # Parametrização executiva PBH (Capítulo 19 - Drenagem / SUDECAP 2022):
+        h_prof_ini = zt1 - zf1
+        h_prof_fim = zt2 - zf2
+        h_prof_med = (h_prof_ini + h_prof_fim) * 0.5
+        queda_degrau = max(zf1 - zf2 - (dist_2d * slope_m_m), 0.0)
+
+        # Classificação oficial do PV montante conforme PBH Cap. 19.12:
+        if queda_degrau <= 0.10:
+            tipo_pv_pbh = "Tipo A (s/ queda)"
+        elif queda_degrau <= 0.50:
+            tipo_pv_pbh = "Tipo B (rampa <=50cm)"
+        elif queda_degrau <= 1.00:
+            tipo_pv_pbh = "Tipo C (rampa <=100cm)"
+        else:
+            tipo_pv_pbh = "Tipo C c/ tubo queda"
+
+        # Tabela 4 PBH (NBR 17015): Largura da vala B
+        dn_ref_tab = 400 if dn_mm <= 400 else (500 if dn_mm <= 500 else (600 if dn_mm <= 600 else 800))
+        cfg_vala = PBH_LARGURA_VALA.get(dn_ref_tab, {'h_ate_2m': 1.25, 'h_mais_2m': 1.45})
+        b_vala = cfg_vala['h_mais_2m'] if h_prof_med > 2.0 else cfg_vala['h_ate_2m']
+
+        # Volumes de escavação, berço de concreto 1:3:6 e reaterro compactado PBH:
+        vol_escav_vala = dist_2d * b_vala * max(h_prof_med, 1.20)
+        cfg_berco = PBH_BERCO_CONCRETO.get(dn_ref_tab, {'vol_m3_m': 0.25})
+        vol_berco_conc = dist_2d * cfg_berco['vol_m3_m']
+        vol_tubo_cil = dist_2d * math.pi * ((dn_mm / 1000.0) * 0.5)**2
+        vol_reaterro = max(vol_escav_vala - vol_berco_conc - vol_tubo_cil, 0.0)
+        classe_tubo = "PA-1" if h_prof_med <= 2.0 else "PA-2"
+
         tr_data = {
             'id': t_id,
             'pv_ini': u_id if u_id != "CORPO_HIDRICO" else "Córrego",
@@ -5665,10 +6096,17 @@ def build_automatic_drainage_system(raw_linha_guia, sample_z_fn, road_polygons=N
             'x2': x2, 'y2': y2, 'zt_fim': zt2, 'zf_fim': zf2,
             'length': dist_2d,
             'dn_mm': dn_mm,
+            'classe_tubo': classe_tubo,
             's_pct': hyd['s_pct'],
             'vel': hyd['vel'],
             'q_ls': hyd['q_ls'],
-            'status': hyd['status']
+            'status': hyd['status'],
+            'tipo_pv_pbh': tipo_pv_pbh,
+            'largura_vala': b_vala,
+            'prof_media': h_prof_med,
+            'vol_escav_vala': vol_escav_vala,
+            'vol_berco_conc': vol_berco_conc,
+            'vol_reaterro': vol_reaterro
         }
         trechos_info.append(tr_data)
 
@@ -5863,19 +6301,24 @@ def build_automatic_drainage_system(raw_linha_guia, sample_z_fn, road_polygons=N
         'relatorio_lines': rel_dren
     }
 
+
+
 def draw_drainage_a0_sheet(x0, y0, sheet_scale, drenagem_res, planta_context_geoms, volume_summary=None, s=1.0):
     """
     Monta a Prancha Executiva Completa de Drenagem Pluvial Urbana (FOLHA DREN-01/01 em formato A0 1:500),
-    contendo:
-      - Moldura A0 Oficial + Carimbo Prefeitura VGP / GRAPROHAB / DAEE
-      - Tabela Completa de Pré-Dimensionamento Hidráulico (Manning n=0,013) com todos os trechos
-      - Detalhe Construtivo Padrão do Poço de Visita (PV 1,00 x 1,00 m) em Planta e Corte com Degrau
-      - Quadro de Diretrizes Normativas (GRAPROHAB Item 13, DAEE, Art. 21-24 LC 67/2013 VGP, NBR 8882)
+    incorporando integralmente as diretrizes do Caderno de Encargos PBH (Capítulo 19 - Drenagem / SUDECAP 2022):
+      - Moldura A0 Oficial + Carimbo Técnico Prefeitura / GRAPROHAB / DAEE;
+      - Tabela Completa de Dimensionamento Hidráulico e Quantitativos de Obras PBH (Manning n=0,013);
+      - Detalhes Padrão dos Poços de Visita PBH Tipos A, B e C com câmara, chaminé e rampa de queda;
+      - Detalhe das Bocas de Lobo PBH Tipo A e Depressão de Sarjeta de 1,50m;
+      - Seção Típica de Vala sob leito viário e Berço de Concreto 1:3:6 (Tabelas 1, 4 e 6 PBH);
+      - Detalhe de Ala de Lançamento a 45° e Escadaria Dissipadora em Degraus (Tabela 7 PBH);
+      - Quadro Geral de Diretrizes Técnicas e Especificações de Execução PBH Cap. 19.
     """
     sc = (sheet_scale / 1000.0) * s
     base_sheet_cat = draw_standard_a0_sheet(
         x0, y0, sheet_scale,
-        "PLANTA DE DIRETRIZES DE DRENAGEM PLUVIAL URBANA (GRAPROHAB / DAEE)",
+        "PROJETO EXECUTIVO DE DRENAGEM PLUVIAL URBANA (CADERNO PBH CAP. 19 / GRAPROHAB / DAEE)",
         "DREN-01/01", "1 / 500", s=s, is_planta=False, is_longitudinal=False,
         volume_summary=volume_summary, draw_perimeter=False
     )
@@ -5890,27 +6333,59 @@ def draw_drainage_a0_sheet(x0, y0, sheet_scale, drenagem_res, planta_context_geo
     x_int1 = x0 + w_sheet - 10.0 * sc
     w_selo = 175.0 * sc
     xs0 = x_int1 - w_selo
+    h_cards = 92.0 * sc
 
-    # 1. Tabela de Pré-Dimensionamento Hidráulico (Manning) à esquerda do Carimbo
     trechos_list = drenagem_res.get('trechos_info', [])
     pvs_list = drenagem_res.get('pvs_list', [])
-    w_tab_dren = 212.0 * sc
-    xt0 = xs0 - w_tab_dren - 6.0 * sc
+
+    # 1. Tabela de Dimensionamento Hidráulico e Quantitativos PBH (Manning) imediatamente à esquerda do Carimbo
+    w_tab_dren = 232.0 * sc
+    xt0 = xs0 - w_tab_dren - 5.0 * sc
     yt0 = y_int0
     tab_dren_cat = draw_drainage_sizing_table_a0(xt0, yt0, trechos_list, pvs_list, sc, s=s)
     all_geoms.extend(tab_dren_cat)
     t_geoms.extend(getattr(tab_dren_cat, 'tabela', []))
     x_geoms.extend(getattr(tab_dren_cat, 'textos', []))
 
-    # 2. Detalhe Construtivo Padrão do PV 1,00x1,00m à esquerda da Tabela de Manning
-    w_det_pv = 145.0 * sc
-    h_det_pv = 88.0 * sc
-    xd0 = xt0 - w_det_pv - 6.0 * sc
-    yd0 = y_int0
-    det_pv_cat = draw_pv_standard_detail_2d(xd0, yd0, w_det_pv, h_det_pv, sc, s=s)
-    all_geoms.extend(det_pv_cat)
-    t_geoms.extend(getattr(det_pv_cat, 'tabela', []))
-    x_geoms.extend(getattr(det_pv_cat, 'textos', []))
+    # 2. Detalhe Construtivo dos Poços de Visita PBH Tipos A, B e C
+    w_pv = 165.0 * sc
+    x_pv0 = xt0 - w_pv - 5.0 * sc
+    pv_cat = draw_pv_pbh_detail_2d(x_pv0, y_int0, w_pv, h_cards, sc, s=s)
+    all_geoms.extend(pv_cat)
+    t_geoms.extend(getattr(pv_cat, 'tabela', []))
+    x_geoms.extend(getattr(pv_cat, 'textos', []))
+
+    # 3. Detalhe Construtivo das Bocas de Lobo PBH Tipo A e Depressão de Sarjeta
+    w_bl = 150.0 * sc
+    x_bl0 = x_pv0 - w_bl - 5.0 * sc
+    bl_cat = draw_bl_pbh_detail_2d(x_bl0, y_int0, w_bl, h_cards, sc, s=s)
+    all_geoms.extend(bl_cat)
+    t_geoms.extend(getattr(bl_cat, 'tabela', []))
+    x_geoms.extend(getattr(bl_cat, 'textos', []))
+
+    # 4. Detalhe da Seção de Vala e Berço de Tubulação PBH (Tabelas 1, 4 e 6)
+    w_vla = 145.0 * sc
+    x_vla0 = x_bl0 - w_vla - 5.0 * sc
+    vla_cat = draw_vala_berco_pbh_detail_2d(x_vla0, y_int0, w_vla, h_cards, sc, s=s)
+    all_geoms.extend(vla_cat)
+    t_geoms.extend(getattr(vla_cat, 'tabela', []))
+    x_geoms.extend(getattr(vla_cat, 'textos', []))
+
+    # 5. Detalhe de Ala de Lançamento e Escadaria Dissipadora em Degraus PBH (Tabela 7)
+    w_ala = 140.0 * sc
+    x_ala0 = x_vla0 - w_ala - 5.0 * sc
+    ala_cat = draw_ala_dissipador_pbh_detail_2d(x_ala0, y_int0, w_ala, h_cards, sc, s=s)
+    all_geoms.extend(ala_cat)
+    t_geoms.extend(getattr(ala_cat, 'tabela', []))
+    x_geoms.extend(getattr(ala_cat, 'textos', []))
+
+    # 6. Quadro de Diretrizes Técnicas e Especificações de Execução PBH Cap. 19
+    w_not = max(x_ala0 - x_int0 - 5.0 * sc, 120.0 * sc)
+    x_not0 = x_int0
+    not_cat = draw_pbh_notes_table_2d(x_not0, y_int0, w_not, h_cards, sc, s=s)
+    all_geoms.extend(not_cat)
+    t_geoms.extend(getattr(not_cat, 'tabela', []))
+    x_geoms.extend(getattr(not_cat, 'textos', []))
 
     return CategorizedGeomList(all_geoms, moldura=m_geoms, tabela=t_geoms, textos=x_geoms)
 
