@@ -1,165 +1,264 @@
-# Grasshopper Topographic & Earthwork Suite (NBR 6492 / AGPTEA) 📐🏔️🚜
+# Grasshopper Topographic, Earthwork & Urban Drainage Suite 📐🏔️🚜🌧️
 
 [![Rhino 8](https://img.shields.io/badge/Rhino-8%20%7C%20Grasshopper-0080FF.svg)](https://www.rhino3d.com/)
 [![Python](https://img.shields.io/badge/Python-3.9%2B%20%7C%20GhPython-yellow.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Standards: ABNT NBR 6492 / 13133 / 8882](https://img.shields.io/badge/Normas-ABNT%20%7C%20DNIT%20%7C%20GRAPROHAB%20%7C%20PBH-green.svg)](#-calculation-methodology--standards)
 
-Professional parametric suite for **Rhinoceros 8 / Grasshopper (GhPython and Python 3 Script)** designed for topographic section generation, multi-axis executive earthwork grading, analytical cut & fill volume calculations, progressive mass haul balancing, and 3D terrain surface modeling in strict compliance with **ABNT NBR 6492** (Architectural Project Representation) and the classical **AGPTEA / UFPR Average End Area method**.
+Parametric suite for **Rhinoceros 8 / Grasshopper (GhPython and Python 3 Script)** designed for multi-axis topographic section generation, executive earthwork grading, analytical cut & fill volume calculations (AGPTEA / UFPR Average End Area method), progressive mass haul balancing, urban lot slope auditing, official A0 municipal permit sheets, and **automatic stormwater drainage network synthesis** by guide lines over graded terrain in strict compliance with **ABNT NBR 6492**, **NBR 13133**, **NBR 8882**, **Manual GRAPROHAB** (Items 12 & 13), **DAEE-SP**, and the **PBH Drainage Specifications Manual (SUDECAP Cap. 19)**.
 
 ---
 
 ## 📑 Table of Contents
 
-- [Module Overview](#-module-overview)
-- [Earthwork & Volumes Module (`corte_terraplenagem.py`)](#-earthwork--volumes-module-corteterraplenagempy)
-  - [Bilingual Inputs](#inputs---earthwork-module)
-  - [Outputs](#outputs---earthwork-module)
-  - [The 15% Maximum Slope Rule](#-the-15-maximum-slope-rule)
-  - [Mass Haul & Longitudinal Compensation](#-mass-haul--longitudinal-compensation)
-  - [Complete 3D Earthwork Model](#-complete-3d-earthwork-model)
-- [Architectural Section Module (`corte_arquitetonico.py`)](#-architectural-section-module-cortearquitetonicopy)
+- [Module Architecture](#-module-architecture)
+- [Module 1: Multi-Axis Earthwork & Grading (`corte_terraplenagem_pt.py`)](#-module-1-multi-axis-earthwork--grading)
+- [Module 2: Automatic Stormwater Drainage System (`corte_drenagem_pt.py`)](#-module-2-automatic-stormwater-drainage-system)
+  - [Guide Line Automatic Drainage Engine](#guide-line-automatic-drainage-engine)
+  - [PBH Standard Details (Capítulo 19 - SUDECAP)](#pbh-standard-details-capítulo-19---sudecap)
+  - [Dynamic Manning Hydraulics & Excel Export](#dynamic-manning-hydraulics--excel-export)
+- [Module 3: Architectural Building Section (`corte_arquitetonico.py`)](#-module-3-architectural-building-section)
+- [Official A0 Municipal Permit Sheets (Folhas 01 a 03 & DREN-01)](#-official-a0-municipal-permit-sheets)
+- [Component Inputs Reference](#-component-inputs-reference)
+- [Component Outputs Reference](#-component-outputs-reference)
+- [Automated Rhino Baking & Layer Hierarchy](#-automated-rhino-baking--layer-hierarchy)
+- [Normative Standards & Calculation Methodology](#-normative-standards--calculation-methodology)
 - [How to Use in Grasshopper](#-how-to-use-in-grasshopper)
-- [Calculation Methodology & Standards](#-calculation-methodology--standards)
 - [License](#-license)
 
 ---
 
-## 🧭 Module Overview
+## 🧭 Module Architecture
 
-The suite provides two specialized, production-ready modules:
+The suite provides three specialized, production-ready modules with synchronized Portuguese and English script variants:
 
-> [!NOTE]
-> **Versão em Português Brasileiro (pt-BR)**:
-> Para projetos no Brasil com pranchas, anotações técnicas e memoriais em português, utilize os arquivos [`corte_terraplenagem_pt.py`](corte_terraplenagem_pt.py) e [`corte_arquitetonico_pt.py`](corte_arquitetonico_pt.py) (também disponíveis na pasta [`pt/`](pt/)).
-
-| Module | Primary Script | Domain | Key Features |
-| :---: | :--- | :--- | :--- |
-| **Multi-Axis Earthwork & 3D Model** | [`corte_terraplenagem.py`](corte_terraplenagem.py) | **Civil Engineering & Surveying** | Multi-axis transverse (A, B, C...) and longitudinal (1, 2, 3...) sections, interactive grading curves with 15% slope ceiling, AGPTEA Average End Area volume calculation, internal mass haul compensation, dimensioned technical plan view, and full 3D color-coded earthwork mesh. |
-| **Architectural Building Section** | [`corte_arquitetonico.py`](corte_arquitetonico.py) | **Architecture & Urban Design** | Natural terrain intersection, building footprint clipping, cantilever roof/canopies, structural foundations, graded pad, access ramp, NBR 6492 elevation markers, and dimension selector modes. |
+| Module | Primary File | Domain | Key Features |
+| :--- | :--- | :--- | :--- |
+| **Earthwork & Volumes** | [`corte_terraplenagem_pt.py`](corte_terraplenagem_pt.py) / [`corte_topografico_pt.py`](corte_topografico_pt.py) | **Civil & Surveying** | Multi-axis transverse (A–M) & longitudinal (1–5) sections, interactive grading curves with 15% slope clamping, AGPTEA Average End Area volume calculation, mass haul balance, 20m stationing, lot slope auditing (GRAPROHAB Item 12), and complete 3D BIM terrain/road meshes. |
+| **Urban Stormwater Drainage** | [`corte_drenagem_pt.py`](corte_drenagem_pt.py) / [`sistema_drenagem_pt.py`](sistema_drenagem_pt.py) | **Hydraulic & Infrastructure** | Automatic drainage network generation by pulling guide lines (`LinhaGuia`) over the graded terrain (`sample_surface_proj_z`), gravity flow inversion, automatic >50m manhole subdivision (Rule 2), Manning hydraulics ($n=0.013$), scaled diameters (DN 400–800mm), paired catch basins with 1.50m gutter depressions, 450m³ detention pond, stepped energy dissipator, and PBH Cap. 19 standard details. |
+| **Architectural Section** | [`corte_arquitetonico_pt.py`](corte_arquitetonico_pt.py) / [`corte_arquitetonico.py`](corte_arquitetonico.py) | **Architecture & Urban Design** | Natural terrain intersection, building footprint clipping, cantilever roof/canopies, structural foundations, graded pad, access ramp, NBR 6492 elevation markers, and dimension selector modes. |
 
 ---
 
-## 🚜 Earthwork & Volumes Module (`corte_terraplenagem.py`)
+## 🚜 Module 1: Multi-Axis Earthwork & Grading
 
-Designed for feasibility studies, executive subdivision earthwork grading, and precise contractor cubic volume accounting.
+### 1. Multi-Axis Dynamic Grading & Slope Clamping
+- Evaluates transversal and longitudinal alignments simultaneously.
+- Clamps grade curves exceeding $|i| > 15.0\%$ to preserve heavy-machinery drivability and regulatory safety limits.
+- Generates 3D color-coded meshes: **Cut (Orange - RGB 235, 120, 30)**, **Fill (Green - RGB 80, 185, 100)**, and **Neutral Line (Cota Zero)**.
 
-### Inputs - Earthwork Module:
+### 2. Normative 20m Stationing (DNIT 108/2009-ES / ABNT NBR 13133)
+- Strictly enforces 1 station = exactly 20.00 meters (`Estaca 0+00,00`, `Estaca 1+00,00`, `Estaca 2+00,00`...).
+- Sub-station metric increments are strictly $< 20.00\,\text{m}$ (e.g., $238.73\,\text{m} = \text{Estaca } 11+18,73$).
 
-| Parameter (Bilingual) | Type Hint | Access | Default | Description |
-| :--- | :--- | :---: | :---: | :--- |
-| `Terrain` / `Terreno` | `Curve` / `Mesh` | **List** | *Required* | 3D contour curves or topographic terrain mesh. |
-| `SectionLines` / `LinhasCorte` | `Curve` | **List / Item** | *Required* | Primary cross-sectional cut lines (Sections A, B, C...). |
-| `LongitudinalLines` / `EixosVerticais` | `Curve` | **List / Item** | `None` | Longitudinal cut axes (1, 2, 3...) for multi-axis 3D analysis. |
-| `GradingLine` / `CurvaProjeto` / `BoundaryLine` | `Curve` | **List / Item** | `None` | Proposed grade curve(s) drawn directly in Rhino (2D or 3D). |
-| `Roadway` / `Viario` | `Curve` | **List / Item** | `None` | Closed 2D CAD road network polygon(s) (calçada + pista + cul-de-sacs). |
-| `MaxSlope` / `InclinacaoMaxima` | `float` | **Item** | `15.0` | Maximum allowable slope for grading lines (default: 15% = 0.15). |
-| `ProjectElevation` / `NivelProjeto` | `float` / `list` | **Item / List** | `None` | Finished grade elevation per section or quadrant. |
-| `Point` / `Ponto` | `Point3d` | **Item** | `(0, 0, 0)` | Base insertion point for 2D section drawings in Top View. |
-| `Spacing` / `Espacamento` | `float` | **Item** | `Auto` | Uniform vertical spacing between 2D section drawings. |
-| `Width` / `Largura` | `float` | **Item** | `1.0` | Influence width for single isolated section volume calculation ($m$). |
-| `BulkingFactor` / `Empolamento` | `float` | **Item** | `1.20` | Soil bulking/swell factor for hauling volume (1.20 = 20% expansion). |
-| `Selector` / `Seletor` | `int` | **Item** | `1` | `1`: Proposed Earthwork, `2`: Natural Terrain Only, `0`: Full with all dimensions. |
-| `Scale` / `Escala` | `float` | **Item** | `1.0` | Scale multiplier for NBR symbols, text annotations, and bubbles. |
+### 3. Progressive Mass Haul & Deficit/Borrow-Pit Diagnostics
+- Calculates cumulative cut & fill volumes using the **Average End Area Method (AGPTEA / UFPR)**.
+- Strictly accounts for soil compaction/shrinkage factor ($F_h = 1.15$) and swell/bulking factor ($K = 1.20$).
+- When the net mass balance is negative, reports mandatory importation from a **Licensed External Borrow Pit** (*Jazida de Empréstimo Licenciada*), eliminating contradictory spoil disposal (*bota-fora*) claims.
 
-### Outputs - Earthwork Module:
-
-| Output | Technical Name | Type | Description |
-| :---: | :--- | :---: | :--- |
-| **`a`** | `Complete3DModel` | `List[Geometry]` | **Complete 3D Earthwork Model**: Proposed terrain surface with color-coded meshes (Orange/Green/Neutral), 3D vertical section slices, and 3D grade/ground curves. |
-| **`b`** | `PlanView` | `List[Geometry]` | **Technical Plan View**: Dimensioned axes A, B, C... and 1, 2, 3... with NBR circular bubbles, sight arrows, outer cumulative dimension chains, and quadrant labels (A1, A2...). |
-| **`c`** | `SectionDrawings` | `List[Geometry]` | **Complete 2D Section Drawings**: Column 1 (Cross Sections) and Column 2 (Longitudinal Profiles) with Orange/Green hatch meshes, proposed grade, NBR level markers, cross-axis extension lines, and mass haul banners. |
-| **`d`** | `CutPolygons` | `List[Curve]` | **2D Cut Polygons**: Clean closed curves for each cut area (for Grasshopper `Area`, `Hatch`, or baking into CAD layers). |
-| **`e`** | `FillPolygons` | `List[Curve]` | **2D Fill Polygons**: Clean closed curves for each fill area (for Grasshopper `Area`, `Hatch`, or baking into CAD layers). |
-| **`f`** | `Report` | `str` | **AGPTEA Earthwork Calculation Report**: Formatted analytical text report for `Panel` connection, summarizing station areas, partial and total volumes, global mass balance, and hauling diagnostics. |
+### 4. Lot Slope Auditing (Manual GRAPROHAB Item 12 & Federal Law 6.766/79)
+- Automatically audits all 2D lot boundaries against terrain slope thresholds:
+  - **Gentle Slopes ($S \le 15\%$)**: Buildable without restrictions.
+  - **Moderate Slopes ($15\% < S \le 30\%$)**: Conventional lot grading with stepped pads.
+  - **Critical Slopes ($30\% < S \le 47\%$)**: Special earthwork and geotechnical retaining walls required.
+  - **Severe Slopes ($S > 47\% / \approx 25^\circ$)**: Non-buildable zone pursuant to Federal Law 6.766/79 Art. 3.
 
 ---
 
-### 🛣️ CAD Road Network & Drivable Street Standards (Viário Carroçável)
+## 🌧️ Module 2: Automatic Stormwater Drainage System
 
-When integrating an executive 2D CAD road network (`Roadway` / `Viario`):
+The 3rd variation (`corte_drenagem_pt.py`) receives the newly graded terrain surface and automatically models the complete urban drainage network.
 
-- **Closed Polygon Domain**: The algorithm detects closed road polylines (pavement, sidewalks, cul-de-sacs, and turnarounds), dividing the terrain into road corridors and residential/commercial lot areas.
-- **Normative Drivability Standards (DNIT / NBR)**:
-  1. **Transversal Leveling**: Overcomes hillside cross-tilting by establishing a leveled road platform.
-  2. **2.0% Drainage Crown**: Pavement slopes down 2.0% from the centerline to gutters, preventing water ponding.
-  3. **15cm Curb Step**: Standard $+0.15\,\text{m}$ curb separates the asphalt roadway from pedestrian sidewalks.
-  4. **Longitudinal Slope ($\le 15\%$)**: Road grades strictly respect maximum slope limits with smooth vertical curvature.
-- **BIM 3D Pavement**: Renders asphalt (`RGB 55, 55, 60`) and sidewalk (`RGB 200, 200, 205`) meshes on the proposed 3D surface with 3D curb relief.
+### Guide Line Automatic Drainage Engine
+1. **Graded Surface Elevation Sampling (`sample_surface_proj_z`)**:
+   - Any 2D or 3D curve connected to `LinhaGuia` projects its vertices onto the finished proposed surface (asphalt, sidewalks, and graded pads), automatically reading exact rim elevations ($Z_T = CT$).
+2. **Gravity Flow Auto-Orientation**:
+   - If a guide line is drawn backwards against topography, the engine automatically flips it from highest $Z_T$ to lowest $Z_T$, applying a minimum longitudinal slope $S_{\min} = 0.50\%$ ($0.005\,\text{m/m}$).
+3. **Automatic Subdivision for Maximum Manhole Spacing (Rule 2)**:
+   - Any segment longer than $50.0\,\text{m}$ is automatically subdivided with intermediate manholes (PVs) inserted at $\le 50.0\,\text{m}$ intervals.
+4. **Topological Node Clustering & Drop Manholes**:
+   - Vertices within a $4.5\,\text{m}$ radius are clustered into single topological junctions (`PV-01`, `PV-02`...).
+   - Evaluates elevation drops ($\Delta Z$) and classifies manholes as **Tipo A** ($\Delta Z \le 10\,\text{cm}$), **Tipo B** ($\Delta Z \le 50\,\text{cm}$ with internal ramp), or **Tipo C** ($\Delta Z \le 100\,\text{cm}$ with drop pipe).
+5. **Progressive Pipe Sizing & Manning Hydraulics ($n = 0.013$)**:
+   - Accumulates upstream catchments and scales commercial reinforced concrete pipes (ABNT NBR 8882):
+     - **$\text{DN } 400\,\text{mm}$ (PA-1)**: Starting branch lines / headwaters;
+     - **$\text{DN } 500\,\text{mm}$ (PA-1)**: Intermediate collector branches;
+     - **$\text{DN } 600\,\text{mm}$ (PA-2)**: Main trunk collectors;
+     - **$\text{DN } 800\,\text{mm}$ (PA-2)**: Final outfall emissary pipe.
+6. **Paired Catch Basins (Bocas de Lobo) & 1.50m Gutter Depressions**:
+   - Places paired catch basins ($0.80 \times 0.40 \times 0.20\,\text{m}$) on both road gutters ($\pm 3.60\,\text{m}$ from road centerline) every $25\text{--}35\,\text{m}$ (reduced to $24\,\text{m}$ where $S > 10\%$) with $\varnothing 200/300\,\text{mm}$ lateral leads.
+7. **Detention Basin ($450\,\text{m}^3$, $TR = 25\text{ years}$) & Stepped Energy Dissipator**:
+   - Placed automatically at the lowest outfall node, damping peak discharge and limiting exit velocity ($V_{\text{out}} < 1.50\,\text{m/s}$) into environmental buffer streams (APP).
 
----
+### PBH Standard Details (Capítulo 19 - SUDECAP)
+The drawing engine incorporates the technical standards of the **Caderno de Encargos PBH (4ª Edição / Novembro 2022)**:
+- **PV Details (Cap. 19.12)**: Types A, B, and C with $\varnothing 80\,\text{cm}$ chimney, galvanized safety ladder every $30\,\text{cm}$, and $\varnothing 600\,\text{mm}$ ductile iron frame/cover (Class D400 - NBR 10160).
+- **Catch Basin Details (Cap. 19.8–19.10)**: Type A frame with ductile iron grate, concrete hood, and $1.50\,\text{m}$ gutter transition ramp with $5\,\text{cm}$ depression to prevent roadway water bypass.
+- **Trench & Bedding Details (Cap. 19.4)**: Normative trench width $B$ (NBR 17015), 1:3:6 concrete cradle ($120^\circ$ cradle, Table 1 PBH), and $H \ge 1.00\,\text{m}$ minimum cover under roadbeds.
+- **Headwall & Wingwalls (Cap. 19.7 - Tabela 7)**: Concrete headwall with $45^\circ$ wingwalls and stepped energy dissipation cascade.
 
-### 📐 The 15% Maximum Slope Rule
-
-In civil earthwork, road design, and lot grading, slopes exceeding 15% hinder heavy equipment operation and standard vehicular circulation:
-
-- The algorithm calculates the effective slope of each grading segment:
-  $$i = \frac{\Delta Z}{L}$$
-- If the proposed boundary line exceeds $|i| > 15\%$, the grade curve is clamped to the **15.0%** threshold while retaining the base elevation point.
-- The constraint status is explicitly labeled on the technical drawing:
-  - `GRADE: i = +12.3% (RULE <= 15% OK)`
-  - `GRADE: i = +15.0% [CLAMPED TO 15.0% MAX]`
-
----
-
-### ⚖️ Mass Haul & Longitudinal Compensation
-
-Between consecutive cross sections ($A - A$ and $B - B$), volumes are calculated using AGPTEA's Average End Area formulation:
-
-$$V = \left(\frac{A_1 + A_2}{2}\right) \cdot D$$
-
-- **Progressive Mass Haul**: Evaluates whether excavated soil from station $i$ satisfies the embankment requirement of station $i+1$.
-- **Surplus**: When cumulative balance is positive, transfer banners indicate excess material hauled to the next section or to a **licensed spoil disposal site**.
-- **Deficit**: When cumulative balance is negative, transfer banners specify the volume required from a **borrow pit**.
-
----
-
-### 🧊 Complete 3D Earthwork Model
-
-Viewing output **`a`** in Rhino's 3D Perspective viewport:
-- The color-coded terrain surface dynamically reflects cut (orange), fill (green), and grade transitions.
-- Evaluates visual and environmental impacts before ground-breaking.
-- 3D vertical section slices provide direct spatial verification of elevation offsets.
+### Dynamic Manning Hydraulics & Excel Export
+The drainage calculations generate both interactive text reports and formatted spreadsheets:
+- **`Dimensionamento_Drenagem_CABE_VGP.xlsx`**: Professional workbook with 2 sheets (*Dimensionamento Hidráulico* and *Resumo Executivo & Normas*), dynamic Excel formulas (`SUM`, `AVERAGE`, `MAX`), and complete quantity take-offs for trench excavation and concrete bedding.
+- **`Dimensionamento_Drenagem_CABE_VGP.xls`**: Native BIFF8 Excel file for legacy compatibility.
 
 ---
 
-## 🏗️ Architectural Section Module (`corte_arquitetonico.py`)
+## 🏛️ Official A0 Municipal Permit Sheets
 
-Designed for architectural presentation of residential or commercial buildings integrated with site topography:
+The suite automatically composes **4 full ISO A0 sheets (1189 x 841 mm)** formatted with official borders, folding marks, title blocks, and legends:
 
-- **Longitudinal Section**: Building walls, continuous foundation trenches, ground floor slab, cantilever roof/canopy, and access ramp embankment.
-- **Cross Section**: Continuous graded pad, retaining slope/walls, and terrain profile.
-- **NBR 6492 Level Notation**: Standard triangular level markers with sign prefixes (`+` / `-`).
-- **Selector Modes**:
-  - `Mode 0`: All dimensions & elevations (Natural Terrain + Proposed Project).
-  - `Mode 1`: Proposed project elevations only (+ Natural Ground Profile) [Default].
-  - `Mode 2`: Natural terrain elevations only.
+```
++---------------------------------------------------------------------------------------------+
+|                                    A0 SHEET ARCHITECTURE                                    |
++---------------------------------------------------------------------------------------------+
+|                                                                                             |
+|                     UPPER VIEWPORT: TECHNICAL 2D PLAN (SCALE 1:500)                         |
+|        - Graded Contours / Topography                                                       |
+|        - Roadways, Curbs & Sidewalks                                                        |
+|        - Cut (Orange) & Fill (Green) Hatches / Drainage Network                             |
+|        - 20m Stationing & Manholes (PV-01 to PV-31)                                         |
+|                                                                                             |
++-------------------------------------------------------------------------+-------------------+
+|  CARD 1..5: STANDARD TECHNICAL DETAILS                                  | CARIMBO / TITLE   |
+|  - PBH Notes / Headwalls / Trenches / Catch Basins / Manholes / Manning | - City Hall Data  |
+|  - Sizing & Quantities Tables / Lot Slope Summary Table                 | - Technical Resp. |
++-------------------------------------------------------------------------+-------------------+
+```
+
+| Output Name | Sheet Number | Title | Scale | Primary Content |
+| :--- | :---: | :--- | :---: | :--- |
+| **`Folha01_PlantaGeral`** / `PranchaPlantaGeral` | **FOLHA 01/03** | Planta Geral de Terraplenagem & Grading | 1:500 | Graded contours, cut/fill patches, neutral line, slope hatching, 20m road stationing, and GRAPROHAB Lot Slope Table. |
+| **`Folha02_PerfisLongitudinais`** / `PranchaPerfisLongitudinais` | **FOLHA 02/03** | Perfis Longitudinais Viários com Guitarras | H=1:1.000 / V=1:100 | Roadway profiles (Axes 1–5) with 10x vertical exaggeration, natural ground vs. grade curves, parabolic vertical curves (PIVs), and full data guitars. |
+| **`Folha03_SecoesTransversais`** / `PranchaSecoesTransversais` | **FOLHA 03/03** | Seções Transversais de Terraplenagem | 1:200 | Transverse cut/fill cross sections (A–M) with offset dimensions, grade elevations, and individual area tables. |
+| **`PranchaDrenagem`** / `FolhaDrenagem` | **FOLHA DREN-01/01** | Projeto Executivo de Drenagem Pluvial | 1:500 | Full drainage network plan, 16-column Manning hydraulic sizing table, and the 6 PBH Cap. 19 standard construction details. |
+
+---
+
+## 🎛️ Component Inputs Reference
+
+| Input (Bilingual) | Type | Access | Default | Description |
+| :--- | :---: | :---: | :---: | :--- |
+| `Terrain` / `Terreno` | `Curve`/`Mesh` | **List** | *Required* | Natural terrain 3D contour curves or surface mesh. |
+| `SectionLines` / `LinhasCorte` | `Curve` | **List** | *Required* | Transverse cut axes (Sections A, B, C...). |
+| `LongitudinalLines` / `EixosVerticais` | `Curve` | **List** | `None` | Longitudinal roadway cut axes (Axes 1, 2, 3...). |
+| `GradingLine` / `CurvaProjeto` | `Curve` | **List** | `None` | Proposed grade or boundary curves. |
+| `Roadway` / `Viario` | `Curve` | **List** | `None` | Closed 2D polylines of road network (pavement + sidewalks). |
+| `Lots` / `Lotes` | `Curve` | **List** | `None` | 2D lot boundaries for GRAPROHAB slope analysis. |
+| `LinhaGuia` / `LinhaGuiaDrenagem` | `Curve` | **List** | `None` | Drainage collector centerlines drawn over the graded terrain. |
+| `CobrimentoMinimo` / `MinCover` | `float` | **Item** | `1.00` | Minimum soil cover over pipe crown ($m$). |
+| `EspacamentoBL` / `CatchBasinSpacing` | `float` | **Item** | `30.0` | Maximum spacing between paired catch basins ($m$). |
+| `MaxSlope` / `InclinacaoMaxima` | `float` | **Item** | `15.0` | Maximum allowable road/grade slope (%). |
+| `BulkingFactor` / `Empolamento` | `float` | **Item** | `1.20` | Soil bulking factor for hauling calculations ($K$). |
+| `HomogenizationFactor` / `Fh` | `float` | **Item** | `1.15` | Soil compaction shrinkage factor ($F_h$). |
+| `StationInterval` / `PassoEstacas` | `float` | **Item** | `20.0` | Station interval along alignment ($m$). |
+| `VerticalExaggeration` / `Exagero` | `float` | **Item** | `10.0` | Vertical scale multiplier for profile guitars. |
+| `Scale` / `Escala` | `float` | **Item** | `1.0` | Scale multiplier for text, bubbles, and notes. |
+| `Bake` / `GravarRhino` | `bool` | **Item** | `False` | When `True`, automatically bakes all categorized geometry into Rhino layers. |
+| `GroupMode` / `ModoGrupo` | `int` | **Item** | `0` | `0`: Hierarchical parent/child groups; `1`: Independent groups. |
+
+---
+
+## 📤 Component Outputs Reference
+
+### Standard Master Outputs
+- **`a`**: Complete 3D BIM Model (Proposed terrain mesh + Roadway asphalts/sidewalks + 3D Section slices).
+- **`b`** / `PlantaBaixa`: Technical Plan View (Dimensioned axes A–M and 1–5, sight arrows, bubbles, and outer dimensions).
+- **`c`** / `DesenhoCompletoSecoes2D`: Complete 2D Aligned Section and Profile drawings.
+- **`d`**: Closed 2D Cut polygons for area calculations and CAD hatching.
+- **`e`**: Closed 2D Fill polygons for area calculations and CAD hatching.
+- **`f`**: Complete Technical Earthwork, Mass Haul & Bruckner Report (`Panel`).
+
+### Specialized 2D Drafting & Layer Outputs
+- **`Textos2D`**: Isolated list of all text entities (`TextEntity`) for dedicated text layer management.
+- **`Tabelas2D`**: All technical tables and summary cards.
+- **`PerfisTopograficos2D`**: Natural ground profiles and proposed grade lines.
+- **`EstacasVias2D`** / `EstaqueamentoViario2D`: Normative 20m station labels on roadways.
+- **`ManchasCorte2D`** / `ManchasAterro2D`: 2D boundary polygons of cut and fill zones.
+- **`HachurasGrading2D`**: 2D vector hatching for cut and fill areas.
+- **`LinhaNeutra2D`**: The zero-elevation cut/fill transition curve.
+- **`Taludes2D`** / `EspinhasDePeixe2D`: Embankment slope crests, toes, and directional tick lines.
+- **`Viario2D`**: Clean 2D roadway outlines (curbs, pavement edges, and sidewalks).
+- **`CurvasProjeto`** / `CurvasProjeto1m`: Proposed finished grade contour curves.
+
+### Specialized Urban Drainage Outputs
+- **`Drenagem3D`**: Full 3D model of pipes, manholes, catch basins, and detention basin.
+- **`Drenagem2D`**: Unified 2D drainage network for overlay on the master plan.
+- **`Galerias2D`**: Pipe centerlines with flow arrows and normative annotations (`T-XX | DN | L | i%`).
+- **`PocosVisita2D`**: Manhole circles with elevation labels ($CT$, $ZF$, and depth $H$).
+- **`BocasDeLobo2D`**: Paired catch basins on gutters with lateral connection leads.
+- **`BaciaDetencao2D`**: Detention pond boundary and stepped energy dissipator geometry.
+- **`PranchaDrenagem`** / `FolhaDrenagem`: Dedicated A0 Sheet (**FOLHA DREN-01/01**).
+- **`TabelaManning2D`**: 16-column hydraulic and earthwork sizing table.
+- **`MemorialDrenagem`**: Full text report with Manning calculations and PBH/DAEE diagnostics (`Panel`).
+
+---
+
+## 🗂️ Automated Rhino Baking & Layer Hierarchy
+
+When setting `Bake = True`, the suite automatically organizes all elements into structured Rhino layers and groups:
+
+```
+PROJETO_LEGAL
+├── PRANCHAS
+│   ├── MOLDURAS
+│   ├── CARIMBO
+│   └── TEXTOS
+├── SECOES
+│   ├── PERFIS
+│   ├── TABELAS
+│   └── TEXTOS
+├── PERFIS_LONGITUDINAIS
+│   ├── GEOMETRIA
+│   ├── GUITARRA
+│   └── TEXTOS
+├── LOTES
+│   ├── DECLIVIDADE_ATE_30PCT
+│   ├── ALERTAS_GRAPROHAB_30PCT
+│   ├── ALERTAS_LEI_6766_47PCT
+│   ├── SETAS_DRENAGEM
+│   └── TABELA_DECLIVIDADES
+└── DRENAGEM
+    ├── GALERIAS_2D / GALERIAS_3D
+    ├── PVS_2D / PVS_3D
+    ├── BOCAS_LOBO_2D / BOCAS_LOBO_3D
+    ├── SETAS_FLUXO
+    ├── BACIA_DETENCAO_2D / BACIA_DETENCAO_3D
+    └── TEXTOS_2D
+```
+
+---
+
+## 📚 Normative Standards & Calculation Methodology
+
+1. **ABNT NBR 6492**: Representation of Architecture Projects (Line conventions, symbols, cuts, and elevation notation).
+2. **ABNT NBR 13133 / DNIT 108/2009-ES**: Topographic surveys and roadway stationing ($20.00\,\text{m}$ integer intervals).
+3. **AGPTEA / UFPR**: *Cálculo de Volumes – Método das Seções Transversais e Balanço de Massas* (Prof. Luís Augusto Koenig Veiga).
+4. **Manual GRAPROHAB (Governo de SP)**:
+   - **Item 12**: Diretrizes para Projetos de Terraplenagem e Declividade de Lotes.
+   - **Item 13**: Diretrizes para Projetos de Drenagem de Águas Pluviais.
+5. **DAEE-SP (Departamento de Águas e Energia Elétrica)**: Tempos de retorno normativos ($TR = 10\text{ anos}$ para microdrenagem / $TR = 25\text{ anos}$ para bacias de detenção) e velocidade de deságue controlada ($V < 1.50\,\text{m/s}$).
+6. **Prefeitura Municipal de Belo Horizonte (PBH / SUDECAP)**: *Caderno de Encargos – Capítulo 19: Drenagem* (4ª Edição / Novembro 2022).
+7. **ABNT NBR 8882 & NBR 15645**: Tubos de concreto armado para águas pluviais (Classes PA-1 a PA-4 e juntas elásticas).
+8. **ABNT NBR 10160**: Tampões e grelhas de ferro fundido dúctil (Classe D400 — 40 toneladas).
+9. **ABNT NBR 17015**: Diretrizes para dimensionamento de valas e assentamento de tubulações.
 
 ---
 
 ## 🚀 How to Use in Grasshopper
 
 1. Open **Rhinoceros 8** and launch **Grasshopper**.
-2. Add a **Python 3 Script** (or **GhPython Script**) component to the canvas.
-3. Double-click the component and paste the contents of [`corte_terraplenagem.py`](corte_terraplenagem.py) (or [`corte_arquitetonico.py`](corte_arquitetonico.py)).
+2. Add a **GhPython Script** (or **Python 3 Script**) component to your canvas.
+3. Choose the appropriate script for your workflow:
+   - For complete grading and earthwork: [`corte_terraplenagem_pt.py`](corte_terraplenagem_pt.py)
+   - For stormwater drainage network: [`corte_drenagem_pt.py`](corte_drenagem_pt.py)
 4. Configure component inputs:
-   - `Terrain` (or `Terreno`): Right-click -> **List Access** -> **Type Hint: GeometryBase** (or `Curve`).
-   - `SectionLines` (or `LinhasCorte`): Right-click -> **List Access** -> **Type Hint: Curve**.
-   - Other inputs set to **Item Access**.
-5. Connect your Rhino geometry to the inputs.
-6. Connect a **Panel** component to output **`f`** to inspect the calculation report.
-7. **Interactive Grade Drawing**:
-   - Draw a `Line` or `Polyline` directly over the 2D section in the Top viewport (or in 3D).
-   - Connect it to `GradingLine` (or `CurvaProjeto`). Earthwork volumes and 3D meshes update in real time.
-
----
-
-## 📚 Calculation Methodology & Standards
-
-Earthwork formulas and architectural graphic representations follow recognized civil engineering and surveying standards:
-
-- **ABNT NBR 6492**: Architectural Project Documentation (lines, conventions, coordinate axes, and elevation levels).
-- **AGPTEA / UFPR**: *Topografia: Cálculo de Volumes (Notas de Aula)* — Prof. Luís Augusto Koenig Veiga.
-  - [Download AGPTEA Technical Handout (PDF)](https://www.bibliotecaagptea.org.br/agricultura/topografia/livros/TOPOGRAFIA%20CALCULO%20DE%20VOLUMES%20NOTAS%20DE%20AULA.pdf)
+   - `Terrain` (`Terreno`): Right-click -> **List Access** -> **Type Hint: GeometryBase**.
+   - `SectionLines` (`LinhasCorte`): Right-click -> **List Access** -> **Type Hint: Curve**.
+   - `LinhaGuia`: Right-click -> **List Access** -> **Type Hint: Curve**.
+5. Connect your project curves and preview the real-time 3D models and 2D A0 sheets.
+6. Connect a **Panel** to `MemorialDrenagem` or `f` to verify structural calculations.
+7. To bake everything into organized Rhino layers, toggle `Bake = True`.
 
 ---
 
