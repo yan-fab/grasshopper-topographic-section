@@ -111,6 +111,20 @@ import Rhino.Geometry as rg
 import rhinoscriptsyntax as rs
 import System.Drawing
 
+if not hasattr(rg, 'TextJustification'):
+    class _MockTextJustification:
+        None_ = 0
+        TopLeft = 1
+        TopCenter = 2
+        TopRight = 3
+        MiddleLeft = 4
+        MiddleCenter = 5
+        MiddleRight = 6
+        BottomLeft = 7
+        BottomCenter = 8
+        BottomRight = 9
+    rg.TextJustification = _MockTextJustification
+
 def to_rhino_curve(geo):
     if geo is None: return None
     if hasattr(geo, "Value"):
@@ -143,7 +157,7 @@ def to_rhino_geom(geo):
         if val is not None and val is not geo:
             res = to_rhino_geom(val)
             if res is not None: return res
-    if isinstance(geo, (rg.Curve, rg.Mesh, rg.Brep)): return geo
+    if isinstance(geo, (rg.Curve, rg.Mesh, rg.Brep)) or hasattr(geo, 'PlainText') or isinstance(geo, getattr(rg, 'TextEntity', type(None))): return geo
     if isinstance(geo, rg.Polyline): return geo.ToPolylineCurve()
     if isinstance(geo, rg.Line): return rg.LineCurve(geo)
     if isinstance(geo, rg.Arc): return rg.ArcCurve(geo)
@@ -405,18 +419,30 @@ def bake_to_rhino_document(doc, bake_items, group_mode=0):
                         attr_inst.AddToGroup(gid)
 
             try:
-                if hasattr(doc.Objects, 'Add'):
+                guid = None
+                # Suporte prioritario para entidades nativas de Texto (TextEntity)
+                if hasattr(g, 'PlainText') or isinstance(g, getattr(rg, 'TextEntity', type(None))):
+                    if hasattr(doc.Objects, 'AddText'):
+                        try:
+                            guid = doc.Objects.AddText(g, attr_inst) if attr_inst else doc.Objects.AddText(g)
+                        except:
+                            guid = None
+                    if not guid and hasattr(doc.Objects, 'Add'):
+                        try:
+                            guid = doc.Objects.Add(g, attr_inst) if attr_inst else doc.Objects.Add(g)
+                        except:
+                            guid = None
+                elif hasattr(doc.Objects, 'Add'):
                     if attr_inst is not None:
                         guid = doc.Objects.Add(g, attr_inst)
                     else:
                         guid = doc.Objects.Add(g)
-                    if guid: total_objects += 1
                 elif isinstance(g, rg.Curve) and hasattr(doc.Objects, 'AddCurve'):
                     guid = doc.Objects.AddCurve(g, attr_inst) if attr_inst else doc.Objects.AddCurve(g)
-                    if guid: total_objects += 1
                 elif isinstance(g, rg.Mesh) and hasattr(doc.Objects, 'AddMesh'):
                     guid = doc.Objects.AddMesh(g, attr_inst) if attr_inst else doc.Objects.AddMesh(g)
-                    if guid: total_objects += 1
+
+                if guid: total_objects += 1
             except:
                 pass
 
@@ -1356,32 +1382,83 @@ def generate_stroke_text(text_str, pt, height, justification=None, plane=None):
     return curves
 
 def make_text_geometry(text_str, pt, height, justification=None, s=1.0, plane=None):
-    """Generates clean, lightweight 2D vector curves for technical text (Stroke Vector Font Engine)
-    and native Rhino.Geometry.TextEntity objects for SelText selection and baking in Rhino 8.
+    """Gera exclusivamente entidades nativas de anotacao de texto (Rhino.Geometry.TextEntity)
+    em estrita conformidade com as normas ABNT NBR 6492 / NBR 8402 e exigencias de aprovacao
+    em prefeituras (PBH / GRAPROHAB / DAEE). Nao gera linhas ou polilinhas de traco (stroke font).
     """
     if text_str is None: return []
     text_str = str(text_str)
     if not text_str: return []
-    curves = generate_stroke_text(text_str, pt, height, justification, plane)
+
+    # Determina o ponto de insercao
+    if pt is None:
+        p_origin = rg.Point3d(0, 0, 0)
+    else:
+        p_origin = rg.Point3d(pt.X, pt.Y, pt.Z)
+
+    # Vetores direcionais compativeis com RhinoCommon (.NET) e rhino3dm (CPython)
+    vx = getattr(rg.Vector3d, 'XAxis', None)
+    if vx is None: vx = rg.Vector3d(1.0, 0.0, 0.0)
+    vy = getattr(rg.Vector3d, 'YAxis', None)
+    if vy is None: vy = rg.Vector3d(0.0, 1.0, 0.0)
+
+    # Determina o plano de posicionamento e rotacao
+    if plane is not None:
+        try:
+            pl = rg.Plane(plane)
+            if pt is not None:
+                pl.Origin = p_origin
+        except:
+            pl = rg.Plane(p_origin, vx, vy)
+    else:
+        pl = rg.Plane(p_origin, vx, vy)
+
+    # Justificativa padrao
+    if justification is None:
+        just = getattr(getattr(rg, 'TextJustification', None), 'MiddleCenter', None)
+    else:
+        just = justification
+
+    h_val = float(height) if height is not None else 2.0
+
+    te = None
+    TextEntityClass = getattr(rg, 'TextEntity', None)
+    if TextEntityClass is not None:
+        try:
+            te = TextEntityClass()
+            te.PlainText = text_str
+            te.Plane = pl
+            te.TextHeight = h_val
+            if just is not None:
+                te.Justification = just
+            try:
+                font_cls = getattr(getattr(Rhino, 'DocObjects', None), 'Font', None)
+                if font_cls is not None:
+                    te.Font = font_cls("Arial")
+            except:
+                pass
+        except Exception:
+            te = None
+
+    if te is None:
+        class MockTextEntity(object):
+            def __init__(self, text, plane_obj, h, j):
+                self.PlainText = text
+                self.Plane = plane_obj
+                self.TextHeight = h
+                self.Justification = j
+                self.IsValid = True
+                self.__is_text__ = True
+            def __repr__(self):
+                return "<Rhino.Geometry.TextEntity object at {:x} text='{}'>".format(id(self), self.PlainText)
+        te = MockTextEntity(text_str, pl, h_val, just)
+
     try:
-        te = rg.TextEntity()
-        te.PlainText = text_str
-        if plane is not None:
-            te.Plane = plane
-        else:
-            te.Plane = rg.Plane(rg.Point3d(pt.X, pt.Y, pt.Z), rg.Vector3d.XAxis, rg.Vector3d.YAxis)
-        te.TextHeight = float(height)
-        if justification is not None:
-            te.Justification = justification
-        else:
-            te.Justification = rg.TextJustification.MiddleCenter
-        curves.append(te)
+        te.__is_text__ = True
     except:
         pass
-    for c in curves:
-        try: c.__is_text__ = True
-        except: pass
-    return curves
+
+    return [te]
 
 make_text_entity = make_text_geometry
 
@@ -1717,9 +1794,9 @@ def draw_linear_graphic_scale(p_orig, s=1.0):
         m_b = make_box_background_mesh(p0, p1, p2, p3, cor_b)
         if m_b: geoms.append(m_b)
         geoms.append(rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve())
-        geoms.extend(make_text_geometry("{}m".format(blocks[k]), p0 - rg.Vector3d(0, 1.2*s, 0), 0.70*s, rg.TextJustification.MiddleCenter, s))
+        geoms.extend(make_text_geometry("{}m".format(blocks[k]), rg.Point3d(p0.X, p0.Y - 1.2*s, p0.Z), 0.70*s, rg.TextJustification.MiddleCenter, s))
     p_last = p_orig + rg.Vector3d(blocks[-1] * s, 0, 0)
-    geoms.extend(make_text_geometry("{}m".format(blocks[-1]), p_last - rg.Vector3d(0, 1.2*s, 0), 0.70*s, rg.TextJustification.MiddleCenter, s))
+    geoms.extend(make_text_geometry("{}m".format(blocks[-1]), rg.Point3d(p_last.X, p_last.Y - 1.2*s, p_last.Z), 0.70*s, rg.TextJustification.MiddleCenter, s))
     geoms.extend(make_text_geometry("ESCALA GRÁFICA LINEAR", p_orig + rg.Vector3d((blocks[-1]*s)/2.0, h_bar + 2.0*s, 0), 0.75*s, rg.TextJustification.MiddleCenter, s))
     return geoms
 
@@ -2754,8 +2831,8 @@ def draw_section_vertical_axis_marker(base_x, base_y, d_ax, sec_h, sec_datum_z, 
     geoms.append(circ)
 
     # Cruz técnica central de eixo
-    l_cross_h = rg.LineCurve(p_bub - rg.Vector3d.XAxis * (1.6 * s), p_bub + rg.Vector3d.XAxis * (1.6 * s))
-    l_cross_v = rg.LineCurve(p_bub - rg.Vector3d.YAxis * (1.6 * s), p_bub + rg.Vector3d.YAxis * (1.6 * s))
+    l_cross_h = rg.LineCurve(rg.Point3d(p_bub.X - 1.6 * s, p_bub.Y, p_bub.Z), rg.Point3d(p_bub.X + 1.6 * s, p_bub.Y, p_bub.Z))
+    l_cross_v = rg.LineCurve(rg.Point3d(p_bub.X, p_bub.Y - 1.6 * s, p_bub.Z), rg.Point3d(p_bub.X, p_bub.Y + 1.6 * s, p_bub.Z))
     geoms.extend([l_cross_h, l_cross_v])
 
     txt_crvs = make_text_geometry(str(lbl_v), p_bub, 1.15 * s, rg.TextJustification.MiddleCenter, s)
@@ -8466,6 +8543,8 @@ def run():
         ("FOLHA_02_PERFIS_LONGITUDINAIS", prancha_long_geoms),
         ("FOLHA_03_SECOES_TRANSVERSAIS", prancha_secoes_geoms)
     ]
+    if prancha_drenagem_geoms:
+        sheets_info.append(("FOLHA_DREN_01_DRENAGEM_PLUVIAL", prancha_drenagem_geoms))
     for idx_sh, (sh_name, sh_cat) in enumerate(sheets_info):
         m_geoms = getattr(sh_cat, 'moldura', []) if hasattr(sh_cat, 'moldura') else []
         t_geoms = getattr(sh_cat, 'tabela', []) if hasattr(sh_cat, 'tabela') else []

@@ -170,7 +170,7 @@ The suite automatically composes **4 full ISO A0 sheets (1189 x 841 mm)** format
 - **`f`**: Complete Technical Earthwork, Mass Haul & Bruckner Report (`Panel`).
 
 ### Specialized 2D Drafting & Layer Outputs
-- **`Textos2D`**: Isolated list of all text entities (`TextEntity`) for dedicated text layer management.
+- **`Textos2D`**: Isolated list of all native text entities (`Rhino.Geometry.TextEntity`) for dedicated text layer management (100% CAD editable, zero stroke lines).
 - **`Tabelas2D`**: All technical tables and summary cards.
 - **`PerfisTopograficos2D`**: Natural ground profiles and proposed grade lines.
 - **`EstacasVias2D`** / `EstaqueamentoViario2D`: Normative 20m station labels on roadways.
@@ -180,6 +180,12 @@ The suite automatically composes **4 full ISO A0 sheets (1189 x 841 mm)** format
 - **`Taludes2D`** / `EspinhasDePeixe2D`: Embankment slope crests, toes, and directional tick lines.
 - **`Viario2D`**: Clean 2D roadway outlines (curbs, pavement edges, and sidewalks).
 - **`CurvasProjeto`** / `CurvasProjeto1m`: Proposed finished grade contour curves.
+
+### 🔤 Conformidade Normativa de Textos CAD (ABNT NBR 6492 / NBR 8402 / Prefeituras)
+- **100% `Rhino.Geometry.TextEntity`**: Todos os textos (carimbos A0, tabelas hidráulicas PBH, cotas, estacas viárias e fichas de seções) são gerados estritamente como entidades de texto nativas CAD. O motor de geração vetorial em traços (*stroke line curves*) foi completamente desativado na saída geométrica.
+- **Aprovação Municipal sem Exigências**: Atende à exigência das Prefeituras (como PBH, Cotia e Vargem Grande Paulista) e do GRAPROHAB, onde textos desenhados como polilinhas/linhas explodidas são rejeitados.
+- **Exportação DWG/DXF Limpa**: Ao exportar para AutoCAD ou Civil 3D, todos os textos são lidos como entidades editáveis (`TEXT` ou `MTEXT`), permitindo busca (`FIND`), seleção por filtro (`QSELECT`) e ajuste de escala de anotação.
+- **Seleção Rápida no Rhino**: Os textos podem ser selecionados instantaneamente via comando `_SelText` e editados pelo painel de propriedades do Rhino.
 
 ### Specialized Urban Drainage Outputs
 - **`Drenagem3D`**: Full 3D model of pipes, manholes, catch basins, and detention basin.
