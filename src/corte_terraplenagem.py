@@ -302,6 +302,9 @@ def get_or_create_layer(doc, layer_name, color=None):
             except: pass
         if idx >= 0:
             final_index = idx
+            if color is not None and hasattr(doc.Layers[idx], 'Color'):
+                try: doc.Layers[idx].Color = color
+                except: pass
             if hasattr(doc.Layers[idx], 'Id'): parent_id = doc.Layers[idx].Id
         else:
             try:
@@ -4503,12 +4506,16 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
 
     # Hachuras Nativas Rhino.Geometry.Hatch (CAD 100% Compativel com DWG) em vez de Mesh
     hachuras_sec = []
+    hachuras_corte_sec = []
+    hachuras_aterro_sec = []
     for poly_c in poligonos_corte_sec:
         h_c = create_cad_hatch(poly_c, color=cor_corte, pattern_name=padrao_hachura, scale=max(0.5, escala_hachura * 0.8 * s), rotation_deg=45.0)
+        hachuras_corte_sec.extend(h_c)
         hachuras_sec.extend(h_c)
 
     for poly_a in poligonos_aterro_sec:
         h_a = create_cad_hatch(poly_a, color=cor_aterro, pattern_name=padrao_hachura, scale=max(0.5, escala_hachura * 0.8 * s), rotation_deg=135.0)
+        hachuras_aterro_sec.extend(h_a)
         hachuras_sec.extend(h_a)
 
     geoms_2d.extend(hachuras_sec)
@@ -4628,6 +4635,8 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
         'tabela_geoms': sec_tabelas,
         'texto_geoms': sec_textos,
         'hachura_geoms': sec_hachuras,
+        'hachuras_corte': hachuras_corte_sec,
+        'hachuras_aterro': hachuras_aterro_sec,
         'poligonos_corte_2d': poligonos_corte_sec,
         'poligonos_aterro_2d': poligonos_aterro_sec,
         'quads_3d_corte': quads_3d_corte_sec,
@@ -4944,7 +4953,9 @@ def render_longitudinal_profile_with_guitarra(
         if crv_gr_2d and crv_gr_2d.IsValid:
             geoms_2d.append(crv_gr_2d)
 
-    # 5.1 Preenchimento de Corte e Aterro em Malha 2D (Hachura)
+    # 5.1 Preenchimento de Corte e Aterro em Malha 2D (Hachura Nativa CAD)
+    hachuras_corte_lng = []
+    hachuras_aterro_lng = []
     for i_poly in range(n_samples):
         p0_tn = pts_tn_2d[i_poly]
         p1_tn = pts_tn_2d[i_poly + 1]
@@ -4959,12 +4970,14 @@ def render_longitudinal_profile_with_guitarra(
             poly_c = rg.PolylineCurve([p0_tn, p1_tn, p1_gr, p0_gr, p0_tn])
             poligonos_corte_sec.append(poly_c)
             h_c = create_cad_hatch(poly_c, color=cor_corte, pattern_name=padrao_hachura, scale=max(0.5, escala_hachura * 0.8 * s), rotation_deg=45.0)
+            hachuras_corte_lng.extend(h_c)
             geoms_2d.extend(h_c)
         elif diff0 < -0.001 and diff1 < -0.001:
             # Aterro puro com Hachura Nativa Rhino.Geometry.Hatch (CAD DWG)
             poly_a = rg.PolylineCurve([p0_gr, p1_gr, p1_tn, p0_tn, p0_gr])
             poligonos_aterro_sec.append(poly_a)
             h_a = create_cad_hatch(poly_a, color=cor_aterro, pattern_name=padrao_hachura, scale=max(0.5, escala_hachura * 0.8 * s), rotation_deg=135.0)
+            hachuras_aterro_lng.extend(h_a)
             geoms_2d.extend(h_a)
 
     # 5.2 Interseções com as Seções Transversais (Seções A a J)
@@ -5069,6 +5082,8 @@ def render_longitudinal_profile_with_guitarra(
         'tabela_geoms': v_tabelas,
         'texto_geoms': v_textos,
         'hachura_geoms': v_hachuras,
+        'hachuras_corte': hachuras_corte_lng,
+        'hachuras_aterro': hachuras_aterro_lng,
         'poligonos_corte_2d': poligonos_corte_sec,
         'poligonos_aterro_2d': poligonos_aterro_sec,
         'quads_3d_corte': quads_3d_corte_sec,
@@ -8173,9 +8188,9 @@ def run():
         modelo_3d_completo.append(mesh_terreno_projetado)
 
     # 9.1 Hachuras Nativas de Corte e Aterro (Grading 2D) com Rhino.Geometry.Hatch (CAD 100% Compativel)
-    cor_corte_2d  = System.Drawing.Color.FromArgb(170, 230, 92, 0)
-    cor_aterro_2d = System.Drawing.Color.FromArgb(170, 46, 139, 87)
-    cor_neutro_2d = System.Drawing.Color.FromArgb(140, 220, 220, 100)
+    cor_corte_2d  = System.Drawing.Color.FromArgb(255, 230, 92, 0) # Laranja vibrante NBR de Corte (CAD/DWG)
+    cor_aterro_2d = System.Drawing.Color.FromArgb(255, 46, 139, 87) # Verde floresta NBR de Aterro (CAD/DWG)
+    cor_neutro_2d = System.Drawing.Color.FromArgb(255, 220, 220, 100)
 
     # Extracao de contornos fechados (perimetros externos) a partir dos quadrilateros do grading
     contornos_corte_2d = extract_boundary_curves_from_quads(quads_2d_corte, tol=0.10)
@@ -8822,12 +8837,19 @@ def run():
     all_tabelas_2d = []
     all_perfis_2d = []
     all_hachuras_secoes_2d = []
+    all_hachuras_secoes_corte_2d = []
+    all_hachuras_secoes_aterro_2d = []
     all_hachuras_perfis_2d = []
+    all_hachuras_perfis_corte_2d = []
+    all_hachuras_perfis_aterro_2d = []
 
     tree_secoes_dict = {}
     tree_long_dict = {}
     tree_pranchas_dict = {}
     bake_items = []
+
+    cor_corte_padrao = System.Drawing.Color.FromArgb(255, 230, 92, 0)
+    cor_aterro_padrao = System.Drawing.Color.FromArgb(255, 46, 139, 87)
 
     # 10.1 Seções Transversais (Folha 03/03)
     for idx_s, r_sec in enumerate(res_secoes_info):
@@ -8836,25 +8858,35 @@ def run():
         t_geoms = r_sec.get('tabela_geoms', [])
         x_geoms = r_sec.get('texto_geoms', [])
         h_geoms_s = r_sec.get('hachura_geoms', [])
+        h_corte_s = r_sec.get('hachuras_corte', [])
+        h_aterro_s = r_sec.get('hachuras_aterro', [])
 
         all_perfis_2d.extend(p_geoms)
         all_tabelas_2d.extend(t_geoms)
         all_textos_2d.extend(x_geoms)
         if h_geoms_s:
             all_hachuras_secoes_2d.extend(h_geoms_s)
+        if h_corte_s:
+            all_hachuras_secoes_corte_2d.extend(h_corte_s)
+        if h_aterro_s:
+            all_hachuras_secoes_aterro_2d.extend(h_aterro_s)
 
         tree_secoes_dict[(idx_s, 0)] = p_geoms
         tree_secoes_dict[(idx_s, 1)] = t_geoms
         tree_secoes_dict[(idx_s, 2)] = x_geoms
-        if h_geoms_s:
-            tree_secoes_dict[(idx_s, 3)] = h_geoms_s
+        if h_corte_s:
+            tree_secoes_dict[(idx_s, 3)] = h_corte_s
+        if h_aterro_s:
+            tree_secoes_dict[(idx_s, 4)] = h_aterro_s
 
         sec_parent = "SECAO_{}_COMPLETA".format(lbl)
         bake_items.append({'group_name': "SECAO_{}_PERFIL_TOPOGRAFICO".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::PERFIS", 'geoms': p_geoms})
         bake_items.append({'group_name': "SECAO_{}_TABELA_RESUMO".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::TABELAS", 'geoms': t_geoms})
         bake_items.append({'group_name': "SECAO_{}_TEXTOS_COTAS".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::TEXTOS", 'geoms': x_geoms})
-        if h_geoms_s:
-            bake_items.append({'group_name': "SECAO_{}_HACHURAS".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::HACHURAS", 'geoms': h_geoms_s})
+        if h_corte_s:
+            bake_items.append({'group_name': "SECAO_{}_HACHURAS_CORTE".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::HACHURAS_CORTE", 'geoms': h_corte_s, 'color': cor_corte_padrao})
+        if h_aterro_s:
+            bake_items.append({'group_name': "SECAO_{}_HACHURAS_ATERRO".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::HACHURAS_ATERRO", 'geoms': h_aterro_s, 'color': cor_aterro_padrao})
 
     # 10.2 Perfis Longitudinais (Folha 02/03)
     for idx_v, r_lng in enumerate(res_perfis_v):
@@ -8863,26 +8895,38 @@ def run():
         t_geoms_v = r_lng.get('tabela_geoms', [])
         x_geoms_v = r_lng.get('texto_geoms', [])
         h_geoms_v = r_lng.get('hachura_geoms', [])
+        h_corte_v = r_lng.get('hachuras_corte', [])
+        h_aterro_v = r_lng.get('hachuras_aterro', [])
 
         all_perfis_2d.extend(p_geoms_v)
         all_tabelas_2d.extend(t_geoms_v)
         all_textos_2d.extend(x_geoms_v)
         if h_geoms_v:
             all_hachuras_perfis_2d.extend(h_geoms_v)
+        if h_corte_v:
+            all_hachuras_perfis_corte_2d.extend(h_corte_v)
+        if h_aterro_v:
+            all_hachuras_perfis_aterro_2d.extend(h_aterro_v)
 
         tree_long_dict[(idx_v, 0)] = p_geoms_v
         tree_long_dict[(idx_v, 1)] = t_geoms_v
         tree_long_dict[(idx_v, 2)] = x_geoms_v
-        if h_geoms_v:
-            tree_long_dict[(idx_v, 3)] = h_geoms_v
+        if h_corte_v:
+            tree_long_dict[(idx_v, 3)] = h_corte_v
+        if h_aterro_v:
+            tree_long_dict[(idx_v, 4)] = h_aterro_v
 
         lng_parent = "PERFIL_LONGITUDINAL_{}_COMPLETO".format(lbl_v)
         bake_items.append({'group_name': "PERFIL_{}_TOPOGRAFIA".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::GEOMETRIA", 'geoms': p_geoms_v})
         bake_items.append({'group_name': "PERFIL_{}_GUITARRA".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::GUITARRA", 'geoms': t_geoms_v})
         bake_items.append({'group_name': "PERFIL_{}_TEXTOS_DADOS".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::TEXTOS", 'geoms': x_geoms_v})
-        if h_geoms_v:
-            bake_items.append({'group_name': "PERFIL_{}_HACHURAS".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::HACHURAS", 'geoms': h_geoms_v})
+        if h_corte_v:
+            bake_items.append({'group_name': "PERFIL_{}_HACHURAS_CORTE".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::HACHURAS_CORTE", 'geoms': h_corte_v, 'color': cor_corte_padrao})
+        if h_aterro_v:
+            bake_items.append({'group_name': "PERFIL_{}_HACHURAS_ATERRO".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::HACHURAS_ATERRO", 'geoms': h_aterro_v, 'color': cor_aterro_padrao})
 
+    all_hachuras_todas_corte_2d = hachuras_corte_geoms + all_hachuras_secoes_corte_2d + all_hachuras_perfis_corte_2d
+    all_hachuras_todas_aterro_2d = hachuras_aterro_geoms + all_hachuras_secoes_aterro_2d + all_hachuras_perfis_aterro_2d
     all_hachuras_todas_2d = hachuras_grading_geoms + all_hachuras_secoes_2d + all_hachuras_perfis_2d
 
     # 10.3 Pranchas Oficiais A0 (Folhas 01, 02 e 03)
@@ -8985,15 +9029,27 @@ def run():
     globals()['StatusBake'] = bake_msg
 
     # Saídas Nativas Especializadas de Hachuras CAD (Rhino.Geometry.Hatch)
+    cores_hachuras_grading = [cor_corte_padrao] * len(hachuras_corte_geoms) + [cor_aterro_padrao] * len(hachuras_aterro_geoms)
+    globals()['CorCorte'] = cor_corte_padrao
+    globals()['CorAterro'] = cor_aterro_padrao
+    globals()['CoresHachurasGrading'] = cores_hachuras_grading
+    globals()['CoresHachurasTodas'] = [cor_corte_padrao] * len(all_hachuras_todas_corte_2d) + [cor_aterro_padrao] * len(all_hachuras_todas_aterro_2d)
+
     globals()['HachurasSecoes2D'] = all_hachuras_secoes_2d
     globals()['HachurasSecoes'] = all_hachuras_secoes_2d
     globals()['HachurasTransversais2D'] = all_hachuras_secoes_2d
+    globals()['HachurasSecoesCorte2D'] = all_hachuras_secoes_corte_2d
+    globals()['HachurasSecoesAterro2D'] = all_hachuras_secoes_aterro_2d
     globals()['HachurasPerfis2D'] = all_hachuras_perfis_2d
     globals()['HachurasPerfis'] = all_hachuras_perfis_2d
     globals()['HachurasLongitudinais2D'] = all_hachuras_perfis_2d
+    globals()['HachurasPerfisCorte2D'] = all_hachuras_perfis_corte_2d
+    globals()['HachurasPerfisAterro2D'] = all_hachuras_perfis_aterro_2d
     globals()['HachurasTodas2D'] = all_hachuras_todas_2d
     globals()['HachurasCompletas2D'] = all_hachuras_todas_2d
     globals()['Hachuras2D'] = all_hachuras_todas_2d
+    globals()['HachurasTodasCorte2D'] = all_hachuras_todas_corte_2d
+    globals()['HachurasTodasAterro2D'] = all_hachuras_todas_aterro_2d
 
     # Saídas Especializadas para Declividade dos Lotes (GRAPROHAB)
     globals()['AnaliseLotes2D'] = lotes_analysis.get('geoms_2d', [])
