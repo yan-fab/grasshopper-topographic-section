@@ -248,18 +248,20 @@ def to_list(val):
 class CategorizedGeomList(list):
     """
     Subclass of Python list carrying categorized graphic elements:
-    - perfil: topographic profiles, grade curves, datum lines, cut/fill meshes, axis lines
+    - perfil: topographic profiles, grade curves, datum lines, axis lines
     - tabela: table frames, dividers, cells, summary cards, guitarras, carimbos
-    - textos: text entities and stroke font annotations
+    - textos: native TextEntity objects
     - moldura: sheet borders, margins, fold marks
+    - hachuras: native Rhino.Geometry.Hatch objects
     Behaves 100% as a normal Python list, maintaining complete backward compatibility.
     """
-    def __init__(self, all_geoms=None, perfil=None, tabela=None, textos=None, moldura=None):
+    def __init__(self, all_geoms=None, perfil=None, tabela=None, textos=None, moldura=None, hachuras=None):
         super(CategorizedGeomList, self).__init__(all_geoms or [])
         self.perfil = list(perfil) if perfil else []
         self.tabela = list(tabela) if tabela else []
         self.textos = list(textos) if textos else []
         self.moldura = list(moldura) if moldura else []
+        self.hachuras = list(hachuras) if hachuras else []
 
 def to_gh_data_tree(path_to_items_dict):
     """
@@ -432,6 +434,18 @@ def bake_to_rhino_document(doc, bake_items, group_mode=0):
                             guid = doc.Objects.Add(g, attr_inst) if attr_inst else doc.Objects.Add(g)
                         except:
                             guid = None
+                # Suporte prioritario para entidades nativas de Hachura CAD (Hatch)
+                elif getattr(g, '__is_hatch__', False) or isinstance(g, getattr(rg, 'Hatch', type(None))) or hasattr(g, 'PatternIndex'):
+                    if hasattr(doc.Objects, 'AddHatch'):
+                        try:
+                            guid = doc.Objects.AddHatch(g, attr_inst) if attr_inst else doc.Objects.AddHatch(g)
+                        except:
+                            guid = None
+                    if not guid and hasattr(doc.Objects, 'Add'):
+                        try:
+                            guid = doc.Objects.Add(g, attr_inst) if attr_inst else doc.Objects.Add(g)
+                        except:
+                            guid = None
                 elif hasattr(doc.Objects, 'Add'):
                     if attr_inst is not None:
                         guid = doc.Objects.Add(g, attr_inst)
@@ -482,13 +496,20 @@ def make_filled_mesh_tri(v0, v1, v2, color=None):
         return None
     if v0.DistanceTo(v1) < 1e-4 or v1.DistanceTo(v2) < 1e-4 or v2.DistanceTo(v0) < 1e-4:
         return None
-    cross = rg.Vector3d.CrossProduct(v1 - v0, v2 - v0)
-    if cross.Length < 1e-6:
+    vec1 = rg.Vector3d(v1.X - v0.X, v1.Y - v0.Y, v1.Z - v0.Z)
+    vec2 = rg.Vector3d(v2.X - v0.X, v2.Y - v0.Y, v2.Z - v0.Z)
+    cross = rg.Vector3d.CrossProduct(vec1, vec2)
+    if (cross.X * cross.X + cross.Y * cross.Y + cross.Z * cross.Z) < 1e-12:
         return None
     m = rg.Mesh()
-    m.Vertices.Add(v0)
-    m.Vertices.Add(v1)
-    m.Vertices.Add(v2)
+    try:
+        m.Vertices.Add(v0)
+        m.Vertices.Add(v1)
+        m.Vertices.Add(v2)
+    except:
+        m.Vertices.Add(float(v0.X), float(v0.Y), float(getattr(v0, 'Z', 0.0)))
+        m.Vertices.Add(float(v1.X), float(v1.Y), float(getattr(v1, 'Z', 0.0)))
+        m.Vertices.Add(float(v2.X), float(v2.Y), float(getattr(v2, 'Z', 0.0)))
     m.Faces.AddFace(0, 1, 2)
     if color:
         m.VertexColors.Add(color)
@@ -539,16 +560,23 @@ def create_colored_mesh(quads_pts, color):
             return False
         if v0.DistanceTo(v1) < 1e-4 or v1.DistanceTo(v2) < 1e-4 or v2.DistanceTo(v0) < 1e-4:
             return False
-        cross = rg.Vector3d.CrossProduct(v1 - v0, v2 - v0)
-        if cross.Length < 1e-6:
+        vec1 = rg.Vector3d(v1.X - v0.X, v1.Y - v0.Y, v1.Z - v0.Z)
+        vec2 = rg.Vector3d(v2.X - v0.X, v2.Y - v0.Y, v2.Z - v0.Z)
+        cross = rg.Vector3d.CrossProduct(vec1, vec2)
+        if (cross.X * cross.X + cross.Y * cross.Y + cross.Z * cross.Z) < 1e-12:
             return False
         if abs(v0.Z) < 1e-3 and abs(v1.Z) < 1e-3 and abs(v2.Z) < 1e-3:
             if cross.Z < 0.0:
                 v1, v2 = v2, v1
         idx = m.Vertices.Count
-        m.Vertices.Add(v0)
-        m.Vertices.Add(v1)
-        m.Vertices.Add(v2)
+        try:
+            m.Vertices.Add(v0)
+            m.Vertices.Add(v1)
+            m.Vertices.Add(v2)
+        except:
+            m.Vertices.Add(float(v0.X), float(v0.Y), float(getattr(v0, 'Z', 0.0)))
+            m.Vertices.Add(float(v1.X), float(v1.Y), float(getattr(v1, 'Z', 0.0)))
+            m.Vertices.Add(float(v2.X), float(v2.Y), float(getattr(v2, 'Z', 0.0)))
         m.Faces.AddFace(idx, idx + 1, idx + 2)
         if color:
             m.VertexColors.Add(color)
@@ -593,6 +621,273 @@ def create_colored_mesh(quads_pts, color):
         return None
 
     return m
+
+class MockHatch(object):
+    """Fallback mock for Rhino.Geometry.Hatch in non-Rhino / standalone test environments."""
+    def __init__(self, curve=None, pattern_index=0, rotation=0.0, scale=1.0, color=None):
+        self.Curve = curve
+        self.PatternIndex = pattern_index
+        self.PatternRotation = rotation
+        self.PatternScale = scale
+        self.Color = color
+        self.IsValid = True
+        self.__is_hatch__ = True
+        self._user_strings = {}
+
+    def SetUserString(self, k, v):
+        self._user_strings[str(k)] = str(v)
+
+    def GetUserString(self, k):
+        return self._user_strings.get(str(k), "")
+
+    def __repr__(self):
+        return "<Rhino.Geometry.Hatch pattern={} rot={:.1f}deg scale={}>".format(
+            self.PatternIndex, math.degrees(self.PatternRotation), self.PatternScale
+        )
+
+def create_cad_hatch(closed_curve_or_curves, color=None, pattern_name="ANSI31", scale=1.0, rotation_deg=45.0, tolerance=0.01):
+    """
+    Cria entidades nativas Rhino.Geometry.Hatch a partir de curvas fechadas planares ou polilinhas.
+    Elimina o uso de malhas (Mesh) e linhas avulsas para representacao de hachuras, gerando objetos
+    nativos HATCH do Rhino e compativeis com entidades HATCH do AutoCAD/DWG para aprovacao em orgaos publicos.
+    """
+    if closed_curve_or_curves is None:
+        return []
+
+    raw_curves = []
+    if isinstance(closed_curve_or_curves, (list, tuple)):
+        if closed_curve_or_curves and hasattr(closed_curve_or_curves[0], 'X') and hasattr(closed_curve_or_curves[0], 'Y'):
+            pts = list(closed_curve_or_curves)
+            if pts[0].DistanceTo(pts[-1]) > 1e-4:
+                pts.append(pts[0])
+            if len(pts) >= 4:
+                poly = rg.Polyline(pts)
+                raw_curves.append(rg.PolylineCurve(poly))
+        else:
+            for item in closed_curve_or_curves:
+                if item is None: continue
+                if isinstance(item, getattr(rg, 'Polyline', type(None))):
+                    raw_curves.append(rg.PolylineCurve(item))
+                elif isinstance(item, getattr(rg, 'Curve', type(None))):
+                    raw_curves.append(item)
+    elif isinstance(closed_curve_or_curves, getattr(rg, 'Polyline', type(None))):
+        raw_curves.append(rg.PolylineCurve(closed_curve_or_curves))
+    elif isinstance(closed_curve_or_curves, getattr(rg, 'Curve', type(None))):
+        raw_curves.append(closed_curve_or_curves)
+
+    if not raw_curves:
+        return []
+
+    curves = []
+    for crv in raw_curves:
+        if crv is None: continue
+        if hasattr(crv, 'IsClosed') and not crv.IsClosed:
+            try:
+                crv = crv.DuplicateCurve() if hasattr(crv, 'DuplicateCurve') else crv
+                if hasattr(crv, 'MakeClosed'):
+                    crv.MakeClosed(tolerance)
+            except:
+                pass
+        curves.append(crv)
+
+    if not curves:
+        return []
+
+    pat_idx = 0
+    try:
+        import Rhino
+        doc = getattr(Rhino, 'RhinoDoc', None)
+        active_doc = getattr(doc, 'ActiveDoc', None) if doc else None
+        if active_doc and hasattr(active_doc, 'HatchPatterns') and active_doc.HatchPatterns:
+            if pattern_name:
+                idx = active_doc.HatchPatterns.Find(pattern_name, True)
+                if idx >= 0:
+                    pat_idx = idx
+                elif str(pattern_name).upper() == "SOLID":
+                    idx_s = active_doc.HatchPatterns.Find("Solid", True)
+                    if idx_s >= 0: pat_idx = idx_s
+                else:
+                    for cand in ["ANSI31", "Hatch1", "Lines", "Grid", "Solid"]:
+                        idx_c = active_doc.HatchPatterns.Find(cand, True)
+                        if idx_c >= 0:
+                            pat_idx = idx_c
+                            break
+    except:
+        pass
+
+    rot_rad = math.radians(rotation_deg) if rotation_deg is not None else 0.0
+    s_val = float(scale) if scale is not None and scale > 0.0 else 1.0
+
+    all_hatches = []
+    hatch_cls = getattr(rg, 'Hatch', None)
+
+    for c in curves:
+        hatches_for_c = []
+        if hatch_cls and hasattr(hatch_cls, 'Create'):
+            try:
+                res = hatch_cls.Create(c, pat_idx, rot_rad, s_val, tolerance)
+                if res:
+                    if hasattr(res, '__iter__') and not isinstance(res, (str, bytes)):
+                        hatches_for_c.extend(list(res))
+                    else:
+                        hatches_for_c.append(res)
+            except:
+                try:
+                    res = hatch_cls.Create(c, pat_idx, rot_rad, s_val)
+                    if res:
+                        if hasattr(res, '__iter__') and not isinstance(res, (str, bytes)):
+                            hatches_for_c.extend(list(res))
+                        else:
+                            hatches_for_c.append(res)
+                except:
+                    pass
+
+        if not hatches_for_c:
+            if hatch_cls:
+                try:
+                    h = hatch_cls()
+                    if hasattr(h, 'PatternIndex'): h.PatternIndex = pat_idx
+                    if hasattr(h, 'PatternRotation'): h.PatternRotation = rot_rad
+                    if hasattr(h, 'PatternScale'): h.PatternScale = s_val
+                    if hasattr(c, 'PointAtStart') and hasattr(h, 'BasePoint'):
+                        h.BasePoint = c.PointAtStart
+                    setattr(h, '__curve__', c)
+                    setattr(h, '__color__', color)
+                    setattr(h, '__is_hatch__', True)
+                    hatches_for_c.append(h)
+                except:
+                    pass
+            if not hatches_for_c:
+                h = MockHatch(curve=c, pattern_index=pat_idx, rotation=rot_rad, scale=s_val, color=color)
+                hatches_for_c.append(h)
+
+        for h in hatches_for_c:
+            setattr(h, '__is_hatch__', True)
+            setattr(h, '__curve__', c)
+            if color is not None:
+                setattr(h, '__color__', color)
+                if hasattr(h, 'SetUserString'):
+                    try:
+                        h.SetUserString("Color", str(color))
+                    except:
+                        pass
+            all_hatches.append(h)
+
+    return all_hatches
+
+def extract_boundary_curves_from_quads(quads, tol=0.10):
+    """
+    Extrai lacos fechados de borda externa/interna a partir de uma malha 2D de quadrilateros.
+    Costura arestas compartilhadas e retorna curvas fechadas perfeitas (rg.PolylineCurve)
+    para alimentar a criacao de entidades nativas Rhino.Geometry.Hatch.
+    """
+    if not quads:
+        return []
+
+    # 1. Tenta RhinoCommon Mesh GetNakedEdges se disponivel no ambiente
+    try:
+        m_temp = rg.Mesh()
+        for q in quads:
+            if q and len(q) >= 4:
+                i0 = m_temp.Vertices.Add(float(q[0].X), float(q[0].Y), 0.0)
+                i1 = m_temp.Vertices.Add(float(q[1].X), float(q[1].Y), 0.0)
+                i2 = m_temp.Vertices.Add(float(q[2].X), float(q[2].Y), 0.0)
+                i3 = m_temp.Vertices.Add(float(q[3].X), float(q[3].Y), 0.0)
+                m_temp.Faces.AddFace(i0, i1, i2, i3)
+        if hasattr(m_temp, 'Weld'):
+            try: m_temp.Weld(0.40)
+            except: pass
+        if hasattr(m_temp, 'Compact'):
+            try: m_temp.Compact()
+            except: pass
+        if hasattr(m_temp, 'GetNakedEdges'):
+            naked_polys = m_temp.GetNakedEdges()
+            if naked_polys:
+                mesh_loops = []
+                for np in naked_polys:
+                    if np and np.Count >= 3:
+                        poly_c = rg.Polyline(np)
+                        if not poly_c.IsClosed and poly_c[0].DistanceTo(poly_c[-1]) < tol * 5.0:
+                            poly_c.Add(poly_c[0])
+                        if poly_c.IsClosed:
+                            mesh_loops.append(rg.PolylineCurve(poly_c))
+                if mesh_loops:
+                    return mesh_loops
+    except:
+        pass
+
+    # 2. Algoritmo topologico em Python puro (independente de C++ / RhinoCommon)
+    def pt_key(pt):
+        return (round(float(pt.X) / tol) * tol, round(float(pt.Y) / tol) * tol)
+
+    edge_count = {}
+    edges = []
+
+    for q in quads:
+        if not q or len(q) < 4:
+            continue
+        pts = [q[0], q[1], q[2], q[3]]
+        for i in range(4):
+            pA = pts[i]
+            pB = pts[(i + 1) % 4]
+            kA = pt_key(pA)
+            kB = pt_key(pB)
+            if kA == kB:
+                continue
+            canonical = (min(kA, kB), max(kA, kB))
+            edge_count[canonical] = edge_count.get(canonical, 0) + 1
+            edges.append((kA, kB, pA, pB, canonical))
+
+    boundary_directed = []
+    for kA, kB, pA, pB, canonical in edges:
+        if edge_count.get(canonical, 0) == 1:
+            boundary_directed.append((kA, kB, pA, pB))
+
+    adj = {}
+    for kA, kB, pA, pB in boundary_directed:
+        if kA not in adj:
+            adj[kA] = []
+        adj[kA].append((kB, pA, pB))
+
+    loops = []
+    visited_edges = set()
+
+    for kA, kB, pA, pB in boundary_directed:
+        edge_id = (kA, kB)
+        if edge_id in visited_edges:
+            continue
+        loop_pts = [pA]
+        curr_k = kB
+        visited_edges.add(edge_id)
+
+        step = 0
+        max_steps = len(boundary_directed) + 30
+        while step < max_steps:
+            step += 1
+            candidates = [nxt for nxt in adj.get(curr_k, []) if (curr_k, nxt[0]) not in visited_edges]
+            if not candidates:
+                break
+            nxt_edge = candidates[0]
+            nxt_k, npA, npB = nxt_edge
+            visited_edges.add((curr_k, nxt_k))
+            loop_pts.append(npA)
+            curr_k = nxt_k
+            if curr_k == pt_key(loop_pts[0]):
+                loop_pts.append(loop_pts[0])
+                break
+
+        if len(loop_pts) >= 4 and loop_pts[0].DistanceTo(loop_pts[-1]) < tol * 4.0:
+            poly = rg.Polyline(loop_pts)
+            loops.append(rg.PolylineCurve(poly))
+
+    # 3. Fallback: contorno de cada quadrilatero se nenhum laco foi fechado
+    if not loops:
+        for q in quads:
+            if q and len(q) >= 4:
+                poly = rg.Polyline([q[0], q[1], q[2], q[3], q[0]])
+                loops.append(rg.PolylineCurve(poly))
+
+    return loops
 
 # =============================================================================
 # MOTOR DE VIÁRIO E TRAFEGABILIDADE (VIÁRIO CARROÇÁVEL NBR / DNIT)
@@ -4040,7 +4335,7 @@ def evaluate_section_data(crv_corte, geoms_terreno, curva_greide_in, raw_nivel_p
 # MAIN COORDINATOR: MULTI-AXIS, ALIGNMENT, VOLUMES AND MASS HAUL BALANCE
 # =============================================================================
 
-def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, cor_corte, cor_aterro, crv_aln_3d=None, is_longitudinal=False, axis_title_prefix="SEÇÃO "):
+def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, cor_corte, cor_aterro, crv_aln_3d=None, is_longitudinal=False, axis_title_prefix="SEÇÃO ", padrao_hachura="ANSI31", escala_hachura=1.0):
     """
     Renders all 2D graphic elements and 3D geometries of an individual section
     (either cross section A, B, C... or longitudinal 1, 2, 3...).
@@ -4206,10 +4501,17 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
             poly_a = make_safe_closed_polyline(pts_poly)
             if poly_a: poligonos_aterro_sec.append(poly_a)
 
-    m_c = create_colored_mesh(quads_corte, cor_corte)
-    m_a = create_colored_mesh(quads_aterro, cor_aterro)
-    if m_c and getattr(m_c, 'IsValid', False): geoms_2d.append(m_c)
-    if m_a and getattr(m_a, 'IsValid', False): geoms_2d.append(m_a)
+    # Hachuras Nativas Rhino.Geometry.Hatch (CAD 100% Compativel com DWG) em vez de Mesh
+    hachuras_sec = []
+    for poly_c in poligonos_corte_sec:
+        h_c = create_cad_hatch(poly_c, color=cor_corte, pattern_name=padrao_hachura, scale=max(0.5, escala_hachura * 0.8 * s), rotation_deg=45.0)
+        hachuras_sec.extend(h_c)
+
+    for poly_a in poligonos_aterro_sec:
+        h_a = create_cad_hatch(poly_a, color=cor_aterro, pattern_name=padrao_hachura, scale=max(0.5, escala_hachura * 0.8 * s), rotation_deg=135.0)
+        hachuras_sec.extend(h_a)
+
+    geoms_2d.extend(hachuras_sec)
 
     # Cross-Axis Extension Lines & NBR Identification Bubbles
     for (d_ax, idx_cross, lbl_cross) in s_data.get('eixos_secao', []):
@@ -4302,25 +4604,30 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
     sec_perfis = []
     sec_tabelas = []
     sec_textos = []
+    sec_hachuras = []
     for g in geoms_2d:
         if isinstance(g, CategorizedGeomList):
             sec_perfis.extend(g.perfil)
             sec_tabelas.extend(g.tabela)
             sec_textos.extend(g.textos)
+            sec_hachuras.extend(getattr(g, 'hachuras', []))
         elif getattr(g, '__is_text__', False) or isinstance(g, getattr(rg, 'TextEntity', type(None))):
             sec_textos.append(g)
+        elif getattr(g, '__is_hatch__', False) or isinstance(g, getattr(rg, 'Hatch', type(None))):
+            sec_hachuras.append(g)
         elif g in side_card_geoms or (isinstance(side_card_geoms, CategorizedGeomList) and g in side_card_geoms):
             sec_tabelas.append(g)
         else:
             sec_perfis.append(g)
 
-    cat_geoms_2d = CategorizedGeomList(geoms_2d, perfil=sec_perfis, tabela=sec_tabelas, textos=sec_textos)
+    cat_geoms_2d = CategorizedGeomList(geoms_2d, perfil=sec_perfis, tabela=sec_tabelas, textos=sec_textos, hachuras=sec_hachuras)
 
     return {
         'geoms_2d': cat_geoms_2d,
         'perfil_geoms': sec_perfis,
         'tabela_geoms': sec_tabelas,
         'texto_geoms': sec_textos,
+        'hachura_geoms': sec_hachuras,
         'poligonos_corte_2d': poligonos_corte_sec,
         'poligonos_aterro_2d': poligonos_aterro_sec,
         'quads_3d_corte': quads_3d_corte_sec,
@@ -4334,7 +4641,8 @@ def render_single_section_2d_and_3d(s_data, lbl, base_x, base_y, s, modo_cotas, 
 
 def render_longitudinal_profile_with_guitarra(
     s_data_v, lbl_v, base_x, base_y, s=1.0, ev=10.0, step_estaca=20.0,
-    cor_corte=None, cor_aterro=None, crv_aln_3d_v=None, axis_title_prefix="EIXO "
+    cor_corte=None, cor_aterro=None, crv_aln_3d_v=None, axis_title_prefix="EIXO ",
+    padrao_hachura="ANSI31", escala_hachura=1.0
 ):
     """
     Renders an executive 2D longitudinal roadway profile with vertical exaggeration Ev = 10.0
@@ -4647,35 +4955,17 @@ def render_longitudinal_profile_with_guitarra(
         diff1 = p1_tn.Y - p1_gr.Y
 
         if diff0 > 0.001 and diff1 > 0.001:
-            # Corte puro (orientacao anti-horaria para normal +Z)
-            m_c = rg.Mesh()
-            m_c.Vertices.Add(p0_gr.X, p0_gr.Y, 0.0)
-            m_c.Vertices.Add(p1_gr.X, p1_gr.Y, 0.0)
-            m_c.Vertices.Add(p1_tn.X, p1_tn.Y, 0.0)
-            m_c.Vertices.Add(p0_tn.X, p0_tn.Y, 0.0)
-            m_c.Faces.AddFace(0, 1, 2, 3)
-            for _ in range(4): m_c.VertexColors.Add(cor_corte)
-            try: m_c.Normals.ComputeNormals()
-            except: pass
-            m_c.Compact()
-            geoms_2d.append(m_c)
+            # Corte puro com Hachura Nativa Rhino.Geometry.Hatch (CAD DWG)
             poly_c = rg.PolylineCurve([p0_tn, p1_tn, p1_gr, p0_gr, p0_tn])
             poligonos_corte_sec.append(poly_c)
+            h_c = create_cad_hatch(poly_c, color=cor_corte, pattern_name=padrao_hachura, scale=max(0.5, escala_hachura * 0.8 * s), rotation_deg=45.0)
+            geoms_2d.extend(h_c)
         elif diff0 < -0.001 and diff1 < -0.001:
-            # Aterro puro (orientacao anti-horaria para normal +Z)
-            m_a = rg.Mesh()
-            m_a.Vertices.Add(p0_tn.X, p0_tn.Y, 0.0)
-            m_a.Vertices.Add(p1_tn.X, p1_tn.Y, 0.0)
-            m_a.Vertices.Add(p1_gr.X, p1_gr.Y, 0.0)
-            m_a.Vertices.Add(p0_gr.X, p0_gr.Y, 0.0)
-            m_a.Faces.AddFace(0, 1, 2, 3)
-            for _ in range(4): m_a.VertexColors.Add(cor_aterro)
-            try: m_a.Normals.ComputeNormals()
-            except: pass
-            m_a.Compact()
-            geoms_2d.append(m_a)
+            # Aterro puro com Hachura Nativa Rhino.Geometry.Hatch (CAD DWG)
             poly_a = rg.PolylineCurve([p0_gr, p1_gr, p1_tn, p0_tn, p0_gr])
             poligonos_aterro_sec.append(poly_a)
+            h_a = create_cad_hatch(poly_a, color=cor_aterro, pattern_name=padrao_hachura, scale=max(0.5, escala_hachura * 0.8 * s), rotation_deg=135.0)
+            geoms_2d.extend(h_a)
 
     # 5.2 Interseções com as Seções Transversais (Seções A a J)
     for d_inter, idx_t, lbl_t in intersecs:
@@ -4744,29 +5034,41 @@ def render_longitudinal_profile_with_guitarra(
         rg.LineCurve(rg.Point3d(base_x, y0, 0.0), rg.Point3d(base_x, y5, 0.0)),
         rg.LineCurve(rg.Point3d(x_end, y0, 0.0), rg.Point3d(x_end, y5, 0.0))
     ]
+    v_perfis = []
+    v_tabelas = []
+    v_textos = []
+    v_hachuras = []
     for g in geoms_2d:
         if isinstance(g, CategorizedGeomList):
             v_perfis.extend(g.perfil)
             v_tabelas.extend(g.tabela)
             v_textos.extend(g.textos)
+            v_hachuras.extend(getattr(g, 'hachuras', []))
         elif getattr(g, '__is_text__', False) or isinstance(g, getattr(rg, 'TextEntity', type(None))):
             v_textos.append(g)
-        elif isinstance(g, rg.Mesh):
-            v_perfis.append(g)
+        elif getattr(g, '__is_hatch__', False) or isinstance(g, getattr(rg, 'Hatch', type(None))):
+            v_hachuras.append(g)
         else:
-            bb = g.GetBoundingBox(True) if hasattr(g, 'GetBoundingBox') else g.GetBoundingBox()
-            if bb.IsValid and bb.Max.Y <= y0 + 0.1 * s and bb.Min.Y >= y5 - 0.1 * s:
+            try:
+                bb = g.GetBoundingBox(True)
+            except:
+                try:
+                    bb = g.GetBoundingBox()
+                except:
+                    bb = None
+            if bb and getattr(bb, 'IsValid', False) and bb.Max.Y <= y0 + 0.1 * s and bb.Min.Y >= y5 - 0.1 * s:
                 v_tabelas.append(g)
             else:
                 v_perfis.append(g)
 
-    cat_v_geoms = CategorizedGeomList(geoms_2d, perfil=v_perfis, tabela=v_tabelas, textos=v_textos)
+    cat_v_geoms = CategorizedGeomList(geoms_2d, perfil=v_perfis, tabela=v_tabelas, textos=v_textos, hachuras=v_hachuras)
 
     return {
         'geoms_2d': cat_v_geoms,
         'perfil_geoms': v_perfis,
         'tabela_geoms': v_tabelas,
         'texto_geoms': v_textos,
+        'hachura_geoms': v_hachuras,
         'poligonos_corte_2d': poligonos_corte_sec,
         'poligonos_aterro_2d': poligonos_aterro_sec,
         'quads_3d_corte': quads_3d_corte_sec,
@@ -6515,12 +6817,25 @@ def run():
     raw_bake         = get_input(['Bake', 'GravarRhino', 'Gravar', 'SalvarRhino', 'ExecutarBake', 'BakeRhino'], False)
     raw_group_mode   = get_input(['GroupMode', 'ModoAgrupamento', 'ModoGrupo', 'TipoGrupo'], 0)
     raw_text_scale   = get_input(['TextScale', 'EscalaTexto', 'FatorTexto', 'TamanhoTexto', 'TextSize'], 1.0)
+    raw_hatch_pattern = get_input(['HatchPattern', 'PadraoHachura', 'TipoHachura', 'PatternHachura', 'HatchType'], 'ANSI31')
+    raw_hatch_scale   = get_input(['HatchScale', 'EscalaHachura', 'FatorHachura', 'TamanhoHachura'], 1.0)
     try:
         ts = float(raw_text_scale) if raw_text_scale is not None else 1.0
         if ts <= 0.05: ts = 1.0
     except:
         ts = 1.0
     globals()['GLOBAL_TEXT_SCALE'] = 1.50 * ts
+
+    try:
+        padrao_hachura = str(raw_hatch_pattern).strip() if raw_hatch_pattern else 'ANSI31'
+        if not padrao_hachura: padrao_hachura = 'ANSI31'
+    except:
+        padrao_hachura = 'ANSI31'
+    try:
+        escala_hachura = float(raw_hatch_scale) if raw_hatch_scale is not None else 1.0
+        if escala_hachura <= 0.001: escala_hachura = 1.0
+    except:
+        escala_hachura = 1.0
 
     try:
         if raw_inclinacao is not None:
@@ -7342,7 +7657,8 @@ def run():
 
         res_sec = render_single_section_2d_and_3d(
             s_data, lbl, base_x, base_y, s, modo_cotas, cor_corte, cor_aterro,
-            crv_aln_3d=crv_aln_3d, is_longitudinal=False, axis_title_prefix="SECAO "
+            crv_aln_3d=crv_aln_3d, is_longitudinal=False, axis_title_prefix="SECAO ",
+            padrao_hachura=padrao_hachura, escala_hachura=escala_hachura
         )
         res_secoes_info.append(res_sec)
 
@@ -7432,7 +7748,8 @@ def run():
 
             res_sec_v = render_longitudinal_profile_with_guitarra(
                 s_data_v, lbl_v, base_x_v, base_y_v, s, ev=ev_long, step_estaca=passo_estacas,
-                cor_corte=cor_corte, cor_aterro=cor_aterro, crv_aln_3d_v=crv_aln_3d_v, axis_title_prefix="EIXO "
+                cor_corte=cor_corte, cor_aterro=cor_aterro, crv_aln_3d_v=crv_aln_3d_v, axis_title_prefix="EIXO ",
+                padrao_hachura=padrao_hachura, escala_hachura=escala_hachura
             )
             res_perfis_v.append(res_sec_v)
 
@@ -7789,12 +8106,6 @@ def run():
                             area_mancha_aterro_2d += quad_area_2d
                             sum_aterro_x += cx * quad_area_2d; sum_aterro_y += cy * quad_area_2d
 
-                            # Hachura técnica vetorial de aterro a -45°
-                            if (m % 2 == 0):
-                                p_ha0 = rg.Point3d((p00.X + p10.X)/2.0, (p00.Y + p10.Y)/2.0, 0.0)
-                                p_ha1 = rg.Point3d((p01.X + p11.X)/2.0, (p01.Y + p11.Y)/2.0, 0.0)
-                                hachuras_aterro_geoms.append(rg.LineCurve(p_ha0, p_ha1))
-
                             if abs(diff_z) > 0.15:
                                 outer_slope_pts.append(p_cen_m)
                                 # Dentes de talude de aterro (crista descendo para a saia do aterro)
@@ -7811,12 +8122,6 @@ def run():
                             quads_2d_corte.append(q2d)
                             area_mancha_corte_2d += quad_area_2d
                             sum_corte_x += cx * quad_area_2d; sum_corte_y += cy * quad_area_2d
-
-                            # Hachura técnica vetorial de corte a +45°
-                            if (m % 2 == 0):
-                                p_hc0 = rg.Point3d((p00.X + p01.X)/2.0, (p00.Y + p01.Y)/2.0, 0.0)
-                                p_hc1 = rg.Point3d((p10.X + p11.X)/2.0, (p10.Y + p11.Y)/2.0, 0.0)
-                                hachuras_corte_geoms.append(rg.LineCurve(p_hc0, p_hc1))
 
                             if abs(diff_z) > 0.15:
                                 outer_slope_pts.append(p_cen_m)
@@ -7867,26 +8172,32 @@ def run():
     if not modelo_3d_completo and mesh_terreno_projetado and getattr(mesh_terreno_projetado, 'IsValid', False):
         modelo_3d_completo.append(mesh_terreno_projetado)
 
-    # 9.1 Manchas de Corte e Aterro (Grading 2D) com Cores Contrastantes
+    # 9.1 Hachuras Nativas de Corte e Aterro (Grading 2D) com Rhino.Geometry.Hatch (CAD 100% Compativel)
     cor_corte_2d  = System.Drawing.Color.FromArgb(170, 230, 92, 0)
     cor_aterro_2d = System.Drawing.Color.FromArgb(170, 46, 139, 87)
     cor_neutro_2d = System.Drawing.Color.FromArgb(140, 220, 220, 100)
-    m_2d_corte  = create_colored_mesh(quads_2d_corte, cor_corte_2d)
-    m_2d_aterro = create_colored_mesh(quads_2d_aterro, cor_aterro_2d)
-    m_2d_neutro = create_colored_mesh(quads_2d_neutro, cor_neutro_2d)
 
-    manchas_grading_geoms = []
-    if m_2d_corte and getattr(m_2d_corte, 'IsValid', False):
-        manchas_grading_geoms.append(m_2d_corte)
-        planta_baixa_geoms.append(m_2d_corte)
-    if m_2d_aterro and getattr(m_2d_aterro, 'IsValid', False):
-        manchas_grading_geoms.append(m_2d_aterro)
-        planta_baixa_geoms.append(m_2d_aterro)
-    if m_2d_neutro and getattr(m_2d_neutro, 'IsValid', False):
-        manchas_grading_geoms.append(m_2d_neutro)
-        planta_baixa_geoms.append(m_2d_neutro)
+    # Extracao de contornos fechados (perimetros externos) a partir dos quadrilateros do grading
+    contornos_corte_2d = extract_boundary_curves_from_quads(quads_2d_corte, tol=0.10)
+    contornos_aterro_2d = extract_boundary_curves_from_quads(quads_2d_aterro, tol=0.10)
 
-    # Inclusão das Hachuras Técnicas Vetoriais 2D (Corte Laranja a +45° e Aterro Verde a -45°)
+    # Geracao rigorosa de entidades nativas Rhino.Geometry.Hatch (sem malha e sem linhas avulsas)
+    hachuras_corte_geoms = []
+    for c_crv in contornos_corte_2d:
+        h_c = create_cad_hatch(c_crv, color=cor_corte_2d, pattern_name=padrao_hachura, scale=max(1.0, escala_hachura * 2.0 * s), rotation_deg=45.0)
+        hachuras_corte_geoms.extend(h_c)
+
+    hachuras_aterro_geoms = []
+    for a_crv in contornos_aterro_2d:
+        h_a = create_cad_hatch(a_crv, color=cor_aterro_2d, pattern_name=padrao_hachura, scale=max(1.0, escala_hachura * 2.0 * s), rotation_deg=135.0)
+        hachuras_aterro_geoms.extend(h_a)
+
+    hachuras_grading_geoms = hachuras_corte_geoms + hachuras_aterro_geoms
+    manchas_grading_geoms = hachuras_grading_geoms
+
+    # Inclusao na planta baixa dos contornos fechados e das hachuras nativas (sem nenhuma malha)
+    planta_baixa_geoms.extend(contornos_corte_2d)
+    planta_baixa_geoms.extend(contornos_aterro_2d)
     planta_baixa_geoms.extend(hachuras_corte_geoms)
     planta_baixa_geoms.extend(hachuras_aterro_geoms)
 
@@ -7919,32 +8230,11 @@ def run():
 
     # 9.2 Linhas de Talude, Linha Neutra e Dentes de Talude
     linha_neutra_crvs = []
-    if m_2d_neutro and getattr(m_2d_neutro, 'IsValid', False):
-        try:
-            for nk in m_2d_neutro.GetNakedEdges() or []:
-                if nk:
-                    c_nk = nk.ToPolylineCurve()
-                    linha_neutra_crvs.append(c_nk)
-                    planta_baixa_geoms.append(c_nk)
-        except: pass
+    for c_nk in contornos_corte_2d:
+        taludes_geoms.append(c_nk)
 
-    if m_2d_corte and getattr(m_2d_corte, 'IsValid', False):
-        try:
-            for nk in m_2d_corte.GetNakedEdges() or []:
-                if nk:
-                    c_nk = nk.ToPolylineCurve()
-                    taludes_geoms.append(c_nk)
-                    planta_baixa_geoms.append(c_nk)
-        except: pass
-
-    if m_2d_aterro and getattr(m_2d_aterro, 'IsValid', False):
-        try:
-            for nk in m_2d_aterro.GetNakedEdges() or []:
-                if nk:
-                    c_nk = nk.ToPolylineCurve()
-                    taludes_geoms.append(c_nk)
-                    planta_baixa_geoms.append(c_nk)
-        except: pass
+    for a_nk in contornos_aterro_2d:
+        taludes_geoms.append(a_nk)
 
     planta_baixa_geoms.extend(dentes_talude_geoms)
 
@@ -8443,12 +8733,16 @@ def run():
     globals()['DentesTalude2D'] = dentes_talude_geoms
     globals()['EspinhasDePeixe2D'] = dentes_talude_geoms
     globals()['AfastamentoDivisas'] = afastamento_divisas_geoms
-    globals()['ManchasCorte2D'] = m_2d_corte
-    globals()['ManchasAterro2D'] = m_2d_aterro
-    globals()['ManchasCorteAterro2D'] = [m for m in [m_2d_corte, m_2d_aterro] if m]
+    globals()['ManchasCorte2D'] = hachuras_corte_geoms
+    globals()['ManchasAterro2D'] = hachuras_aterro_geoms
+    globals()['ManchasCorteAterro2D'] = hachuras_grading_geoms
     globals()['HachurasCorte2D'] = hachuras_corte_geoms
     globals()['HachurasAterro2D'] = hachuras_aterro_geoms
-    globals()['HachurasGrading2D'] = hachuras_corte_geoms + hachuras_aterro_geoms
+    globals()['HachurasGrading2D'] = hachuras_grading_geoms
+    globals()['HachurasTerraplanagem2D'] = hachuras_grading_geoms
+    globals()['ContornosCorte2D'] = contornos_corte_2d
+    globals()['ContornosAterro2D'] = contornos_aterro_2d
+    globals()['ContornosGrading2D'] = contornos_corte_2d + contornos_aterro_2d
     globals()['LinhaNeutra2D'] = linha_neutra_crvs
 
     linhas_estacas_crvs = [item['curve'] for item in estacas_normativas_info]
@@ -8521,12 +8815,14 @@ def run():
     globals()['i'] = m_3d_aterro_sec
 
     # =========================================================================
-    # 10. AGRUPAMENTO CATEGORIZADO DE ELEMENTOS GRÁFICOS (TEXTOS, TABELAS, PERFIS)
+    # 10. AGRUPAMENTO CATEGORIZADO DE ELEMENTOS GRÁFICOS (TEXTOS, TABELAS, PERFIS, HACHURAS)
     #     E INTEGRAÇÃO COM SISTEMA DE BAKE EXECUTIVO DO RHINO
     # =========================================================================
     all_textos_2d = []
     all_tabelas_2d = []
     all_perfis_2d = []
+    all_hachuras_secoes_2d = []
+    all_hachuras_perfis_2d = []
 
     tree_secoes_dict = {}
     tree_long_dict = {}
@@ -8539,19 +8835,26 @@ def run():
         p_geoms = r_sec.get('perfil_geoms', [])
         t_geoms = r_sec.get('tabela_geoms', [])
         x_geoms = r_sec.get('texto_geoms', [])
+        h_geoms_s = r_sec.get('hachura_geoms', [])
 
         all_perfis_2d.extend(p_geoms)
         all_tabelas_2d.extend(t_geoms)
         all_textos_2d.extend(x_geoms)
+        if h_geoms_s:
+            all_hachuras_secoes_2d.extend(h_geoms_s)
 
         tree_secoes_dict[(idx_s, 0)] = p_geoms
         tree_secoes_dict[(idx_s, 1)] = t_geoms
         tree_secoes_dict[(idx_s, 2)] = x_geoms
+        if h_geoms_s:
+            tree_secoes_dict[(idx_s, 3)] = h_geoms_s
 
         sec_parent = "SECAO_{}_COMPLETA".format(lbl)
         bake_items.append({'group_name': "SECAO_{}_PERFIL_TOPOGRAFICO".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::PERFIS", 'geoms': p_geoms})
         bake_items.append({'group_name': "SECAO_{}_TABELA_RESUMO".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::TABELAS", 'geoms': t_geoms})
         bake_items.append({'group_name': "SECAO_{}_TEXTOS_COTAS".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::TEXTOS", 'geoms': x_geoms})
+        if h_geoms_s:
+            bake_items.append({'group_name': "SECAO_{}_HACHURAS".format(lbl), 'parent_group': sec_parent, 'layer_name': "PROJETO_LEGAL::SECOES::HACHURAS", 'geoms': h_geoms_s})
 
     # 10.2 Perfis Longitudinais (Folha 02/03)
     for idx_v, r_lng in enumerate(res_perfis_v):
@@ -8559,19 +8862,28 @@ def run():
         p_geoms_v = r_lng.get('perfil_geoms', [])
         t_geoms_v = r_lng.get('tabela_geoms', [])
         x_geoms_v = r_lng.get('texto_geoms', [])
+        h_geoms_v = r_lng.get('hachura_geoms', [])
 
         all_perfis_2d.extend(p_geoms_v)
         all_tabelas_2d.extend(t_geoms_v)
         all_textos_2d.extend(x_geoms_v)
+        if h_geoms_v:
+            all_hachuras_perfis_2d.extend(h_geoms_v)
 
         tree_long_dict[(idx_v, 0)] = p_geoms_v
         tree_long_dict[(idx_v, 1)] = t_geoms_v
         tree_long_dict[(idx_v, 2)] = x_geoms_v
+        if h_geoms_v:
+            tree_long_dict[(idx_v, 3)] = h_geoms_v
 
         lng_parent = "PERFIL_LONGITUDINAL_{}_COMPLETO".format(lbl_v)
         bake_items.append({'group_name': "PERFIL_{}_TOPOGRAFIA".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::GEOMETRIA", 'geoms': p_geoms_v})
         bake_items.append({'group_name': "PERFIL_{}_GUITARRA".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::GUITARRA", 'geoms': t_geoms_v})
         bake_items.append({'group_name': "PERFIL_{}_TEXTOS_DADOS".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::TEXTOS", 'geoms': x_geoms_v})
+        if h_geoms_v:
+            bake_items.append({'group_name': "PERFIL_{}_HACHURAS".format(lbl_v), 'parent_group': lng_parent, 'layer_name': "PROJETO_LEGAL::PERFIS_LONGITUDINAIS::HACHURAS", 'geoms': h_geoms_v})
+
+    all_hachuras_todas_2d = hachuras_grading_geoms + all_hachuras_secoes_2d + all_hachuras_perfis_2d
 
     # 10.3 Pranchas Oficiais A0 (Folhas 01, 02 e 03)
     sheets_info = [
@@ -8637,6 +8949,16 @@ def run():
         if drenagem_system.get('bacia_3d'):
             bake_items.append({'group_name': "DRENAGEM_BACIA_DETENCAO_3D", 'parent_group': dren_parent, 'layer_name': "PROJETO_LEGAL::DRENAGEM::BACIA_DETENCAO_3D", 'geoms': drenagem_system['bacia_3d']})
 
+    # 10.3.3 Grupos e Camadas para Hachuras e Contornos de Terraplanagem 2D (Grading)
+    if hachuras_corte_geoms:
+        bake_items.append({'group_name': "GRADING_HACHURAS_CORTE_2D", 'parent_group': "TERRAPLANAGEM_2D", 'layer_name': "PROJETO_LEGAL::PLANTA::HACHURAS_CORTE", 'geoms': hachuras_corte_geoms, 'color': cor_corte_2d})
+    if hachuras_aterro_geoms:
+        bake_items.append({'group_name': "GRADING_HACHURAS_ATERRO_2D", 'parent_group': "TERRAPLANAGEM_2D", 'layer_name': "PROJETO_LEGAL::PLANTA::HACHURAS_ATERRO", 'geoms': hachuras_aterro_geoms, 'color': cor_aterro_2d})
+    if contornos_corte_2d:
+        bake_items.append({'group_name': "GRADING_CONTORNOS_CORTE_2D", 'parent_group': "TERRAPLANAGEM_2D", 'layer_name': "PROJETO_LEGAL::PLANTA::CONTORNOS_CORTE", 'geoms': contornos_corte_2d, 'color': cor_corte_2d})
+    if contornos_aterro_2d:
+        bake_items.append({'group_name': "GRADING_CONTORNOS_ATERRO_2D", 'parent_group': "TERRAPLANAGEM_2D", 'layer_name': "PROJETO_LEGAL::PLANTA::CONTORNOS_ATERRO", 'geoms': contornos_aterro_2d, 'color': cor_aterro_2d})
+
     # 10.4 Execução Automática do Bake se Bake == True
     bake_msg = "Bake inativo (conecte Bake=True para gravar no Rhino)."
     bake_requested = False
@@ -8661,6 +8983,17 @@ def run():
     globals()['Tabelas2D'] = all_tabelas_2d
     globals()['PerfisTopograficos2D'] = all_perfis_2d
     globals()['StatusBake'] = bake_msg
+
+    # Saídas Nativas Especializadas de Hachuras CAD (Rhino.Geometry.Hatch)
+    globals()['HachurasSecoes2D'] = all_hachuras_secoes_2d
+    globals()['HachurasSecoes'] = all_hachuras_secoes_2d
+    globals()['HachurasTransversais2D'] = all_hachuras_secoes_2d
+    globals()['HachurasPerfis2D'] = all_hachuras_perfis_2d
+    globals()['HachurasPerfis'] = all_hachuras_perfis_2d
+    globals()['HachurasLongitudinais2D'] = all_hachuras_perfis_2d
+    globals()['HachurasTodas2D'] = all_hachuras_todas_2d
+    globals()['HachurasCompletas2D'] = all_hachuras_todas_2d
+    globals()['Hachuras2D'] = all_hachuras_todas_2d
 
     # Saídas Especializadas para Declividade dos Lotes (GRAPROHAB)
     globals()['AnaliseLotes2D'] = lotes_analysis.get('geoms_2d', [])
