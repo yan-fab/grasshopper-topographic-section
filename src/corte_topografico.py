@@ -1419,7 +1419,13 @@ def make_text_geometry(text_str, pt, height, justification=None, s=1.0, plane=No
     else:
         just = justification
 
-    h_val = float(height) if height is not None else 2.0
+    # Fator de calibracao tipografica para equivalencia visual ao motor vetorial anterior:
+    # No motor de linhas (stroke font), as letras maiusculas ocupavam 100% de 'height'.
+    # Na fonte TrueType (Arial / Rhino TextEntity), o Cap Height (altura da caixa alta) equivale
+    # a ~70% do TextHeight total do glifo. Para recuperar exatamente o mesmo tamanho e presenca
+    # visual de leitura em viewport e prancha que existia antes com as linhas, aplicamos o fator 1.50x.
+    scale_text_factor = float(getattr(globals(), 'GLOBAL_TEXT_SCALE', 1.50))
+    h_val = (float(height) if height is not None else 2.0) * scale_text_factor
 
     te = None
     TextEntityClass = getattr(rg, 'TextEntity', None)
@@ -1463,10 +1469,12 @@ def make_text_geometry(text_str, pt, height, justification=None, s=1.0, plane=No
 make_text_entity = make_text_geometry
 
 def get_stroke_text_width(text_str, height):
-    """Calculates the exact horizontal width that the vector text will occupy."""
+    """Calculates the exact horizontal width that the text will occupy."""
     if text_str is None: return 0.0
     text_str = str(text_str)
     if not text_str: return 0.0
+    scale_text_factor = float(getattr(globals(), 'GLOBAL_TEXT_SCALE', 1.50))
+    eff_h = height * scale_text_factor
     total_w = 0.0
     for ch in text_str:
         base_char = ch
@@ -1486,9 +1494,9 @@ def get_stroke_text_width(text_str, height):
         elif base_char.upper() in '1I.,:|;': w_factor = 0.35
         elif base_char.upper() in 'MW':    w_factor = 0.75
 
-        total_w += height * w_factor
+        total_w += eff_h * w_factor
 
-    char_gap = height * 0.18
+    char_gap = eff_h * 0.18
     total_w += max(0, len(text_str) - 1) * char_gap
     return total_w
 
@@ -1589,7 +1597,8 @@ def draw_nbr_level_marker(x, y, text_str, s=1.0):
     h_stem = 0.60 * s
     txt_h = 0.85 * s
 
-    char_w = 0.65 * txt_h
+    scale_text_factor = float(getattr(globals(), 'GLOBAL_TEXT_SCALE', 1.50))
+    char_w = 0.65 * txt_h * scale_text_factor
     w_shelf = max(len(text_str) * char_w + 0.6 * s, 3.2 * s)
 
     v_bot = rg.Point3d(x, y, 0.0)
@@ -6505,6 +6514,13 @@ def run():
     raw_exagero_v    = get_input(['VerticalExaggeration', 'ExageroVertical', 'EscalaVertical', 'Exagero', 'Ev'], 10.0)
     raw_bake         = get_input(['Bake', 'GravarRhino', 'Gravar', 'SalvarRhino', 'ExecutarBake', 'BakeRhino'], False)
     raw_group_mode   = get_input(['GroupMode', 'ModoAgrupamento', 'ModoGrupo', 'TipoGrupo'], 0)
+    raw_text_scale   = get_input(['TextScale', 'EscalaTexto', 'FatorTexto', 'TamanhoTexto', 'TextSize'], 1.0)
+    try:
+        ts = float(raw_text_scale) if raw_text_scale is not None else 1.0
+        if ts <= 0.05: ts = 1.0
+    except:
+        ts = 1.0
+    globals()['GLOBAL_TEXT_SCALE'] = 1.50 * ts
 
     try:
         if raw_inclinacao is not None:
