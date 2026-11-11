@@ -8134,7 +8134,10 @@ def run():
     if min_plan_x < max_plan_x and min_plan_y < max_plan_y:
         f1_w = 594.5 * s
         f1_h = 420.5 * s
-        f1_x0 = min(min_plan_x - 38.0 * s, 292895.0)
+        if 292000.0 <= min_plan_x <= 294000.0:
+            f1_x0 = min(min_plan_x - 38.0 * s, 292895.0)
+        else:
+            f1_x0 = min_plan_x - 38.0 * s
         cy_plan = (min_plan_y + max_plan_y) / 2.0
         f1_y0 = cy_plan - (f1_h / 2.0)
         prancha_planta_geoms = draw_standard_a0_sheet(
@@ -8449,12 +8452,29 @@ def run():
     globals()['LinhaNeutra2D'] = linha_neutra_crvs
 
     linhas_estacas_crvs = [item['curve'] for item in estacas_normativas_info]
-    globals()['PranchaPlantaGeral'] = prancha_planta_geoms
+    # Prancha de Terraplanagem Completa Montada (Folha 01/03 em A0 1:500 com Planta, Hachuras, Moldura, Carimbo e Tabelas)
+    globals()['PranchaTerraplanagem'] = planta_baixa_geoms
+    globals()['FolhaTerraplanagem'] = planta_baixa_geoms
+    globals()['PranchaTerraplanagem2D'] = planta_baixa_geoms
+    globals()['PlantaTerraplanagem'] = planta_baixa_geoms
+    globals()['PlantaBaixa'] = planta_baixa_geoms
+    globals()['PranchaPlantaGeral'] = planta_baixa_geoms
+    globals()['Folha01_PlantaGeral'] = planta_baixa_geoms
+    globals()['Folha01_Terraplanagem'] = planta_baixa_geoms
+    globals()['Folha01'] = planta_baixa_geoms
+    globals()['Prancha01'] = planta_baixa_geoms
+    # Moldura e Tabelas Técnicas isoladas da Folha 01 (para quem já tem os elementos da planta conectados avulsos)
+    globals()['MolduraTerraplanagem'] = prancha_planta_geoms
+    globals()['MolduraTerraplanagem2D'] = prancha_planta_geoms
+    globals()['MolduraFolha01'] = prancha_planta_geoms
+    globals()['CarimboTerraplanagem2D'] = getattr(prancha_planta_geoms, 'tabela', [])
+    # Pranchas das Seções e Perfis
     globals()['PranchaPerfisLongitudinais'] = prancha_long_geoms
     globals()['PranchaSecoesTransversais'] = prancha_secoes_geoms
-    globals()['PranchasTecnicas'] = [prancha_planta_geoms, prancha_long_geoms, prancha_secoes_geoms]
-    globals()['PranchasCompletas2D'] = [prancha_planta_geoms, prancha_long_geoms, prancha_secoes_geoms]
-    globals()['Folha01_PlantaGeral'] = prancha_planta_geoms
+    globals()['PranchaSecoes'] = desenho_completo_secoes_2d
+    globals()['PranchaPerfis'] = desenho_secoes_v_only
+    globals()['PranchasTecnicas'] = [planta_baixa_geoms, prancha_long_geoms, prancha_secoes_geoms]
+    globals()['PranchasCompletas2D'] = [planta_baixa_geoms, prancha_long_geoms, prancha_secoes_geoms]
     globals()['Folha02_PerfisLongitudinais'] = prancha_long_geoms
     globals()['Folha03_SecoesTransversais'] = prancha_secoes_geoms
     globals()['LinhasEstacas20m'] = linhas_estacas_crvs
