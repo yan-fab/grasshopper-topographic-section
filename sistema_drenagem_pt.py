@@ -7864,6 +7864,24 @@ def run():
     offset_cota_fora = 8.5 * s
     offset_balao_fora = offset_cota_fora + 7.5 * s
 
+    # Listas especializadas para Eixos 2D e Anotações Técnicas de Locação
+    eixos_transversais_crvs = []
+    eixos_transversais_baloes = []
+    eixos_transversais_cotas = []
+    eixos_transversais_completos = []
+
+    eixos_longitudinais_crvs = []
+    eixos_longitudinais_baloes = []
+    eixos_longitudinais_cotas = []
+    eixos_longitudinais_completos = []
+
+    eixos_linhas_todos = []
+    eixos_baloes_todos = []
+    eixos_cotas_todas = []
+    eixos_completos_todos = []
+    quadrantes_geoms = []
+    textos_planta_baixa = []
+
     if num_secoes >= 2:
         p_ref_1 = lista_alinhadas[0].PointAtStart
         p_ref_2 = lista_alinhadas[-1].PointAtStart
@@ -7873,6 +7891,8 @@ def run():
             u_ref.Unitize()
             l_align_ref = rg.LineCurve(p_ref_1 - u_ref * (4.0 * s), p_ref_2 + u_ref * (4.0 * s))
             planta_baixa_geoms.append(l_align_ref)
+            eixos_transversais_completos.append(l_align_ref)
+            eixos_completos_todos.append(l_align_ref)
 
     for idx_s, crv_aln in enumerate(lista_alinhadas):
         lbl = labels_t[idx_s]
@@ -7881,11 +7901,33 @@ def run():
         u_sec = crv_aln.PointAtEnd - crv_aln.PointAtStart
         u_sec.Unitize()
 
+        crv_corte_line = rg.LineCurve(p_start_raw, p_end_raw)
+        eixos_transversais_crvs.append(crv_corte_line)
+        eixos_linhas_todos.append(crv_corte_line)
+
         p_balao_pos = p_start_raw - u_sec * offset_balao_fora
-        planta_baixa_geoms.append(rg.LineCurve(p_start_raw, p_balao_pos))
+        l_leader = rg.LineCurve(p_start_raw, p_balao_pos)
         balao_geoms = draw_plan_axis_bubble(p_balao_pos, lbl, u_sec, s)
+
+        eixos_transversais_baloes.append(l_leader)
+        eixos_transversais_baloes.extend(balao_geoms)
+        eixos_baloes_todos.append(l_leader)
+        eixos_baloes_todos.extend(balao_geoms)
+
+        for g in balao_geoms:
+            if isinstance(g, getattr(rg, 'TextEntity', type(None))):
+                textos_planta_baixa.append(g)
+
+        planta_baixa_geoms.append(l_leader)
         planta_baixa_geoms.extend(balao_geoms)
-        planta_baixa_geoms.append(rg.LineCurve(p_start_raw, p_end_raw))
+        planta_baixa_geoms.append(crv_corte_line)
+
+        eixos_transversais_completos.append(crv_corte_line)
+        eixos_transversais_completos.append(l_leader)
+        eixos_transversais_completos.extend(balao_geoms)
+        eixos_completos_todos.append(crv_corte_line)
+        eixos_completos_todos.append(l_leader)
+        eixos_completos_todos.extend(balao_geoms)
 
     for idx_s in range(num_secoes - 1):
         ca = lista_alinhadas[idx_s]
@@ -7896,6 +7938,13 @@ def run():
         txt_dim = "{:.2f}m".format(d_real).replace('.', ',')
         dim_geoms = draw_plan_dimension(p_cota_a, p_cota_b, txt_dim, s)
         planta_baixa_geoms.extend(dim_geoms)
+        eixos_transversais_cotas.extend(dim_geoms)
+        eixos_cotas_todas.extend(dim_geoms)
+        eixos_transversais_completos.extend(dim_geoms)
+        eixos_completos_todos.extend(dim_geoms)
+        for g in dim_geoms:
+            if isinstance(g, getattr(rg, 'TextEntity', type(None))):
+                textos_planta_baixa.append(g)
 
     if num_secoes >= 2:
         p_tot_a = lista_alinhadas[0].PointAtStart - u_corte * (offset_cota_fora + 4.5 * s)
@@ -7904,6 +7953,13 @@ def run():
         txt_tot = "TOTAL: {:.2f}m".format(d_tot_real).replace('.', ',')
         dim_tot_geoms = draw_plan_dimension(p_tot_a, p_tot_b, txt_tot, s)
         planta_baixa_geoms.extend(dim_tot_geoms)
+        eixos_transversais_cotas.extend(dim_tot_geoms)
+        eixos_cotas_todas.extend(dim_tot_geoms)
+        eixos_transversais_completos.extend(dim_tot_geoms)
+        eixos_completos_todos.extend(dim_tot_geoms)
+        for g in dim_tot_geoms:
+            if isinstance(g, getattr(rg, 'TextEntity', type(None))):
+                textos_planta_baixa.append(g)
 
     for idx_v, crv_v in enumerate(lista_verticais):
         lbl_v = labels_v[idx_v]
@@ -7912,11 +7968,33 @@ def run():
         u_v = p_fim_v - p_ini_v
         u_v.Unitize()
 
+        crv_v_line = rg.LineCurve(p_ini_v, p_fim_v)
+        eixos_longitudinais_crvs.append(crv_v_line)
+        eixos_linhas_todos.append(crv_v_line)
+
         p_balao_v = p_ini_v - u_v * offset_balao_fora
-        planta_baixa_geoms.append(rg.LineCurve(p_ini_v, p_balao_v))
+        l_leader_v = rg.LineCurve(p_ini_v, p_balao_v)
         balao_v_geoms = draw_plan_axis_bubble(p_balao_v, lbl_v, u_v, s)
+
+        eixos_longitudinais_baloes.append(l_leader_v)
+        eixos_longitudinais_baloes.extend(balao_v_geoms)
+        eixos_baloes_todos.append(l_leader_v)
+        eixos_baloes_todos.extend(balao_v_geoms)
+
+        for g in balao_v_geoms:
+            if isinstance(g, getattr(rg, 'TextEntity', type(None))):
+                textos_planta_baixa.append(g)
+
+        planta_baixa_geoms.append(l_leader_v)
         planta_baixa_geoms.extend(balao_v_geoms)
-        planta_baixa_geoms.append(rg.LineCurve(p_ini_v, p_fim_v))
+        planta_baixa_geoms.append(crv_v_line)
+
+        eixos_longitudinais_completos.append(crv_v_line)
+        eixos_longitudinais_completos.append(l_leader_v)
+        eixos_longitudinais_completos.extend(balao_v_geoms)
+        eixos_completos_todos.append(crv_v_line)
+        eixos_completos_todos.append(l_leader_v)
+        eixos_completos_todos.extend(balao_v_geoms)
 
     for idx_v in range(num_verticais - 1):
         cva = lista_verticais[idx_v]
@@ -7927,12 +8005,22 @@ def run():
         txt_v_dim = "{:.2f}m".format(d_v_real).replace('.', ',')
         dim_v_geoms = draw_plan_dimension(p_cota_va, p_cota_vb, txt_v_dim, s)
         planta_baixa_geoms.extend(dim_v_geoms)
+        eixos_longitudinais_cotas.extend(dim_v_geoms)
+        eixos_cotas_todas.extend(dim_v_geoms)
+        eixos_longitudinais_completos.extend(dim_v_geoms)
+        eixos_completos_todos.extend(dim_v_geoms)
+        for g in dim_v_geoms:
+            if isinstance(g, getattr(rg, 'TextEntity', type(None))):
+                textos_planta_baixa.append(g)
 
     # 2D CAD Road Network on Plan View
     for p_info in road_polygons:
         planta_baixa_geoms.append(p_info['curve'])
     if lotes_analysis.get('geoms_2d'):
         planta_baixa_geoms.extend(lotes_analysis['geoms_2d'])
+        for g in lotes_analysis['geoms_2d']:
+            if isinstance(g, getattr(rg, 'TextEntity', type(None))):
+                textos_planta_baixa.append(g)
     if boundary_info is not None:
         planta_baixa_geoms.append(boundary_info['curve'])
 
@@ -7942,6 +8030,9 @@ def run():
         st_geoms_v = draw_road_stationing_2d(crv_v, label_prefix="Est. ", step=passo_estacas, s=s)
         estaqueamento_vias_geoms.extend(st_geoms_v)
         planta_baixa_geoms.extend(st_geoms_v)
+        for g in st_geoms_v:
+            if isinstance(g, getattr(rg, 'TextEntity', type(None))):
+                textos_planta_baixa.append(g)
 
     # Quadrant Identification (Centroids)
     if num_secoes >= 2 and num_verticais >= 2:
@@ -7959,7 +8050,11 @@ def run():
                     p_cen = rg.Point3d(cx, cy, 0.0)
                     lbl_quad = "{}{}".format(lbl_secao, j + 1)
                     q_badge = draw_quadrant_badge(p_cen, lbl_quad, s)
+                    quadrantes_geoms.extend(q_badge)
                     planta_baixa_geoms.extend(q_badge)
+                    for g in q_badge:
+                        if isinstance(g, getattr(rg, 'TextEntity', type(None))):
+                            textos_planta_baixa.append(g)
 
     # =========================================================================
     # 9. CONSTRUÇÃO DA SUPERFÍCIE 3D DE TERRAPLENAGEM & PAVIMENTAÇÃO BIM
@@ -8760,6 +8855,46 @@ def run():
     globals()['ContornosGrading2D'] = contornos_corte_2d + contornos_aterro_2d
     globals()['LinhaNeutra2D'] = linha_neutra_crvs
 
+    # Saídas Nativas para Eixos de Alinhamento e Locação 2D (Planta de Terraplanagem)
+    globals()['Eixos2D'] = eixos_completos_todos
+    globals()['Eixos'] = eixos_completos_todos
+    globals()['EixosCompletos2D'] = eixos_completos_todos
+    globals()['EixosAnotados2D'] = eixos_completos_todos
+    globals()['LinhasEixos2D'] = eixos_linhas_todos
+    globals()['LinhasEixos'] = eixos_linhas_todos
+    globals()['CurvasEixos2D'] = eixos_linhas_todos
+    globals()['CurvasEixos'] = eixos_linhas_todos
+
+    globals()['EixosTransversais2D'] = eixos_transversais_completos
+    globals()['EixosTransversais'] = eixos_transversais_completos
+    globals()['EixosCorte2D'] = eixos_transversais_completos
+    globals()['EixosCorte'] = eixos_transversais_completos
+    globals()['LinhasEixosTransversais2D'] = eixos_transversais_crvs
+    globals()['CurvasEixosTransversais2D'] = eixos_transversais_crvs
+
+    globals()['EixosLongitudinais2D'] = eixos_longitudinais_completos
+    globals()['EixosLongitudinais'] = eixos_longitudinais_completos
+    globals()['EixosViarios2D'] = eixos_longitudinais_completos
+    globals()['EixosViario2D'] = eixos_longitudinais_completos
+    globals()['EixosVias2D'] = eixos_longitudinais_completos
+    globals()['LinhasEixosLongitudinais2D'] = eixos_longitudinais_crvs
+    globals()['CurvasEixosLongitudinais2D'] = eixos_longitudinais_crvs
+
+    globals()['BaloesEixos2D'] = eixos_baloes_todos
+    globals()['BaloesEixos'] = eixos_baloes_todos
+    globals()['IdentificacaoEixos2D'] = eixos_baloes_todos
+    globals()['RotulosEixos2D'] = eixos_baloes_todos
+
+    globals()['CotasEixos2D'] = eixos_cotas_todas
+    globals()['CotasEixos'] = eixos_cotas_todas
+    globals()['CotasEntreEixos2D'] = eixos_cotas_todas
+
+    globals()['Quadrantes2D'] = quadrantes_geoms
+    globals()['BadgesQuadrantes2D'] = quadrantes_geoms
+
+    globals()['TextosPlanta2D'] = textos_planta_baixa
+    globals()['TextosGrading2D'] = textos_planta_baixa
+
     linhas_estacas_crvs = [item['curve'] for item in estacas_normativas_info]
     # Prancha de Terraplanagem Completa Montada (Folha 01/03 em A0 1:500 com Planta, Hachuras, Moldura, Carimbo e Tabelas)
     globals()['PranchaTerraplanagem'] = planta_baixa_geoms
@@ -9003,6 +9138,21 @@ def run():
     if contornos_aterro_2d:
         bake_items.append({'group_name': "GRADING_CONTORNOS_ATERRO_2D", 'parent_group': "TERRAPLANAGEM_2D", 'layer_name': "PROJETO_LEGAL::PLANTA::CONTORNOS_ATERRO", 'geoms': contornos_aterro_2d, 'color': cor_aterro_2d})
 
+    # 10.3.4 Grupos e Camadas para Eixos, Balões e Cotas de Terraplanagem 2D (NBR 6492)
+    eixos_parent = "EIXOS_TERRAPLANAGEM_2D"
+    if eixos_transversais_crvs:
+        bake_items.append({'group_name': "PLANTA_EIXOS_TRANSVERSAIS", 'parent_group': eixos_parent, 'layer_name': "PROJETO_LEGAL::PLANTA::EIXOS_TRANSVERSAIS", 'geoms': eixos_transversais_crvs})
+    if eixos_longitudinais_crvs:
+        bake_items.append({'group_name': "PLANTA_EIXOS_LONGITUDINAIS", 'parent_group': eixos_parent, 'layer_name': "PROJETO_LEGAL::PLANTA::EIXOS_LONGITUDINAIS", 'geoms': eixos_longitudinais_crvs})
+    if eixos_baloes_todos:
+        bake_items.append({'group_name': "PLANTA_BALOES_EIXOS", 'parent_group': eixos_parent, 'layer_name': "PROJETO_LEGAL::PLANTA::BALOES_EIXOS", 'geoms': eixos_baloes_todos})
+    if eixos_cotas_todas:
+        bake_items.append({'group_name': "PLANTA_COTAS_EIXOS", 'parent_group': eixos_parent, 'layer_name': "PROJETO_LEGAL::PLANTA::COTAS_EIXOS", 'geoms': eixos_cotas_todas})
+    if estaqueamento_vias_geoms:
+        bake_items.append({'group_name': "PLANTA_ESTACAS_VIAS", 'parent_group': "TERRAPLANAGEM_2D", 'layer_name': "PROJETO_LEGAL::PLANTA::ESTACAS_VIAS", 'geoms': estaqueamento_vias_geoms})
+    if quadrantes_geoms:
+        bake_items.append({'group_name': "PLANTA_QUADRANTES", 'parent_group': "TERRAPLANAGEM_2D", 'layer_name': "PROJETO_LEGAL::PLANTA::QUADRANTES", 'geoms': quadrantes_geoms})
+
     # 10.4 Execução Automática do Bake se Bake == True
     bake_msg = "Bake inativo (conecte Bake=True para gravar no Rhino)."
     bake_requested = False
@@ -9022,6 +9172,9 @@ def run():
     globals()['Grupos_Secoes'] = to_gh_data_tree(tree_secoes_dict)
     globals()['Grupos_PerfisLongitudinais'] = to_gh_data_tree(tree_long_dict)
     globals()['Grupos_Pranchas'] = to_gh_data_tree(tree_pranchas_dict)
+
+    if textos_planta_baixa:
+        all_textos_2d.extend(textos_planta_baixa)
 
     globals()['Textos2D'] = all_textos_2d
     globals()['Tabelas2D'] = all_tabelas_2d
