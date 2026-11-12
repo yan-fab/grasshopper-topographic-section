@@ -571,7 +571,7 @@ def create_colored_mesh(quads_pts, color):
         if abs(v0.Z) < 1e-3 and abs(v1.Z) < 1e-3 and abs(v2.Z) < 1e-3:
             if cross.Z < 0.0:
                 v1, v2 = v2, v1
-        idx = m.Vertices.Count
+        idx = m.Vertices.Count if hasattr(m.Vertices, 'Count') else len(m.Vertices)
         try:
             m.Vertices.Add(v0)
             m.Vertices.Add(v1)
@@ -582,9 +582,20 @@ def create_colored_mesh(quads_pts, color):
             m.Vertices.Add(float(v2.X), float(v2.Y), float(getattr(v2, 'Z', 0.0)))
         m.Faces.AddFace(idx, idx + 1, idx + 2)
         if color:
-            m.VertexColors.Add(color)
-            m.VertexColors.Add(color)
-            m.VertexColors.Add(color)
+            try:
+                m.VertexColors.Add(color)
+                m.VertexColors.Add(color)
+                m.VertexColors.Add(color)
+            except:
+                try:
+                    cr = int(getattr(color, 'R', color[0] if isinstance(color, (list, tuple)) else 128))
+                    cg = int(getattr(color, 'G', color[1] if isinstance(color, (list, tuple)) else 128))
+                    cb = int(getattr(color, 'B', color[2] if isinstance(color, (list, tuple)) else 128))
+                    m.VertexColors.Add(cr, cg, cb)
+                    m.VertexColors.Add(cr, cg, cb)
+                    m.VertexColors.Add(cr, cg, cb)
+                except:
+                    pass
         return True
 
     for pts in quads_pts:
@@ -5626,11 +5637,13 @@ def calc_manning_full_pipe(dn_mm, slope_m_m, n_manning=0.013):
 
 def make_3d_cylinder_mesh(p0, p1, radius, color=None, sides=12):
     """Cria uma malha cilíndrica 3D fechada entre p0 e p1 (para galerias, ramais e chaminés de PVs)."""
-    vec = p1 - p0
-    length = vec.Length
+    vx = p1.X - p0.X
+    vy = p1.Y - p0.Y
+    vz = p1.Z - p0.Z
+    length = math.sqrt(vx*vx + vy*vy + vz*vz)
     if length <= 1e-4 or radius <= 1e-4:
         return None
-    u_ax = rg.Vector3d(vec.X / length, vec.Y / length, vec.Z / length)
+    u_ax = rg.Vector3d(vx / length, vy / length, vz / length)
     if abs(u_ax.Z) < 0.9:
         ref = rg.Vector3d(0.0, 0.0, 1.0)
     else:
@@ -5644,12 +5657,18 @@ def make_3d_cylinder_mesh(p0, p1, radius, color=None, sides=12):
     for i in range(sides):
         ang0 = (2.0 * math.pi * i) / float(sides)
         ang1 = (2.0 * math.pi * (i + 1)) / float(sides)
-        off0 = v1 * (radius * math.cos(ang0)) + v2 * (radius * math.sin(ang0))
-        off1 = v1 * (radius * math.cos(ang1)) + v2 * (radius * math.sin(ang1))
-        qa = p0 + off0
-        qb = p0 + off1
-        qc = p1 + off1
-        qd = p1 + off0
+        c0, s0 = radius * math.cos(ang0), radius * math.sin(ang0)
+        c1, s1 = radius * math.cos(ang1), radius * math.sin(ang1)
+        off0_x = v1.X * c0 + v2.X * s0
+        off0_y = v1.Y * c0 + v2.Y * s0
+        off0_z = v1.Z * c0 + v2.Z * s0
+        off1_x = v1.X * c1 + v2.X * s1
+        off1_y = v1.Y * c1 + v2.Y * s1
+        off1_z = v1.Z * c1 + v2.Z * s1
+        qa = rg.Point3d(p0.X + off0_x, p0.Y + off0_y, p0.Z + off0_z)
+        qb = rg.Point3d(p0.X + off1_x, p0.Y + off1_y, p0.Z + off1_z)
+        qc = rg.Point3d(p1.X + off1_x, p1.Y + off1_y, p1.Z + off1_z)
+        qd = rg.Point3d(p1.X + off0_x, p1.Y + off0_y, p1.Z + off0_z)
         quads.append([qa, qb, qc, qd])
     return create_colored_mesh(quads, color)
 
@@ -6414,8 +6433,78 @@ def build_automatic_drainage_system(raw_linha_guia, sample_z_fn, road_polygons=N
         }
         trechos_raw = list(REDE_DRENAGEM_CABE_VGP_PADRAO_TRECHOS)
 
+    # Extrai segmentos discretos de meio-fio (sarjetas) da malha viária para travamento exato das BLs
+    curb_segments = []
+    if road_polygons:
+        for p_info in road_polygons:
+            pts_c = p_info.get('pts_2d', [])
+            if len(pts_c) >= 2:
+                for i_seg in range(len(pts_c) - 1):
+                    p1_c = pts_c[i_seg]
+                    p2_c = pts_c[i_seg + 1]
+                    sdx = p2_c[0] - p1_c[0]
+                    sdy = p2_c[1] - p1_c[1]
+                    sL = math.hypot(sdx, sdy)
+                    if sL > 0.05:
+                        curb_segments.append({
+                            'p1': p1_c,
+                            'p2': p2_c,
+                            'ux': sdx / sL,
+                            'uy': sdy / sL,
+                            'len': sL,
+                            'p_info': p_info
+                        })
+
+    def find_curb_for_candidate(cx, cy, c_ux, c_uy, side_sign, max_d=8.5, min_d=0.8):
+        lat_nx = -c_uy * side_sign
+        lat_ny = c_ux * side_sign
+
+        best_d = float('inf')
+        best_curb_pt = None
+        best_t_vec = None
+
+        for seg in curb_segments:
+            sx1, sy1 = seg['p1']
+            sx2, sy2 = seg['p2']
+            sdx, sdy = sx2 - sx1, sy2 - sy1
+            sL2 = sdx*sdx + sdy*sdy
+            if sL2 < 1e-6: continue
+
+            t = max(0.0, min(1.0, ((cx - sx1)*sdx + (cy - sy1)*sdy) / sL2))
+            px = sx1 + t * sdx
+            py = sy1 + t * sdy
+
+            vx = px - cx
+            vy = py - cy
+            d_cand = math.hypot(vx, vy)
+
+            dot_side = vx * lat_nx + vy * lat_ny
+            if dot_side > 0.05 and min_d <= d_cand <= max_d:
+                if d_cand < best_d:
+                    best_d = d_cand
+                    best_curb_pt = (px, py)
+                    t_x, t_y = seg['ux'], seg['uy']
+                    if t_x * c_ux + t_y * c_uy < 0:
+                        t_x, t_y = -t_x, -t_y
+                    best_t_vec = (t_x, t_y)
+
+        if best_curb_pt is not None:
+            to_center_x = cx - best_curb_pt[0]
+            to_center_y = cy - best_curb_pt[1]
+            to_center_L = math.hypot(to_center_x, to_center_y)
+            if to_center_L > 1e-4:
+                ng_x = to_center_x / to_center_L
+                ng_y = to_center_y / to_center_L
+            else:
+                ng_x = -lat_nx
+                ng_y = -lat_ny
+            return best_curb_pt, best_t_vec, (ng_x, ng_y), best_d
+
+        return None, None, None, None
+
     trechos_info = []
     bls_info = []
+    placed_bl_positions = []
 
     tubos_3d_geoms = []
     pvs_3d_geoms = []
@@ -6540,62 +6629,124 @@ def build_automatic_drainage_system(raw_linha_guia, sample_z_fn, road_polygons=N
 
         u_txt = rg.Vector3d(ux, uy, 0.0)
         if u_txt.X < -1e-4 or (abs(u_txt.X) <= 1e-4 and u_txt.Y < 0):
-            u_txt = -u_txt
+            u_txt = rg.Vector3d(-u_txt.X, -u_txt.Y, 0.0)
         v_txt = rg.Vector3d(-u_txt.Y, u_txt.X, 0.0)
         p_lbl_tr = rg.Point3d(xm + v_txt.X * (2.2 * s), ym + v_txt.Y * (2.2 * s), 0.0)
         pl_tr = rg.Plane(p_lbl_tr, u_txt, v_txt)
         lbl_str = "{} Ø{} ({:.0f}m | {:.1f}%)".format(t_id, dn_mm, dist_2d, hyd['s_pct']).replace('.', ',')
         textos_2d_geoms.extend(make_text_geometry(lbl_str, p_lbl_tr, 0.72 * s, rg.TextJustification.MiddleCenter, s, pl_tr))
 
-        if v_id != "CORPO_HIDRICO" and dist_2d >= 14.0:
+        # =====================================================================
+        # PLANEJAMENTO EXECUTIVO DAS BOCAS DE LOBO (NBR 12266 / NBR 15645 / PBH)
+        # Assentamento estrito na SARJETA (tangente ao meio-fio, 0% na calçada)
+        # =====================================================================
+        if v_id != "CORPO_HIDRICO" and dist_2d >= 15.0:
             step_bl = 24.0 if hyd['s_pct'] > 10.0 else espacamento_bl
-            n_pairs = max(1, int(dist_2d // step_bl))
-            offset_sarjeta = 3.60
-            for k_bl in range(1, n_pairs + 1):
-                frac = (k_bl / float(n_pairs + 1)) if n_pairs > 1 else 0.65
+            if dist_2d < 22.0:
+                candidate_fractions = [0.55]
+            elif dist_2d < 45.0:
+                candidate_fractions = [0.50]
+            else:
+                n_pairs = max(1, int(dist_2d // step_bl))
+                candidate_fractions = [(k / float(n_pairs + 1)) for k in range(1, n_pairs + 1)]
+
+            for frac in candidate_fractions:
                 bx_c = x1 + frac * dx
                 by_c = y1 + frac * dy
                 bzt_c = zt1 + frac * (zt2 - zt1)
                 bzf_c = zf1 + frac * (zf2 - zf1)
 
                 for side_sign, side_lbl in [(+1.0, "E"), (-1.0, "D")]:
-                    bl_id = "BL-{:02d}{}".format(bl_counter, side_lbl)
-                    bx = bx_c + side_sign * nx * offset_sarjeta
-                    by = by_c + side_sign * ny * offset_sarjeta
-                    bzt = bzt_c - 0.07
+                    curb_pt, t_vec, ng_vec, d_curb = find_curb_for_candidate(bx_c, by_c, ux, uy, side_sign)
 
-                    w_bl_2d = max(0.80, 1.35 * s)
-                    t_bl_2d = max(0.40, 0.75 * s)
-                    hl_b = w_bl_2d * 0.5; ht_b = t_bl_2d * 0.5
-                    pts_bl = [
-                        rg.Point3d(bx - ux*hl_b - nx*ht_b, by - uy*hl_b - ny*ht_b, 0),
-                        rg.Point3d(bx + ux*hl_b - nx*ht_b, by + uy*hl_b - ny*ht_b, 0),
-                        rg.Point3d(bx + ux*hl_b + nx*ht_b, by + uy*hl_b + ny*ht_b, 0),
-                        rg.Point3d(bx - ux*hl_b + nx*ht_b, by - uy*hl_b + ny*ht_b, 0),
-                        rg.Point3d(bx - ux*hl_b - nx*ht_b, by - uy*hl_b - ny*ht_b, 0)
-                    ]
+                    w_bl = max(0.40, 0.40 * s)
+                    hl_bl = max(0.40, 0.40 * s)
+
+                    if curb_pt is not None:
+                        # Assentamento perfeito no meio-fio:
+                        # Face posterior encostada no meio-fio (curb_x, curb_y)
+                        # Corpo projetado para DENTRO da pista (sarjeta) ao longo de ng_vec
+                        curb_x, curb_y = curb_pt
+                        curb_tx, curb_ty = t_vec
+                        ng_x, ng_y = ng_vec
+
+                        bx = curb_x + ng_x * (w_bl * 0.5)
+                        by = curb_y + ng_y * (w_bl * 0.5)
+
+                        p_b1 = rg.Point3d(curb_x - curb_tx * hl_bl, curb_y - curb_ty * hl_bl, 0)
+                        p_b2 = rg.Point3d(curb_x + curb_tx * hl_bl, curb_y + curb_ty * hl_bl, 0)
+                        p_f2 = rg.Point3d(p_b2.X + ng_x * w_bl, p_b2.Y + ng_y * w_bl, 0)
+                        p_f1 = rg.Point3d(p_b1.X + ng_x * w_bl, p_b1.Y + ng_y * w_bl, 0)
+                        pts_bl = [p_b1, p_b2, p_f2, p_f1, p_b1]
+                        u_bl_dir = rg.Vector3d(curb_tx, curb_ty, 0.0)
+                    else:
+                        # Fallback se não houver polígono de meio-fio detectado:
+                        # Afastamento seguro de 3.0m do eixo da via (sem invadir calçada)
+                        offset_fb = 3.00
+                        bx = bx_c + side_sign * nx * offset_fb
+                        by = by_c + side_sign * ny * offset_fb
+                        pts_bl = [
+                            rg.Point3d(bx - ux*hl_bl - nx*(w_bl*0.5), by - uy*hl_bl - ny*(w_bl*0.5), 0),
+                            rg.Point3d(bx + ux*hl_bl - nx*(w_bl*0.5), by + uy*hl_bl - ny*(w_bl*0.5), 0),
+                            rg.Point3d(bx + ux*hl_bl + nx*(w_bl*0.5), by + uy*hl_bl + ny*(w_bl*0.5), 0),
+                            rg.Point3d(bx - ux*hl_bl + nx*(w_bl*0.5), by - uy*hl_bl + ny*(w_bl*0.5), 0),
+                            rg.Point3d(bx - ux*hl_bl - nx*(w_bl*0.5), by - uy*hl_bl - ny*(w_bl*0.5), 0)
+                        ]
+                        u_bl_dir = rg.Vector3d(ux, uy, 0.0)
+                        ng_x, ng_y = -side_sign * nx, -side_sign * ny
+
+                    # DEDUPLICAÇÃO E DISTÂNCIA MÍNIMA NORMATIVA:
+                    # Impede duplicação de BLs a menos de 14.0m e em esquinas / PVs
+                    if any(math.hypot(bx - p[0], by - p[1]) < 14.0 for p in placed_bl_positions):
+                        continue
+                    if math.hypot(bx - x1, by - y1) < 3.5 or math.hypot(bx - x2, by - y2) < 3.5:
+                        continue
+
+                    placed_bl_positions.append((bx, by))
+                    bl_id = "BL-{:02d}{}".format(bl_counter, side_lbl)
+
+                    # Geometria 2D da BL (Contorno + Diagonal da Grelha)
                     bls_2d_geoms.append(rg.PolylineCurve(pts_bl))
                     bls_2d_geoms.append(rg.LineCurve(pts_bl[0], pts_bl[2]))
 
-                    if math.hypot(x2 - bx, y2 - by) <= 16.0:
+                    # CONEXÃO DO RAMAL DE LIGAÇÃO (DN 200/300mm):
+                    d_to_pv_jusante = math.hypot(x2 - bx, y2 - by)
+                    d_to_pv_montante = math.hypot(x1 - bx, y1 - by)
+                    if d_to_pv_jusante <= 12.0:
                         target_x, target_y, target_z = x2, y2, zf2 + 0.30
+                    elif d_to_pv_montante <= 8.0:
+                        target_x, target_y, target_z = x1, y1, zf1 + 0.30
                     else:
-                        target_x, target_y, target_z = bx_c, by_c, bzf_c + 0.25
+                        L2 = dist_2d * dist_2d
+                        t_pipe = max(0.08, min(0.92, ((bx - x1)*dx + (by - y1)*dy) / L2))
+                        target_x = x1 + t_pipe * dx
+                        target_y = y1 + t_pipe * dy
+                        target_z = zf1 + t_pipe * (zf2 - zf1) + 0.25
+
+                    # Ramal 2D (conexão limpa, direta e perpendicular)
                     bls_2d_geoms.append(rg.LineCurve(rg.Point3d(bx, by, 0), rg.Point3d(target_x, target_y, 0)))
 
-                    m_bl_3d = make_3d_box_mesh_oriented(rg.Point3d(bx, by, bzt), rg.Vector3d(ux, uy, 0), 0.80 * s, 0.40 * s, 0.90, color=cor_bl)
+                    # Cota ZT real do terreno projetado na posição exata da sarjeta
+                    bzt_real = eval_zt(bx, by, bzt_c - 0.07)
+
+                    # Modelagem 3D BIM (Caixa da BL + Tubo do Ramal)
+                    m_bl_3d = make_3d_box_mesh_oriented(rg.Point3d(bx, by, bzt_real), u_bl_dir, 0.80 * s, 0.40 * s, 0.90, color=cor_bl)
                     if m_bl_3d:
                         bls_3d_geoms.append(m_bl_3d)
-                    m_ramal_3d = make_3d_cylinder_mesh(rg.Point3d(bx, by, bzt - 0.70), rg.Point3d(target_x, target_y, target_z), 0.12 * s, color=cor_bl, sides=8)
+                    m_ramal_3d = make_3d_cylinder_mesh(rg.Point3d(bx, by, bzt_real - 0.70), rg.Point3d(target_x, target_y, target_z), 0.12 * s, color=cor_bl, sides=8)
                     if m_ramal_3d:
                         bls_3d_geoms.append(m_ramal_3d)
+
+                    # Rótulo de texto da BL (identificação)
+                    p_txt_bl = rg.Point3d(bx - ng_x * (0.85 * s), by - ng_y * (0.85 * s), 0.0)
+                    textos_2d_geoms.extend(make_text_geometry(bl_id, p_txt_bl, 0.65 * s, rg.TextJustification.MiddleCenter, s))
 
                     bls_info.append({
                         'id': bl_id,
                         'trecho': t_id,
-                        'x': bx, 'y': by, 'zt': bzt
+                        'x': bx, 'y': by, 'zt': bzt_real
                     })
-                bl_counter += 1
+                    bl_counter += 1
 
     for idx_pv, pv in enumerate(pvs_list):
         px, py, pzt, pzf, ph = pv['x'], pv['y'], pv['zt'], pv['zf'], pv['h']
