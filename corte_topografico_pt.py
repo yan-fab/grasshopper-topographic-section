@@ -2460,9 +2460,7 @@ def draw_a0_legend_box(x0, y0, w, h, sc, legend_type="planta", s=1.0):
         ("ZONA DE ATERRO (COMPACTAÇÃO)", System.Drawing.Color.FromArgb(46, 139, 87), True),
         ("LINHA NEUTRA (COTA ZERO)", System.Drawing.Color.FromArgb(240, 180, 0), False),
         ("DENTES DE TALUDE (NBR 6492)", System.Drawing.Color.FromArgb(70, 70, 70), False),
-        ("MURO DE CONTENÇÃO (NBR 11682)", System.Drawing.Color.FromArgb(178, 34, 34), False),
         ("CANALETA DRENAGEM 40x40cm", System.Drawing.Color.FromArgb(30, 144, 255), False),
-        ("FAIXA DE SEGURANÇA / DIVISA", System.Drawing.Color.FromArgb(180, 40, 200), False),
     ]
 
     pitch = (y_hdr - y0 - 3.0*sc) / float(len(items))
@@ -2660,9 +2658,8 @@ def draw_technical_sheet_frame(min_x, min_y, max_x, max_y, sheet_title, sheet_nu
         ("ZONA DE CORTE (ESCAVACAO)", System.Drawing.Color.FromArgb(230, 92, 0), True),
         ("ZONA DE ATERRO (COMPENSACAO)", System.Drawing.Color.FromArgb(46, 139, 87), True),
         ("LINHA NEUTRA (COTA ZERO)", System.Drawing.Color.FromArgb(240, 180, 0), False),
-        ("FAIXA DE SEGURANCA / DIVISA", System.Drawing.Color.FromArgb(180, 40, 200), False),
         ("DENTES DE TALUDE (NBR 6492)", System.Drawing.Color.FromArgb(80, 80, 80), False),
-        ("CONTENCAO / BERMA (NBR 11682)", System.Drawing.Color.FromArgb(220, 20, 60), False),
+        ("BANQUETEAMENTO / BERMAS (NBR 11682)", System.Drawing.Color.FromArgb(220, 20, 60), False),
     ]
     for idx_leg, (txt_l, cor_l, is_mesh) in enumerate(items_leg):
         y_item = yl1 - 8.5*s - idx_leg * 4.2*s
@@ -2766,7 +2763,7 @@ def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1
 
     max_h_sec = max(h_corte, h_aterro)
     if max_h_sec > 4.5:
-        txt_geot = "ALERTA NBR 11682: H={:.2f}m > 4,50m (CONTENCAO OBRIGATORIA)".format(max_h_sec).replace('.', ',')
+        txt_geot = "ALERTA NBR 11682: H={:.2f}m > 4,50m (BANQUETEAMENTO / BERMAS)".format(max_h_sec).replace('.', ',')
         geoms.extend(make_text_geometry(txt_geot, rg.Point3d(x0 + 2.0*s, y0 - 3.2*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
 
     card_tabela = [bg_m, rg.Polyline([p0, p1, p2, p3, p0]).ToPolylineCurve(), rg.LineCurve(rg.Point3d(x0, y_hdr, 0), rg.Point3d(x1, y_hdr, 0)), rg.LineCurve(rg.Point3d(x0, y_corte, 0), rg.Point3d(x1, y_corte, 0)), rg.LineCurve(rg.Point3d(x0, y_aterro, 0), rg.Point3d(x1, y_aterro, 0))]
@@ -2777,78 +2774,10 @@ def draw_section_summary_card(base_x, base_y, total_ext, sec_h, lbl, s_data, s=1
 
 def draw_retaining_wall_and_ditch_2d(p_slope, p_bnd, boundary_crv, s=1.0):
     """
-    Desenha em planta o Muro de Arrimo / Estrutura de Contenção em Concreto Armado
-    e a Canaleta de Crista/Pé Impermeabilizada nos trechos onde o recuo à divisa
-    é inferior a 3,00m (atendimento estrito à Lei 6.766/79 e ABNT NBR 11682).
+    Desativado conforme diretriz de projeto: muros de contencao ignorados,
+    estabilizacao tratada exclusivamente por geometria de taludes (1V:1.5H aterro / 1V:1H corte) e banquetas.
     """
-    geoms = []
-    if boundary_crv is None or not getattr(boundary_crv, 'IsValid', False):
-        return geoms
-    rc, t_bnd = boundary_crv.ClosestPoint(p_bnd)
-    if not rc:
-        return geoms
-    tan_b = boundary_crv.TangentAt(t_bnd)
-    tan_2d = rg.Vector3d(tan_b.X, tan_b.Y, 0.0)
-    if tan_2d.Length < 1e-4:
-        return geoms
-    tan_2d.Unitize()
-    norm_2d = rg.Vector3d(-tan_2d.Y, tan_2d.X, 0.0)
-
-    # Orientar a normal para o interior da gleba
-    vec_to_slope = p_slope - p_bnd
-    if (norm_2d.X * vec_to_slope.X + norm_2d.Y * vec_to_slope.Y) < 0:
-        norm_2d = -norm_2d
-
-    l_muro = 30.0 * s
-    w_muro = 0.35 * s
-    w_canaleta = 0.40 * s
-
-    # Linha base do muro (face externa junto à divisa com folga de 0.15m)
-    p_w_start = p_bnd - tan_2d * (l_muro / 2.0) + norm_2d * 0.15
-    p_w_end   = p_bnd + tan_2d * (l_muro / 2.0) + norm_2d * 0.15
-
-    mw0 = p_w_start
-    mw1 = p_w_end
-    mw2 = p_w_end + norm_2d * w_muro
-    mw3 = p_w_start + norm_2d * w_muro
-
-    cor_muro = System.Drawing.Color.FromArgb(220, 178, 34, 34) # Firebrick
-    m_muro = make_box_background_mesh(mw0, mw1, mw2, mw3, cor_muro)
-    if m_muro: geoms.append(m_muro)
-    geoms.append(rg.Polyline([mw0, mw1, mw2, mw3, mw0]).ToPolylineCurve())
-
-    # Hachuras internas do muro (linhas duplas transversais a cada 2.5m)
-    n_h = int(l_muro // (2.5 * s))
-    for ih in range(1, n_h):
-        t_ih = ih * 2.5 * s
-        ph0 = p_w_start + tan_2d * t_ih
-        ph1 = ph0 + norm_2d * w_muro
-        geoms.append(rg.LineCurve(ph0, ph1))
-
-    # Canaleta impermeabilizada de crista/pé junto ao muro (concreto calha 40x40cm)
-    mc0 = mw3
-    mc1 = mw2
-    mc2 = mw2 + norm_2d * w_canaleta
-    mc3 = mw3 + norm_2d * w_canaleta
-    cor_canaleta = System.Drawing.Color.FromArgb(190, 30, 144, 255) # DodgerBlue
-    m_can = make_box_background_mesh(mc0, mc1, mc2, mc3, cor_canaleta)
-    if m_can: geoms.append(m_can)
-    geoms.append(rg.Polyline([mc0, mc1, mc2, mc3, mc0]).ToPolylineCurve())
-
-    # Textos de detalhamento executivo e chamada de fiscalização
-    p_mw_mid = rg.Point3d((mw2.X + mw3.X) / 2.0, (mw2.Y + mw3.Y) / 2.0, 0.0)
-    p_callout = p_mw_mid + norm_2d * (3.2 * s)
-    geoms.append(rg.LineCurve(p_mw_mid, p_callout))
-    
-    txt1 = "MURO DE CONTENÇÃO EM CONCRETO ARMADO (h = 2,80m a 3,50m) - RECUO < 3,00m"
-    txt2 = "CANALETA DE CRISTA/PÉ IMPERMEABILIZADA (CALHA 40x40cm) - ESCOAMENTO INTERNO PLENO"
-    txt3 = "TRATAMENTO DE DIVISA CONFORME LEI FEDERAL 6.766/79 E ABNT NBR 11682"
-    
-    geoms.extend(make_text_geometry(txt1, p_callout + rg.Vector3d(0, 2.4*s, 0), 0.82*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry(txt2, p_callout + rg.Vector3d(0, 1.2*s, 0), 0.75*s, rg.TextJustification.BottomLeft, s))
-    geoms.extend(make_text_geometry(txt3, p_callout, 0.75*s, rg.TextJustification.BottomLeft, s))
-
-    return geoms
+    return []
 
 def format_estaca_normativa(d_metros, passo=20.0):
     """
@@ -2970,105 +2899,10 @@ def draw_slope_ticks_tadpoles_2d(p_crista, p_pe, s=1.0, is_long=True, is_cut=Tru
 
 def calculate_boundary_clearance(outer_slope_pts, boundary_crv, s=1.0):
     """
-    Calcula o afastamento técnico dos taludes de terraplenagem (pés de aterro e cristas de corte)
-    em relação aos limites da matrícula da gleba (Matrícula 30.901), gerando:
-    1. A Faixa de Segurança / Divisa (recuo non aedificandi obrigatório de 3,00m conf. NBR / Código de Obras)
-    2. Cotas técnicas completas em planta com linhas de chamada e valores nos pontos críticos (Global, N, S, L, O).
+    Desativado conforme diretriz do usuario: afastamento das divisas e recuos non-aedificandi
+    removidos da planta de terraplenagem.
     """
-    geoms = []
-    min_dist = 1e9
-    best_p_slope = None
-    best_p_bnd = None
-    all_cotas = []
-    if boundary_crv is None or not getattr(boundary_crv, 'IsValid', False) or not outer_slope_pts:
-        return geoms, min_dist, None
-
-    # 1. Faixa de Segurança Não Edificável (Recuo de 3,00m para o interior da gleba)
-    try:
-        recuo_faixa = 3.00
-        offset_crvs = boundary_crv.Offset(rg.Plane.WorldXY, -recuo_faixa, 0.05, rg.CurveOffsetCornerStyle.Sharp)
-        if not offset_crvs or len(offset_crvs) == 0:
-            offset_crvs = boundary_crv.Offset(rg.Plane.WorldXY, recuo_faixa, 0.05, rg.CurveOffsetCornerStyle.Sharp)
-        if offset_crvs:
-            for oc in offset_crvs:
-                if oc and oc.IsValid:
-                    geoms.append(oc)
-                    # Textos indicativos ao longo da faixa de segurança
-                    l_oc = oc.GetLength()
-                    n_tags = max(int(l_oc / 120.0), 2)
-                    for it in range(n_tags):
-                        t_tag = oc.Domain.T0 + ((it + 0.5) / float(n_tags)) * (oc.Domain.T1 - oc.Domain.T0)
-                        pt_tag = oc.PointAt(t_tag)
-                        txt_faixa = "FAIXA DE SEGURANÇA NÃO EDIFICÁVEL (RECUO = 3,00m - LEI 6.766 / NBR 11682)"
-                        geoms.extend(make_text_geometry(txt_faixa, pt_tag + rg.Vector3d(0, 1.2*s, 0), 0.75*s, rg.TextJustification.MiddleCenter, s))
-    except:
-        pass
-
-    # 2. Pesquisa de Pontos Críticos e Setores Cardeais (Global Min, Norte, Sul, Leste, Oeste)
-    cand_pts = []
-    # 2.1 Ponto Global de Menor Distância
-    for pt in outer_slope_pts:
-        pt_2d = rg.Point3d(pt.X, pt.Y, 0.0)
-        rc, t_cp = boundary_crv.ClosestPoint(pt_2d)
-        if rc:
-            cp_pt = boundary_crv.PointAt(t_cp)
-            cp_2d = rg.Point3d(cp_pt.X, cp_pt.Y, 0.0)
-            d = pt_2d.DistanceTo(cp_2d)
-            if d < min_dist:
-                min_dist = d
-                best_p_slope = pt_2d
-                best_p_bnd = cp_2d
-    if best_p_slope and best_p_bnd:
-        cand_pts.append(('RECUO MÍNIMO GLOBAL', best_p_slope, best_p_bnd, min_dist))
-
-    # 2.2 Setores Cardeais: Norte (Max Y), Sul (Min Y), Leste (Max X), Oeste (Min X)
-    pts_n = [p for p in outer_slope_pts if p.Y > best_p_slope.Y + 25.0]
-    pts_s = [p for p in outer_slope_pts if p.Y < best_p_slope.Y - 25.0]
-    pts_e = [p for p in outer_slope_pts if p.X > best_p_slope.X + 25.0]
-    pts_w = [p for p in outer_slope_pts if p.X < best_p_slope.X - 25.0]
-
-    for lbl_set, subset in [('DIVISA NORTE', pts_n), ('DIVISA SUL', pts_s), ('DIVISA LESTE', pts_e), ('DIVISA OESTE', pts_w)]:
-        if subset:
-            sub_min_d = 1e9
-            sub_best_s = None
-            sub_best_b = None
-            for p in subset:
-                p2 = rg.Point3d(p.X, p.Y, 0.0)
-                rc, t_c = boundary_crv.ClosestPoint(p2)
-                if rc:
-                    cb = boundary_crv.PointAt(t_c)
-                    cb2 = rg.Point3d(cb.X, cb.Y, 0.0)
-                    dist_c = p2.DistanceTo(cb2)
-                    if dist_c < sub_min_d:
-                        sub_min_d = dist_c
-                        sub_best_s = p2
-                        sub_best_b = cb2
-            if sub_best_s and sub_best_b and sub_min_d < 1e8:
-                # Evita sobreposição com pontos já cotados
-                if all(sub_best_s.DistanceTo(cp[1]) > 20.0 for cp in cand_pts):
-                    cand_pts.append((lbl_set, sub_best_s, sub_best_b, sub_min_d))
-
-    # 3. Desenho das Cotas em Planta, Muros de Contenção e Canaletas Impermeabilizadas
-    for lbl_cota, ps, pb, d_val in cand_pts:
-        vec_c = pb - ps
-        if vec_c.Length > 0.05:
-            if d_val >= 3.00:
-                dim_txt = "{}: {:.2f}m [CONFORME >= 3,00m]".format(lbl_cota, d_val).replace('.', ',')
-            else:
-                dim_txt = "{}: {:.2f}m [< 3,00m] -> MURO DE CONTENÇÃO & CANALETA IMPERMEABILIZADA [LEI 6.766 / NBR 11682]".format(lbl_cota, d_val).replace('.', ',')
-                # Implantação de Muro de Arrimo e Canaleta Impermeabilizada nos trechos com recuo < 3,00m
-                muro_geoms = draw_retaining_wall_and_ditch_2d(ps, pb, boundary_crv, s=s)
-                geoms.extend(muro_geoms)
-
-            cota_dim = draw_plan_dimension(ps, pb, dim_txt, s)
-            geoms.extend(cota_dim)
-            circ_c = rg.Circle(ps, 0.90 * s).ToNurbsCurve()
-            if circ_c and circ_c.IsValid:
-                geoms.append(circ_c)
-            p_mid = rg.Point3d((ps.X + pb.X) / 2.0, (ps.Y + pb.Y) / 2.0, 0.0) + rg.Vector3d(0, 1.8 * s, 0)
-            geoms.extend(make_text_geometry(dim_txt, p_mid, 0.75 * s, rg.TextJustification.MiddleCenter, s))
-
-    return geoms, min_dist, (best_p_slope, best_p_bnd)
+    return [], 1e9, None
 
 def join_polyline_paths_2d(paths, tol=0.35):
     """
@@ -8871,7 +8705,7 @@ def run():
         planta_baixa_geoms.extend(badge_sec_c)
     if len(lista_verticais) >= 4:
         p_eixo_4 = lista_verticais[3].PointAt((lista_verticais[3].Domain.T0 + lista_verticais[3].Domain.T1) / 2.0)
-        badge_eixo_4 = draw_quadrant_badge(p_eixo_4 + rg.Vector3d(0, 4.0*s, 0), "EIXO 4: CORTE CRÍTICO (H=7,52m > 4,5m) - EXIGE BERMAS OU CONTENÇÃO (NBR 11682 / FS>=1,5)", s=s)
+        badge_eixo_4 = draw_quadrant_badge(p_eixo_4 + rg.Vector3d(0, 4.0*s, 0), "EIXO 4: CORTE CRÍTICO (H=7,52m > 4,5m) - EXIGE BANQUETEAMENTO / BERMAS (NBR 11682 / FS>=1,5)", s=s)
         planta_baixa_geoms.extend(badge_eixo_4)
 
     # Selos das Manchas de Terraplenagem
@@ -9320,7 +9154,7 @@ def run():
             "     * Área Total da Mancha de Corte em Planta : {:.2f} m² (H.Média: {:.2f} m)".format(area_mancha_corte_2d, vol_total_corte_geo / max(area_mancha_corte_2d, 1e-4)),
             "     * Área Total da Mancha de Aterro em Planta: {:.2f} m² (H.Média: {:.2f} m)".format(area_mancha_aterro_2d, vol_total_aterro_geo / max(area_mancha_aterro_2d, 1e-4)),
             "-----------------------------------------------------------------------------------------",
-            "8. LAUDO TÉCNICO DE ESTABILIDADE DE TALUDES E MUROS DE CONTENÇÃO (NBR 11682 / NBR 6122):",
+            "8. LAUDO TÉCNICO DE ESTABILIDADE GEOTÉCNICA DE TALUDES E PLATAFORMAS (NBR 11682):",
             "-----------------------------------------------------------------------------------------",
             "   - Normas Técnicas Regulamentadoras:",
             "     * ABNT NBR 11682:2009 (Estabilidade de Encostas e Taludes)",
@@ -9332,7 +9166,7 @@ def run():
             "   - Regra Normativa de Desnível Crítico (H > 4,50m):",
             "     * Taludes com H <= 4,50 m: Talude contínuo simples (1V:1.5H aterro / 1V:1H corte).",
             "     * Taludes com H > 4,50 m : ZONA CRÍTICA NORMATIVA. Obrigatória a interposição de",
-            "       bermas de equilíbrio intermediárias ou estruturas de contenção dimensionadas.",
+            "       bermas de equilíbrio intermediárias e banqueteamento escalonado.",
             "   - DIAGNÓSTICO E ENQUADRAMENTO GEOTÉCNICO SEÇÃO A SEÇÃO (100% DINÂMICO NBR 11682):"
         ])
     for s_geot in sec_data_list:
@@ -9340,9 +9174,9 @@ def run():
         hc_g = s_geot.get('max_h_corte', 0.0)
         ha_g = s_geot.get('max_h_aterro', 0.0)
         if ha_g > 4.50 and hc_g > 4.50:
-            laudo_g = "HIPER-CRÍTICO (Aterro {:.2f}m e Corte {:.2f}m). Exige bermas B>=3,0m em aterro e B>=2,5m em corte ou contenção.".format(ha_g, hc_g)
+            laudo_g = "HIPER-CRÍTICO (Aterro {:.2f}m e Corte {:.2f}m). Exige bermas B>=3,0m em aterro e B>=2,5m em corte com banqueteamento.".format(ha_g, hc_g)
         elif ha_g > 4.50:
-            laudo_g = "CRÍTICO EM ATERRO (H={:.2f}m > 4,50m). Exige berma intermediária B>=3,0m a cada 4,5m de desnível ou muro de contenção.".format(ha_g)
+            laudo_g = "CRÍTICO EM ATERRO (H={:.2f}m > 4,50m). Exige berma intermediária B>=3,0m a cada 4,5m de desnível com banqueteamento.".format(ha_g)
         elif hc_g > 4.50:
             laudo_g = "CRÍTICO EM CORTE (H={:.2f}m > 4,50m). Exige banqueteamento com berma B>=2,5m a cada 4,5m de altura.".format(hc_g)
         else:
@@ -9360,11 +9194,11 @@ def run():
             "       - Taludes com H <= 4,50m (1V:1.5H)               : FS = 1,68 >= 1,50 [ESTÁVEL / CONFORME]",
             "       - Taludes Banqueteados (lances h<=4,5m, B>=2,5m) : FS = 1,56 >= 1,50 [ESTÁVEL / CONFORME]",
             "       - Talude Único sem Berma na Seção C (H=8,92m)    : FS = 1,12 < 1,50  [INADMISSÍVEL / RISCO DE RUPTURA]",
-            "       -> Conclusão: O banqueteamento ou muros de contenção são MANDATÓRIOS para atendimento à NBR 11682.",
+            "       -> Conclusão: O banqueteamento com bermas intermediárias é MANDATÓRIO para atendimento à NBR 11682 (muros de contenção dispensados).",
             "   - DIRETRIZES CONSTRUTIVAS OBRIGATÓRIAS:",
             "     1. Banqueteamento de Cortes (H > 4,5m): Lances de h <= 4,0m a 4,5m; bermas B >= 2,5m com caimento de 2% para canaleta de concreto; proteção com hidrossemeadura e biomanta.",
             "     2. Aterros Altos (H > 4,5m): Degraus de ancoragem no terreno natural prévio (b >= 2,0m); bermas B >= 3,0m a cada 4,5m; drenos profundos na base (tubo corrugado perfurado DN100 com geotêxtil); enrocamento de pé de aterro.",
-            "     3. Estruturas de Contenção (Muros de Arrimo / Solo Grampeado): Nos trechos onde a projeção da saia do aterro ou crista do corte ultrapassar a Faixa de Segurança Não Edificável (3,00m da divisa), deverá ser executado Muro de Concreto Armado com sapata engastada ou Solo Grampeado (chumbadores L=6 a 9m, tela Q-196, concreto projetado e=10cm e barbacãs DN100 a cada 2,0m).",
+            "     3. Estabilização por Geometria e Banqueteamento: Projeto geotécnico concebido sem muros de contenção, priorizando estabilização natural por inclinação 1V:1.5H (aterro) e 1V:1H (corte), com banquetas/bermas intermediárias e canaletas de drenagem para proteção superficial.",
             "   - TRATAMENTO TÉCNICO DAS INTERVENÇÕES PRÓXIMAS À DIVISA (DIVISAS NORTE E OESTE - RECUOS < 3,00 m):",
             "     * Diagnóstico dos Recuos Críticos no Terreno:",
             "       - Divisa Norte : Pés/cristas a 0,68 m do limite do imóvel (via de acesso norte).",
