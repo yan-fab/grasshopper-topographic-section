@@ -3070,59 +3070,461 @@ def calculate_boundary_clearance(outer_slope_pts, boundary_crv, s=1.0):
 
     return geoms, min_dist, (best_p_slope, best_p_bnd)
 
-def generate_project_contours(mesh_proj, z_step=1.0, z_master_step=5.0, s=1.0):
+def join_polyline_paths_2d(paths, tol=0.35):
     """
-    Fatia a malha 3D do terreno modificado/projetado (platôs + vias + taludes)
-    gerando as Curvas de Nível de Projeto (1 em 1m) e Curvas Mestras (5 em 5m),
-    com anotações de cota altimétrica nos trechos principais.
+    Algoritmo geométrico de encadeamento topológico de segmentos de curva (Pure Python / CPython / IronPython).
+    Une fragmentos de linhas/polilinhas na mesma cota Z, eliminando descontinuidades e produzindo
+    curvas de nível INTEIRIÇAS (unificadas de fora a fora ou anéis fechados), sem quebras ou lacunas.
+    """
+    if not paths:
+        return []
+    active = [list(p) for p in paths if len(p) >= 2]
+    merged = True
+    while merged:
+        merged = False
+        n = len(active)
+        for i in range(n):
+            if active[i] is None:
+                continue
+            pi = active[i]
+            for j in range(i + 1, n):
+                if active[j] is None:
+                    continue
+                pj = active[j]
+                d_es = math.hypot(pi[-1][0] - pj[0][0], pi[-1][1] - pj[0][1])
+                d_ee = math.hypot(pi[-1][0] - pj[-1][0], pi[-1][1] - pj[-1][1])
+                d_se = math.hypot(pi[0][0] - pj[-1][0], pi[0][1] - pj[-1][1])
+                d_ss = math.hypot(pi[0][0] - pj[0][0], pi[0][1] - pj[0][1])
+                if d_es <= tol:
+                    active[i] = pi + pj[1:]
+                    active[j] = None
+                    merged = True
+                    break
+                elif d_ee <= tol:
+                    active[i] = pi + pj[::-1][1:]
+                    active[j] = None
+                    merged = True
+                    break
+                elif d_se <= tol:
+                    active[i] = pj[:-1] + pi
+                    active[j] = None
+                    merged = True
+                    break
+                elif d_ss <= tol:
+                    active[i] = pj[::-1][:-1] + pi
+                    active[j] = None
+                    merged = True
+                    break
+            if merged:
+                break
+        active = [p for p in active if p is not None]
+    result = []
+    for p in active:
+        if len(p) >= 2:
+            d_c = math.hypot(p[0][0] - p[-1][0], p[0][1] - p[-1][1])
+            if d_c <= tol and len(p) >= 3:
+                p[-1] = p[0]
+            result.append(p)
+    return result
+
+def slice_mesh_at_horizontal_plane(mesh, z_target):
+    """
+    Fatia a malha 3D por plano horizontal Z = z_target (exato e analítico).
+    Gera segmentos de linha na cota inteira z_target para qualquer Mesh (rhino3dm ou RhinoCommon).
+    """
+    segments = []
+    if mesh is None or not getattr(mesh, 'IsValid', False):
+        return segments
+    v_count = getattr(mesh.Vertices, 'Count', len(mesh.Vertices))
+    f_count = getattr(mesh.Faces, 'Count', len(mesh.Faces))
+    if v_count == 0 or f_count == 0:
+        return segments
+        
+    verts = []
+    for i in range(v_count):
+        v = mesh.Vertices[i]
+        verts.append((float(v.X), float(v.Y), float(v.Z)))
+        
+    for f_idx in range(f_count):
+        f = mesh.Faces[f_idx]
+        v_indices = [f[0], f[1], f[2]]
+        if f[2] != f[3]:
+            v_indices.append(f[3])
+        tris = [[v_indices[0], v_indices[1], v_indices[2]]]
+        if len(v_indices) == 4:
+            tris.append([v_indices[0], v_indices[2], v_indices[3]])
+            
+        for tri in tris:
+            pts_tri = [verts[idx] for idx in tri]
+            zs = [p[2] for p in pts_tri]
+            if min(zs) > z_target or max(zs) < z_target:
+                continue
+            intersections = []
+            for e in range(3):
+                p1 = pts_tri[e]
+                p2 = pts_tri[(e + 1) % 3]
+                z1, z2 = p1[2], p2[2]
+                if abs(z1 - z2) < 1e-6:
+                    if abs(z1 - z_target) < 1e-4:
+                        intersections.append(p1)
+                        intersections.append(p2)
+                elif (z1 - z_target) * (z2 - z_target) <= 0:
+                    t = (z_target - z1) / (z2 - z1)
+                    ix = p1[0] + t * (p2[0] - p1[0])
+                    iy = p1[1] + t * (p2[1] - p1[1])
+                    intersections.append((ix, iy, float(z_target)))
+            unique_pts = []
+            for pt in intersections:
+                if not any(math.hypot(pt[0]-u[0], pt[1]-u[1]) < 1e-4 for u in unique_pts):
+                    unique_pts.append(pt)
+            if len(unique_pts) == 2:
+                segments.append((unique_pts[0], unique_pts[1]))
+    return segments
+
+def join_polyline_paths_2d(paths, tol=0.35):
+    """
+    Algoritmo geométrico de encadeamento topológico de segmentos de curva (Pure Python / CPython / IronPython).
+    Une fragmentos de linhas/polilinhas na mesma cota Z, eliminando descontinuidades e produzindo
+    curvas de nível INTEIRIÇAS (unificadas de fora a fora ou anéis fechados), sem quebras ou lacunas.
+    """
+    if not paths:
+        return []
+    active = [list(p) for p in paths if len(p) >= 2]
+    merged = True
+    while merged:
+        merged = False
+        n = len(active)
+        for i in range(n):
+            if active[i] is None:
+                continue
+            pi = active[i]
+            for j in range(i + 1, n):
+                if active[j] is None:
+                    continue
+                pj = active[j]
+                d_es = math.hypot(pi[-1][0] - pj[0][0], pi[-1][1] - pj[0][1])
+                d_ee = math.hypot(pi[-1][0] - pj[-1][0], pi[-1][1] - pj[-1][1])
+                d_se = math.hypot(pi[0][0] - pj[-1][0], pi[0][1] - pj[-1][1])
+                d_ss = math.hypot(pi[0][0] - pj[0][0], pi[0][1] - pj[0][1])
+                if d_es <= tol:
+                    active[i] = pi + pj[1:]
+                    active[j] = None
+                    merged = True
+                    break
+                elif d_ee <= tol:
+                    active[i] = pi + pj[::-1][1:]
+                    active[j] = None
+                    merged = True
+                    break
+                elif d_se <= tol:
+                    active[i] = pj[:-1] + pi
+                    active[j] = None
+                    merged = True
+                    break
+                elif d_ss <= tol:
+                    active[i] = pj[::-1][:-1] + pi
+                    active[j] = None
+                    merged = True
+                    break
+            if merged:
+                break
+        active = [p for p in active if p is not None]
+    result = []
+    for p in active:
+        if len(p) >= 2:
+            d_c = math.hypot(p[0][0] - p[-1][0], p[0][1] - p[-1][1])
+            if d_c <= tol and len(p) >= 3:
+                p[-1] = p[0]
+            result.append(p)
+    return result
+
+def slice_mesh_at_horizontal_plane(mesh, z_target):
+    """
+    Fatia a malha 3D por plano horizontal Z = z_target (exato e analítico).
+    Gera segmentos de linha na cota inteira z_target para qualquer Mesh (rhino3dm ou RhinoCommon).
+    """
+    segments = []
+    if mesh is None or not getattr(mesh, 'IsValid', False):
+        return segments
+    v_count = getattr(mesh.Vertices, 'Count', len(mesh.Vertices))
+    f_count = getattr(mesh.Faces, 'Count', len(mesh.Faces))
+    if v_count == 0 or f_count == 0:
+        return segments
+        
+    verts = []
+    for i in range(v_count):
+        v = mesh.Vertices[i]
+        verts.append((float(v.X), float(v.Y), float(v.Z)))
+        
+    for f_idx in range(f_count):
+        f = mesh.Faces[f_idx]
+        v_indices = [f[0], f[1], f[2]]
+        if f[2] != f[3]:
+            v_indices.append(f[3])
+        tris = [[v_indices[0], v_indices[1], v_indices[2]]]
+        if len(v_indices) == 4:
+            tris.append([v_indices[0], v_indices[2], v_indices[3]])
+            
+        for tri in tris:
+            pts_tri = [verts[idx] for idx in tri]
+            zs = [p[2] for p in pts_tri]
+            if min(zs) > z_target or max(zs) < z_target:
+                continue
+            intersections = []
+            for e in range(3):
+                p1 = pts_tri[e]
+                p2 = pts_tri[(e + 1) % 3]
+                z1, z2 = p1[2], p2[2]
+                if abs(z1 - z2) < 1e-6:
+                    if abs(z1 - z_target) < 1e-4:
+                        intersections.append(p1)
+                        intersections.append(p2)
+                elif (z1 - z_target) * (z2 - z_target) <= 0:
+                    t = (z_target - z1) / (z2 - z1)
+                    ix = p1[0] + t * (p2[0] - p1[0])
+                    iy = p1[1] + t * (p2[1] - p1[1])
+                    intersections.append((ix, iy, float(z_target)))
+            unique_pts = []
+            for pt in intersections:
+                if not any(math.hypot(pt[0]-u[0], pt[1]-u[1]) < 1e-4 for u in unique_pts):
+                    unique_pts.append(pt)
+            if len(unique_pts) == 2:
+                segments.append((unique_pts[0], unique_pts[1]))
+    return segments
+
+def join_polyline_paths_2d(paths, tol=0.35):
+    """
+    Algoritmo geométrico de encadeamento topológico de segmentos de curva (Pure Python / CPython / IronPython).
+    Une fragmentos de linhas/polilinhas na mesma cota Z, eliminando descontinuidades e produzindo
+    curvas de nível INTEIRIÇAS (unificadas de fora a fora ou anéis fechados), sem quebras ou lacunas.
+    """
+    if not paths:
+        return []
+    active = [list(p) for p in paths if len(p) >= 2]
+    merged = True
+    while merged:
+        merged = False
+        n = len(active)
+        for i in range(n):
+            if active[i] is None:
+                continue
+            pi = active[i]
+            for j in range(i + 1, n):
+                if active[j] is None:
+                    continue
+                pj = active[j]
+                d_es = math.hypot(pi[-1][0] - pj[0][0], pi[-1][1] - pj[0][1])
+                d_ee = math.hypot(pi[-1][0] - pj[-1][0], pi[-1][1] - pj[-1][1])
+                d_se = math.hypot(pi[0][0] - pj[-1][0], pi[0][1] - pj[-1][1])
+                d_ss = math.hypot(pi[0][0] - pj[0][0], pi[0][1] - pj[0][1])
+                if d_es <= tol:
+                    active[i] = pi + pj[1:]
+                    active[j] = None
+                    merged = True
+                    break
+                elif d_ee <= tol:
+                    active[i] = pi + pj[::-1][1:]
+                    active[j] = None
+                    merged = True
+                    break
+                elif d_se <= tol:
+                    active[i] = pj[:-1] + pi
+                    active[j] = None
+                    merged = True
+                    break
+                elif d_ss <= tol:
+                    active[i] = pj[::-1][:-1] + pi
+                    active[j] = None
+                    merged = True
+                    break
+            if merged:
+                break
+        active = [p for p in active if p is not None]
+    result = []
+    for p in active:
+        if len(p) >= 2:
+            d_c = math.hypot(p[0][0] - p[-1][0], p[0][1] - p[-1][1])
+            if d_c <= tol and len(p) >= 3:
+                p[-1] = p[0]
+            result.append(p)
+    return result
+
+def slice_mesh_at_horizontal_plane(mesh, z_target):
+    """
+    Fatia a malha 3D por plano horizontal Z = z_target (exato e analítico).
+    Gera segmentos de linha na cota inteira z_target para qualquer Mesh (rhino3dm ou RhinoCommon).
+    """
+    segments = []
+    if mesh is None or not getattr(mesh, 'IsValid', False):
+        return segments
+    v_count = getattr(mesh.Vertices, 'Count', len(mesh.Vertices))
+    f_count = getattr(mesh.Faces, 'Count', len(mesh.Faces))
+    if v_count == 0 or f_count == 0:
+        return segments
+        
+    verts = []
+    for i in range(v_count):
+        v = mesh.Vertices[i]
+        verts.append((float(v.X), float(v.Y), float(v.Z)))
+        
+    for f_idx in range(f_count):
+        f = mesh.Faces[f_idx]
+        v_indices = [f[0], f[1], f[2]]
+        if f[2] != f[3]:
+            v_indices.append(f[3])
+        tris = [[v_indices[0], v_indices[1], v_indices[2]]]
+        if len(v_indices) == 4:
+            tris.append([v_indices[0], v_indices[2], v_indices[3]])
+            
+        for tri in tris:
+            pts_tri = [verts[idx] for idx in tri]
+            zs = [p[2] for p in pts_tri]
+            if min(zs) > z_target or max(zs) < z_target:
+                continue
+            intersections = []
+            for e in range(3):
+                p1 = pts_tri[e]
+                p2 = pts_tri[(e + 1) % 3]
+                z1, z2 = p1[2], p2[2]
+                if abs(z1 - z2) < 1e-6:
+                    if abs(z1 - z_target) < 1e-4:
+                        intersections.append(p1)
+                        intersections.append(p2)
+                elif (z1 - z_target) * (z2 - z_target) <= 0:
+                    t = (z_target - z1) / (z2 - z1)
+                    ix = p1[0] + t * (p2[0] - p1[0])
+                    iy = p1[1] + t * (p2[1] - p1[1])
+                    intersections.append((ix, iy, float(z_target)))
+            unique_pts = []
+            for pt in intersections:
+                if not any(math.hypot(pt[0]-u[0], pt[1]-u[1]) < 1e-4 for u in unique_pts):
+                    unique_pts.append(pt)
+            if len(unique_pts) == 2:
+                segments.append((unique_pts[0], unique_pts[1]))
+    return segments
+
+def generate_project_contours(mesh_proj, z_step=1.0, z_master_step=5.0, s=1.0, original_contours=None, tol=0.40):
+    """
+    Gera as Curvas de Nível de Projeto INTEIRIÇAS (unificadas, contínuas, sem fragmentação),
+    com cotas altimétricas estritamente inteiras (1 em 1m) e mestras (5 em 5m),
+    harmonizadas com o levantamento topográfico original.
     """
     crvs_1m = []
     crvs_5m = []
     textos_mestras = []
     if mesh_proj is None or not getattr(mesh_proj, 'IsValid', False):
         return crvs_1m, crvs_5m, textos_mestras
-    if mesh_proj.Faces.Count == 0:
+    f_cnt = getattr(mesh_proj.Faces, 'Count', len(mesh_proj.Faces))
+    if f_cnt == 0:
         return crvs_1m, crvs_5m, textos_mestras
-    bbox = mesh_proj.GetBoundingBox(True)
-    if not bbox.IsValid:
+    try:
+        bbox = mesh_proj.GetBoundingBox(True)
+    except:
+        try:
+            bbox = mesh_proj.GetBoundingBox()
+        except:
+            return crvs_1m, crvs_5m, textos_mestras
+    if not getattr(bbox, 'IsValid', True):
         return crvs_1m, crvs_5m, textos_mestras
+        
     z_min = bbox.Min.Z
     z_max = bbox.Max.Z
     if (z_max - z_min) < 0.2:
         return crvs_1m, crvs_5m, textos_mestras
-    contours_raw = None
-    try:
-        p_bot = rg.Point3d(bbox.Center.X, bbox.Center.Y, math.floor(z_min))
-        p_top = rg.Point3d(bbox.Center.X, bbox.Center.Y, math.ceil(z_max))
-        contours_raw = rg.Mesh.CreateContourCurves(mesh_proj, p_bot, p_top, float(z_step))
-    except:
-        contours_raw = None
-    if contours_raw:
-        for crv in contours_raw:
-            if crv and getattr(crv, 'IsValid', False) and crv.GetLength() > 0.5:
-                z_mid = (crv.PointAtStart.Z + crv.PointAtEnd.Z) / 2.0
-                z_round = round(z_mid)
-                is_master = (abs(z_round % int(z_master_step)) < 0.05) or (abs(z_mid % float(z_master_step)) < 0.08)
-                if is_master:
-                    crvs_5m.append(crv)
-                    t_mid = (crv.Domain.T0 + crv.Domain.T1) / 2.0
-                    p_mid = crv.PointAt(t_mid)
-                    txt_cota = "+{:.0f}".format(z_mid)
-                    tan = crv.TangentAt(t_mid)
-                    u_t = rg.Vector3d(tan.X, tan.Y, 0.0)
-                    if u_t.Length > 1e-4:
-                        u_t.Unitize()
-                        if u_t.X < -1e-4 or (abs(u_t.X) <= 1e-4 and u_t.Y < 0):
-                            u_t = -u_t
-                        v_t = rg.Vector3d(-u_t.Y, u_t.X, 0.0)
-                        pl_cota = rg.Plane(p_mid, u_t, v_t)
-                    else:
-                        pl_cota = rg.Plane(p_mid, rg.Vector3d.XAxis, rg.Vector3d.YAxis)
-                    txt_g = make_text_geometry(txt_cota, p_mid, 0.85 * s, rg.TextJustification.MiddleCenter, s, plane=pl_cota)
-                    if txt_g:
-                        textos_mestras.extend(txt_g)
+        
+    # Garante cotas estritamente inteiras (ex: ..., 918, 919, 920, 921, ...) igual ao topografico
+    z_start = int(math.floor(z_min))
+    z_end = int(math.ceil(z_max))
+    
+    orig_by_z = {}
+    if original_contours:
+        for oc in original_contours:
+            if oc and getattr(oc, 'IsValid', False):
+                z_oc = round(oc.PointAtStart.Z)
+                if abs(oc.PointAtStart.Z - z_oc) < 0.15:
+                    if z_oc not in orig_by_z:
+                        orig_by_z[z_oc] = []
+                    # Amostra pontos da curva original
+                    pts_oc = []
+                    if hasattr(oc, 'ToPolyline'):
+                        try:
+                            pl = oc.ToPolyline()
+                            pts_oc = [(pl[k].X, pl[k].Y, float(z_oc)) for k in range(pl.Count)]
+                        except:
+                            pts_oc = []
+                    if not pts_oc:
+                        try:
+                            l_oc = oc.GetLength() if hasattr(oc, 'GetLength') else 50.0
+                            n_s = max(2, int(l_oc / 1.0))
+                            for k in range(n_s + 1):
+                                t_k = oc.Domain.T0 + (k / float(n_s)) * (oc.Domain.T1 - oc.Domain.T0)
+                                pt_k = oc.PointAt(t_k)
+                                pts_oc.append((pt_k.X, pt_k.Y, float(z_oc)))
+                        except:
+                            pass
+                    if pts_oc:
+                        orig_by_z[z_oc].append(pts_oc)
+
+    for z_target in range(z_start, z_end + 1):
+        segs_proj = slice_mesh_at_horizontal_plane(mesh_proj, float(z_target))
+        paths_to_join = [list(seg) for seg in segs_proj]
+        
+        # Se houver curvas originais no mesmo nível, inclui trechos para conexão contínua
+        if z_target in orig_by_z:
+            for op in orig_by_z[z_target]:
+                for k in range(len(op) - 1):
+                    paths_to_join.append([op[k], op[k+1]])
+                    
+        if not paths_to_join:
+            continue
+            
+        # Encadeia e une todos os segmentos em curvas inteiriças
+        joined_paths = join_polyline_paths_2d(paths_to_join, tol=tol)
+        is_master = (z_target % int(z_master_step) == 0)
+        
+        for path_pts in joined_paths:
+            if len(path_pts) < 2:
+                continue
+            rg_pts = [rg.Point3d(p[0], p[1], float(z_target)) for p in path_pts]
+            poly_crv = rg.PolylineCurve(rg_pts)
+            if not poly_crv:
+                continue
+                
+            # Verifica comprimento mínimo
+            l_crv = 1.0
+            if hasattr(poly_crv, 'GetLength'):
+                try: l_crv = poly_crv.GetLength()
+                except: l_crv = 1.0
+            elif hasattr(poly_crv, 'ToPolyline'):
+                try:
+                    pl = poly_crv.ToPolyline()
+                    l_crv = sum(math.hypot(pl[k+1].X-pl[k].X, pl[k+1].Y-pl[k].Y) for k in range(pl.Count-1))
+                except: l_crv = 1.0
+            if l_crv < 0.3:
+                continue
+                
+            if is_master:
+                crvs_5m.append(poly_crv)
+                t_mid = (poly_crv.Domain.T0 + poly_crv.Domain.T1) / 2.0
+                p_mid = poly_crv.PointAt(t_mid)
+                txt_cota = "{:.0f}".format(z_target) # Cota inteira padronizada
+                tan = poly_crv.TangentAt(t_mid)
+                u_t = rg.Vector3d(tan.X, tan.Y, 0.0)
+                u_len = u_t.Length() if callable(u_t.Length) else u_t.Length
+                if u_len > 1e-4:
+                    u_t.Unitize()
+                    if u_t.X < -1e-4 or (abs(u_t.X) <= 1e-4 and u_t.Y < 0):
+                        u_t = rg.Vector3d(-u_t.X, -u_t.Y, 0.0)
+                    v_t = rg.Vector3d(-u_t.Y, u_t.X, 0.0)
+                    pl_cota = rg.Plane(p_mid, u_t, v_t)
                 else:
-                    crvs_1m.append(crv)
+                    pl_cota = rg.Plane(p_mid, rg.Vector3d.XAxis, rg.Vector3d.YAxis)
+                txt_g = make_text_geometry(txt_cota, p_mid, 0.85 * s, rg.TextJustification.MiddleCenter, s, plane=pl_cota)
+                if txt_g:
+                    textos_mestras.extend(txt_g)
+            else:
+                crvs_1m.append(poly_crv)
+                
     return crvs_1m, crvs_5m, textos_mestras
 
 def draw_section_vertical_axis_marker(base_x, base_y, d_ax, sec_h, sec_datum_z, z_terrain, z_proj, lbl_v, s=1.0):
@@ -8507,7 +8909,7 @@ def run():
         planta_baixa_geoms.extend(afastamento_divisas_geoms)
 
     # 9.4 Curvas de Nível de Projeto (Modificadas de 1m e Mestras de 5m)
-    crvs_proj_1m, crvs_proj_5m, textos_mestras_proj = generate_project_contours(mesh_terreno_projetado, z_step=1.0, z_master_step=5.0, s=s)
+    crvs_proj_1m, crvs_proj_5m, textos_mestras_proj = generate_project_contours(mesh_terreno_projetado, z_step=1.0, z_master_step=5.0, s=s, original_contours=geoms_terreno)
     crvs_proj_all = crvs_proj_1m + crvs_proj_5m
     for c in crvs_proj_all:
         modelo_3d_completo.append(c)
